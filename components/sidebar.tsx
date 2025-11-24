@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, PieChart, Wallet, TrendingUp, FileText, Settings, List, LogOut, 
   ChevronDown, Plus, Briefcase, X
@@ -32,6 +32,7 @@ export default function Sidebar({
     setMobileOpen: (open: boolean) => void 
 }) {
   const pathname = usePathname()
+  const router = useRouter() // Initialize Router
   const { portfolios, selectedPortfolio, selectPortfolio, refreshPortfolios } = usePortfolio()
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const supabase = createClient()
@@ -57,6 +58,12 @@ export default function Sidebar({
         refreshPortfolios()
         setIsDropdownOpen(false)
     }
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    router.push('/auth')
+    router.refresh()
   }
 
   return (
@@ -189,7 +196,10 @@ export default function Sidebar({
                 </Link>
             </li>
             <li>
-                <button className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400">
+                <button 
+                    onClick={handleSignOut}
+                    className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                >
                 <LogOut className="h-5 w-5" />
                 Sign Out
                 </button>

@@ -1,57 +1,46 @@
-// app/auth/page.tsx
+'use client'
+
 import AuthForm from './auth-form'
+import { TrendingUp } from 'lucide-react'
+import Image from 'next/image'
 
 export default function AuthPage() {
   return (
-    // Use a light gray for the overall page background
-    <div className="flex h-screen w-full items-center justify-center bg-gray-100">
-      <div className="flex h-full w-full max-w-5xl overflow-hidden rounded-lg shadow-2xl md:h-auto">
+    <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden">
+      
+      {/* Full Screen Background Image */}
+      <div className="absolute inset-0 z-0">
+          <Image 
+              src="/images/stock-trading-6525081.jpg" 
+              alt="Background"
+              fill
+              className="object-cover"
+              priority
+          />
+          {/* Dark overlay to make text pop */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      </div>
+
+      {/* Centered Transparent Glass Card */}
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-xl">
         
-        {/* Left Side: NEW "Finance" Brand Panel */}
-        <div className="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden bg-slate-900 p-12 text-white md:flex">
-          
-          {/* Large, faint Rupee symbol in the background */}
-          <span className="absolute -left-10 -top-10 text-9xl font-bold text-white opacity-5">
-            ₹
-          </span>
-          <span className="absolute -bottom-16 -right-12 text-9xl font-bold text-white opacity-5">
-            ₹
-          </span>
-
-          {/* Abstract background shapes */}
-          <div className="absolute -top-32 -right-32 h-72 w-72 rounded-full bg-indigo-500 opacity-10"></div>
-          <div className="absolute -bottom-40 -left-20 h-72 w-72 rounded-full bg-sky-400 opacity-10"></div>
-
-          {/* Content */}
-          <div className="z-10 flex flex-col items-center text-center">
-            {/* Finance Chart SVG Icon */}
-            <svg
-              className="mb-4 h-20 w-20 text-indigo-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-              />
-            </svg>
-            
-            <h1 className="font-serif text-4xl font-bold">
-              Portfolio Tracker & Analysis
-            </h1>
-            <p className="mt-4 text-lg text-slate-300">
-              Welcome! Get a complete view of your financial world.
-            </p>
+        {/* Logo & Branding */}
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600/90 text-white shadow-lg shadow-indigo-500/30 backdrop-blur-md">
+            <TrendingUp className="h-7 w-7" />
           </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-lg">PortfolioOS</h1>
+          <p className="mt-2 text-sm text-slate-200 drop-shadow-md">
+            Professional Portfolio Tracker & Analysis
+          </p>
         </div>
 
-        {/* Right Side: Form Panel */}
-        <div className="w-full bg-white p-8 md:w-1/2">
-          <AuthForm />
+        {/* The Form Component */}
+        <AuthForm />
+
+        {/* Footer */}
+        <div className="mt-8 text-center text-[10px] text-slate-400">
+          &copy; {new Date().getFullYear()} PortfolioOS. Secure & Encrypted.
         </div>
 
       </div>

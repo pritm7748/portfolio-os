@@ -1,4 +1,3 @@
-// app/auth/auth-form.tsx
 'use client'
 
 import { useState } from 'react'
@@ -9,137 +8,93 @@ export default function AuthForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const supabase = createClient()
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLoading(true)
     setMessage('')
 
     try {
       if (isLogin) {
-        // Logic for LOGIN
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+        window.location.href = '/dashboard'
+      } else {
+        const { error } = await supabase.auth.signUp({
           email,
           password,
+          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
         })
-        if (error) throw error
-        setMessage('Logged in successfully! Redirecting...')
-        window.location.href = '/dashboard' // We'll improve this redirect later
-      } else {
-        // Logic for SIGN UP
-        // Logic for SIGN UP
-const { error } = await supabase.auth.signUp({
-  email,
-  password,
-  options: {
-    // This line tells Supabase where to send the email confirmation link
-    emailRedirectTo: `${window.location.origin}/auth/callback`,
-  },
-})
         if (error) throw error
         setMessage('Check your email for the confirmation link!')
       }
     } catch (error: any) {
-      if (error.message.includes('Password should be at least 6 characters')) {
-        setMessage('Error: Password must be at least 6 characters long.')
-      } else {
-        setMessage(`Error: ${error.message}`)
-      }
+      setMessage(error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
-    <div className="flex h-full flex-col justify-center">
-      {/* Tabs for Login / Sign Up - Themed to Indigo */}
-      <div className="mb-8 flex border-b">
-        <button
-          onClick={() => setIsLogin(true)}
-          className={`w-1/2 py-4 text-center text-lg font-medium ${
-            isLogin
-              ? 'border-b-2 border-indigo-600 text-indigo-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Login
-        </button>
-        <button
-          onClick={() => setIsLogin(false)}
-          className={`w-1/2 py-4 text-center text-lg font-medium ${
-            !isLogin
-              ? 'border-b-2 border-indigo-600 text-indigo-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Sign Up
-        </button>
-      </div>
-
-      <h2 className="mb-8 text-left text-3xl font-bold text-gray-900">
-        {isLogin ? 'Login to your account' : 'Create a new account'}
+    <div className="w-full">
+      <h2 className="mb-6 text-center text-2xl font-bold text-white drop-shadow-md">
+        {isLogin ? 'Welcome Back' : 'Create Account'}
       </h2>
 
-      {/* The Form - Themed to Indigo */}
-      <form onSubmit={handleAuth} className="space-y-6">
+      <form onSubmit={handleAuth} className="space-y-4">
         <div>
-          <label
-            htmlFor="email"
-            className="mb-2 block text-sm font-medium text-gray-700"
-          >
-            Email
-          </label>
+          <label className="mb-1 block text-xs font-medium text-slate-200 drop-shadow-sm">Email Address</label>
           <input
             type="email"
-            id="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full rounded-lg border border-gray-300 p-4 text-gray-900 transition focus:border-indigo-500 focus:ring-indigo-500 placeholder-gray-400"
-            placeholder="you@example.com"
+            className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-300 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 backdrop-blur-md transition-all"
+            placeholder="name@example.com"
           />
         </div>
 
         <div>
-          <label
-            htmlFor="password"
-            className="mb-2 block text-sm font-medium text-gray-700"
-          >
-            Password
-          </label>
+          <label className="mb-1 block text-xs font-medium text-slate-200 drop-shadow-sm">Password</label>
           <input
             type="password"
-            id="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-lg border border-gray-300 p-4 text-gray-900 transition focus:border-indigo-500 focus:ring-indigo-500 placeholder-gray-400"
+            className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2.5 text-sm text-white placeholder-slate-300 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 backdrop-blur-md transition-all"
             placeholder="••••••••"
           />
         </div>
 
+        {message && (
+          <p className={`text-center text-xs font-medium drop-shadow-sm ${message.includes('Check') ? 'text-green-400' : 'text-red-400'}`}>
+            {message}
+          </p>
+        )}
+
         <button
           type="submit"
-          className="w-full rounded-lg bg-indigo-600 py-3 text-center text-lg font-medium text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-300"
+          disabled={loading}
+          className="w-full rounded-lg bg-indigo-600/80 py-2.5 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-50 shadow-lg backdrop-blur-sm transition-all border border-white/10"
         >
-          {isLogin ? 'Login' : 'Sign Up'}
+          {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}
         </button>
       </form>
 
-      {/* Display messages */}
-      {message && (
-        <p className="mt-4 text-center text-sm text-red-600">{message}</p>
-      )}
-
-      {/* Toggle between login/signup - Themed to Indigo */}
-      <p className="mt-8 text-center text-sm text-gray-600">
-        {isLogin ? "Don't have an account?" : 'Already have an account?'}
+      <div className="mt-6 text-center text-xs text-slate-300">
+        <span>
+          {isLogin ? "Don't have an account?" : "Already have an account?"}
+        </span>
         <button
-          onClick={() => setIsLogin(!isLogin)}
-          className="ml-2 font-medium text-indigo-600 hover:underline"
+          onClick={() => { setIsLogin(!isLogin); setMessage(''); }}
+          className="ml-1 font-bold text-white hover:underline drop-shadow-sm"
         >
-          {isLogin ? 'Sign up' : 'Login'}
+          {isLogin ? 'Sign up' : 'Log in'}
         </button>
-      </p>
+      </div>
     </div>
   )
 }
