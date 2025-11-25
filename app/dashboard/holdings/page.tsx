@@ -234,7 +234,7 @@ export default function HoldingsPage() {
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
-          {['All', 'Stock', 'Mutual Fund', 'Gold', 'Currency'].map((tab) => (
+          {['All', 'Stock', 'Mutual Fund', 'Commodity', 'Currency'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}

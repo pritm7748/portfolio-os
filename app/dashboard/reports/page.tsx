@@ -114,7 +114,7 @@ export default function ReportsPage() {
                   let include = false
                   if (reportType === 'pnl') include = true
                   else if (reportType === 'equity' && (assetType === 'Stock' || assetType === 'Mutual Fund')) include = true
-                  else if (reportType === 'other' && (assetType === 'Gold' || assetType === 'Currency' || assetType === 'Debt')) include = true
+                  else if (reportType === 'other' && (assetType === 'Commodity' || assetType === 'Currency' || assetType === 'Debt')) include = true
 
                   if (include) {
                       processedItems.push({
@@ -206,7 +206,7 @@ export default function ReportsPage() {
                     <option value="pnl">All Realized P&L</option>
                     <option value="dividend">Dividends & Income</option>
                     <option value="equity">Capital Gains (Equity)</option>
-                    <option value="other">Capital Gains (Gold/Other)</option>
+                    <option value="other">Capital Gains (Commodity/Other)</option>
                 </select>
                 <Filter className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-slate-400" />
             </div>

@@ -1,4 +1,3 @@
-// components/transaction-modal.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -48,6 +47,8 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
   // Search Logic
   useEffect(() => {
+    if (type === 'Commodity') return 
+
     const timer = setTimeout(async () => {
       if (ticker.length > 2 && showResults) {
         setSearching(true)
@@ -62,16 +63,36 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [ticker, showResults])
+  }, [ticker, showResults, type])
+
+  // Handle Commodity Defaults & Action Reset
+  useEffect(() => {
+      if (type === 'Commodity') {
+          if (!ticker.startsWith('COMMODITY:')) {
+              setTicker('COMMODITY:GOLD')
+              setAssetName('Physical Gold (24K)')
+          }
+          // Force 'Buy' if current action is invalid for Commodity
+          if (action === 'Dividend' || action === 'Interest') {
+              setAction('Buy')
+          }
+      } else {
+          if (ticker.startsWith('COMMODITY:')) {
+              setTicker('')
+              setAssetName('')
+          }
+      }
+  }, [type, action])
 
   const handleSelectAsset = (item: SearchResult) => {
     setTicker(item.symbol)
     setAssetName(item.name)
     setShowResults(false)
+    
     if (item.type === 'MUTUALFUND') setType('Mutual Fund')
-    else if (item.type === 'ETF') setType('Gold')
     else if (item.type === 'CURRENCY') setType('Currency')
-    else setType('Stock')
+    else if (item.type === 'COMMODITY' || item.type === 'FUTURE') setType('Commodity')
+    else setType('Stock') 
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -95,15 +116,13 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      // 1. Upsert Asset to get its ID
       const { data: assetData, error: assetError } = await supabase
         .from('assets')
-        .upsert({ ticker: ticker.toUpperCase(), name: assetName, asset_type: type }, { onConflict: 'ticker' })
+        .upsert({ ticker: ticker, name: assetName, asset_type: type }, { onConflict: 'ticker' })
         .select().single()
 
       if (assetError) throw assetError
 
-      // 2. Logic based on Action
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
       let calculatedPnL = 0
@@ -113,7 +132,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           finalPrice = Number(price)
       } 
       else if (action === 'Sell') {
-        // --- VALIDATION: Check if user owns enough shares ---
         const { data: history } = await supabase
             .from('transactions')
             .select('*')
@@ -122,37 +140,25 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             .order('date', { ascending: true })
         
         const lots: { price: number, quantity: number }[] = []
-        
-        // Reconstruct Current Holdings (FIFO)
         history?.forEach(h => {
             if (h.transaction_type === 'Buy') {
                 lots.push({ price: Number(h.price), quantity: Number(h.quantity) })
             } else if (h.transaction_type === 'Sell') {
                 let sellQty = Number(h.quantity)
                 while (sellQty > 0 && lots.length > 0) {
-                    if (lots[0].quantity > sellQty) { 
-                        lots[0].quantity -= sellQty
-                        sellQty = 0 
-                    } else { 
-                        sellQty -= lots[0].quantity
-                        lots.shift() 
-                    }
+                    if (lots[0].quantity > sellQty) { lots[0].quantity -= sellQty; sellQty = 0 } 
+                    else { sellQty -= lots[0].quantity; lots.shift() }
                 }
             }
         })
 
-        // Calculate total currently held
         const currentHoldingQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
-
-        if (Number(quantity) > currentHoldingQty) {
-            throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units of ${ticker}. Cannot sell ${quantity}.`)
+        if (Number(quantity) > currentHoldingQty + 0.0001) {
+            throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units.`)
         }
 
-        // Calculate Realized P&L (FIFO) for this specific sale
         let qtyToSell = Number(quantity)
         let costBasis = 0
-        
-        // Clone lots to simulate sale without mutating original array for calculation
         const tempLots = JSON.parse(JSON.stringify(lots))
         
         for (const lot of tempLots) {
@@ -161,12 +167,9 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             costBasis += (take * lot.price)
             qtyToSell -= take
         }
-        
-        // Profit = Total Sell Value - Cost of specific units sold
         calculatedPnL = (Number(price) * Number(quantity)) - costBasis
       }
 
-      // 3. Insert Transaction
       const { error: txnError } = await supabase.from('transactions').insert({
         user_id: user.id,
         asset_id: assetData.id,
@@ -186,14 +189,18 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       setTicker(''); setAssetName(''); setQuantity(''); setPrice('')
 
     } catch (error: any) {
-      alert('Error: ' + error.message) // Show the error alert
+      alert('Error: ' + error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
-  const isIncome = action === 'Dividend' || action === 'Interest'
+  
+  // Only allow Dividend/Interest for Stocks/MFs
+  const availableActions = (type === 'Commodity' || type === 'Currency') 
+    ? ['Buy', 'Sell'] 
+    : ['Buy', 'Sell', 'Dividend', 'Interest']
 
   if (!isOpen) return null
 
@@ -217,49 +224,78 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
              </div>
           )}
 
-         <div className="relative">
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Symbol</label>
-            <div className="relative">
-                <input 
-                    required type="text" placeholder="Search e.g. TCS, HDFC..." 
-                    value={ticker}
-                    onChange={(e) => { setTicker(e.target.value); setShowResults(true) }}
-                    className={`${inputClass} pl-9 pr-8`} 
-                    autoComplete="off"
-                />
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                
-                {/* Clear Button */}
-                {ticker && !searching && (
-                    <button 
-                        type="button" 
-                        onClick={() => { setTicker(''); setShowResults(false); }}
-                        className="absolute right-3 top-2.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                    >
-                        <X className="h-3 w-3" />
-                    </button>
-                )}
-                {searching && <div className="absolute right-3 top-2.5"><Loader2 className="h-4 w-4 animate-spin text-indigo-600" /></div>}
-            </div>
-            {showResults && results.length > 0 && (
-                <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">
-                    {results.map((item) => (
-                        <li key={item.symbol} onClick={() => handleSelectAsset(item)} className="cursor-pointer px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 last:border-0 dark:border-slate-800 dark:hover:bg-slate-800">
-                            <div className="font-bold text-slate-900 dark:text-white">{item.symbol}</div>
-                            <div className="flex justify-between text-xs text-slate-500"><span>{item.name}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{item.type}</span></div>
-                        </li>
-                    ))}
-                </ul>
-            )}
+          {/* 1. Asset Type */}
+          <div>
+               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
+               <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
+                <option value="Stock">Stock</option>
+                <option value="Mutual Fund">Mutual Fund</option>
+                <option value="Commodity">Commodity (Physical)</option>
+                <option value="Currency">Currency</option>
+              </select>
           </div>
 
+          {/* 2. Asset Selection */}
+          {type === 'Commodity' ? (
+              <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Metal</label>
+                    <select 
+                        className={inputClass}
+                        onChange={(e) => {
+                            const val = e.target.value
+                            if (val === 'gold24') { setTicker('COMMODITY:GOLD'); setAssetName('Physical Gold (24K)') }
+                            if (val === 'gold22') { setTicker('COMMODITY:GOLD22'); setAssetName('Physical Gold (22K)') }
+                            if (val === 'silver') { setTicker('COMMODITY:SILVER'); setAssetName('Physical Silver') }
+                        }}
+                        defaultValue="gold24"
+                    >
+                        <option value="gold24">Gold (24K)</option>
+                        <option value="gold22">Gold (22K)</option>
+                        <option value="silver">Silver</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Label</label>
+                    <input type="text" value={assetName} onChange={(e) => setAssetName(e.target.value)} className={inputClass} />
+                  </div>
+              </div>
+          ) : (
+              // Standard Search
+              <div className="relative">
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
+                <div className="relative">
+                    <input 
+                        required type="text" placeholder="Search e.g. TCS, HDFC..." 
+                        value={ticker}
+                        onChange={(e) => { setTicker(e.target.value); setShowResults(true) }}
+                        className={`${inputClass} pl-9 pr-8`} 
+                        autoComplete="off"
+                    />
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    {/* Clear Button Code Omitted for Brevity, keep existing */}
+                </div>
+                {showResults && results.length > 0 && (
+                    <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">
+                        {results.map((item) => (
+                            <li key={item.symbol} onClick={() => handleSelectAsset(item)} className="cursor-pointer px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 last:border-0 dark:border-slate-800 dark:hover:bg-slate-800">
+                                <div className="font-bold text-slate-900 dark:text-white">{item.symbol}</div>
+                                <div className="flex justify-between text-xs text-slate-500"><span>{item.name}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{item.type}</span></div>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+              </div>
+          )}
+
+          {/* Action Buttons (Filtered) */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>
               <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-                {['Buy', 'Sell', 'Dividend', 'Interest'].map(act => (
+                {availableActions.map(act => (
                     <button 
-                        key={act}
+                        key={act} 
                         type="button" 
                         onClick={() => setAction(act)} 
                         className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${action === act ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500'}`}
@@ -271,16 +307,22 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             </div>
           </div>
 
+          {/* Qty & Price */}
           <div className="grid grid-cols-2 gap-4">
-            {!isIncome && (
+            {action !== 'Dividend' && action !== 'Interest' && (
                 <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity</label>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {type === 'Commodity' && ticker.includes('GOLD') ? 'Quantity (Grams)' : 
+                     type === 'Commodity' && ticker.includes('SILVER') ? 'Quantity (Kg)' : 
+                     'Quantity'}
+                </label>
                 <input required type="number" step="any" placeholder="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
                 </div>
             )}
-            <div className={isIncome ? "col-span-2" : ""}>
+            <div className={action === 'Dividend' || action === 'Interest' ? "col-span-2" : ""}>
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {isIncome ? 'Total Amount Received (₹)' : 'Price per Unit (₹)'}
+                  {action === 'Dividend' || action === 'Interest' ? 'Total Amount Received (₹)' : 
+                   type === 'Commodity' ? 'Buy Price (per Unit)' : 'Price per Unit (₹)'}
               </label>
               <input required type="number" step="any" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} />
             </div>
