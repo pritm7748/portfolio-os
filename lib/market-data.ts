@@ -25,6 +25,10 @@ export const INDICES = [
     { name: 'NIFTY HEALTHCARE', ticker: 'NIFTY_HEALTHCARE.NS' },
     { name: 'NIFTY CONSUMER DURABLES', ticker: '^CNXCONSUM' },
     { name: 'NIFTY FIN SERVICE', ticker: '^CNXFIN' },
+    { name: 'NIFTY COMMODITIES', ticker: '^CNXCMDT'},
+    { name: 'NIFTY CAPITAL MARKETS', ticker: '^NIFTY_CAPITAL_MKT.NS'},
+    { name: 'NIFTY CHEMICALS', ticker: 'NIFTY_CHEMICALS.NS'},
+
 ]
 
 // Full constituent lists for each index
