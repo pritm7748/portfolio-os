@@ -26,7 +26,7 @@ export const INDICES = [
     { name: 'NIFTY CONSUMER DURABLES', ticker: '^CNXCONSUM' },
     { name: 'NIFTY FIN SERVICE', ticker: '^CNXFIN' },
     { name: 'NIFTY COMMODITIES', ticker: '^CNXCMDT'},
-    { name: 'NIFTY CAPITAL MARKETS', ticker: '^NIFTY_CAPITAL_MKT.NS'},
+    { name: 'NIFTY CAPITAL MARKETS', ticker: 'NIFTY_CAPITAL_MKT.NS'},
     { name: 'NIFTY CHEMICALS', ticker: 'NIFTY_CHEMICALS.NS'},
 
 ]
@@ -164,12 +164,12 @@ export const SECTOR_CONSTITUENTS: Record<string, string[]> = {
         'TATASTEEL.NS', 'NMDC.NS', 'NATIONALUM.NS'
     ],
 
-    '^NIFTY_CAPITAL_MKT.NS': [
+    'NIFTY_CAPITAL_MKT.NS': [
         'CAMS.NS', 'CDSL.NS', 'HDFCAMC.NS', 'ISEC.NS', 'KFINTECH.NS',
         'MCX.NS', 'PFS.NS', 'RECLTD.NS', 'SBICARD.NS', 'PFC.NS', 'UTIAMC.NS'
     ],
 
-    '^NIFTY_CHEMICALS.NS': [
+    'NIFTY_CHEMICALS.NS': [
         'AARTIIND.NS', 'ALKYLAMINE.NS', 'ATUL.NS', 'COROMANDEL.NS',
         'DEEPAKNTR.NS', 'GODREJIND.NS', 'GNFC.NS', 'GFL.NS',
         'JUBLINGREA.NS', 'NAVINFLUOR.NS', 'PIIND.NS', 'PRAJIND.NS',
