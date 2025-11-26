@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X } from 'lucide-react'
+import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
@@ -314,6 +314,11 @@ export default function HoldingsPage() {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+        <Info className="h-4 w-4" />
+        <span>Note: Commodity prices (Gold/Silver) are approximations based on global spot rates and may differ slightly from local physical market rates.</span>
       </div>
 
       <TransactionModal 
