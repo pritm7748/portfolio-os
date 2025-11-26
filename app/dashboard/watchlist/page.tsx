@@ -85,8 +85,8 @@ export default function WatchlistPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Watchlist</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">Track assets you are interested in.</p>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white"></h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400"></p>
       </div>
 
       {/* Search Bar */}

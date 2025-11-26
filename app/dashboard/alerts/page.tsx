@@ -1,22 +1,22 @@
-// app/dashboard/alerts/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Loader2, Trash2, Bell, BellRing, CheckCircle } from 'lucide-react'
+import { Loader2, Trash2, Bell, BellRing, CheckCircle, RefreshCw } from 'lucide-react' // Added RefreshCw
 
 type Alert = {
   id: number
   ticker: string
   target_price: number
   condition: 'above' | 'below'
-  triggered_at: string | null
+  triggered_at: string | null 
   created_at: string
 }
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
+  const [checking, setChecking] = useState(false) // State for manual check
   const supabase = createClient()
 
   const fetchAlerts = async () => {
@@ -42,8 +42,63 @@ export default function AlertsPage() {
   const handleDelete = async (id: number) => {
     await supabase.from('price_alerts').delete().eq('id', id)
     setAlerts(alerts.filter(a => a.id !== id))
-    // Force refresh to update header count immediately
     window.location.reload() 
+  }
+
+  // --- MANUAL TRIGGER FUNCTION ---
+  const runManualCheck = async () => {
+      setChecking(true)
+      try {
+          // We call the same API that the Cron Job uses
+          // Note: You might need to temporarily remove the CRON_SECRET check in /api/cron 
+          // OR create a new public route for manual testing. 
+          // For now, let's simulate the check client-side for immediate feedback.
+          
+          const activeAlerts = alerts.filter(a => !a.triggered_at)
+          if (activeAlerts.length === 0) {
+              alert("No active alerts to check.")
+              return
+          }
+
+          const tickers = activeAlerts.map(a => a.ticker)
+          const res = await fetch('/api/prices', {
+              method: 'POST',
+              body: JSON.stringify({ tickers })
+          })
+          const prices = await res.json()
+
+          let triggeredCount = 0
+          
+          for (const alert of activeAlerts) {
+              const currentPrice = prices[alert.ticker]
+              if (!currentPrice) continue
+
+              let triggered = false
+              if (alert.condition === 'above' && currentPrice >= alert.target_price) triggered = true
+              if (alert.condition === 'below' && currentPrice <= alert.target_price) triggered = true
+
+              if (triggered) {
+                  await supabase
+                    .from('price_alerts')
+                    .update({ triggered_at: new Date().toISOString() })
+                    .eq('id', alert.id)
+                  triggeredCount++
+              }
+          }
+
+          if (triggeredCount > 0) {
+              alert(`Success! ${triggeredCount} alerts triggered.`)
+              window.location.reload() // Refresh to see red dot
+          } else {
+              alert("Checked prices. No new alerts triggered.")
+          }
+
+      } catch (e) {
+          console.error(e)
+          alert("Failed to check prices")
+      } finally {
+          setChecking(false)
+      }
   }
 
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
@@ -53,11 +108,25 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">
-      
+      <div className="flex items-center justify-between">
+        <div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Alerts & Notifications</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Manage your price targets.</p>
+        </div>
+        <button 
+            onClick={runManualCheck} 
+            disabled={checking}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Check Prices Now
+        </button>
+      </div>
+
       {/* 1. NOTIFICATIONS (Triggered) */}
       <div className="space-y-4">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
-            <BellRing className="h-4 w-4" /> Alerts & Notifications
+            <BellRing className="h-4 w-4" /> New Notifications
           </h3>
           
           {triggeredAlerts.length === 0 ? (
@@ -98,7 +167,7 @@ export default function AlertsPage() {
       {/* 2. ACTIVE WATCHLIST */}
       <div className="space-y-4">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
-            <Bell className="h-4 w-4" /> Active Price Targets
+            <Bell className="h-4 w-4" /> Active Watchlist
           </h3>
 
           {activeAlerts.length === 0 ? (
