@@ -171,36 +171,7 @@ export default function HoldingsPage() {
     }
   }, [supabase, selectedPortfolio])
 
-  // 1. Initial Load of Holdings
   useEffect(() => { fetchHoldings() }, [fetchHoldings])
-
-  // 2. NEW: Auto-Check for Corporate Actions (Splits/Bonus) on Page Load
-  useEffect(() => {
-    const checkCorporateActions = async () => {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        try {
-            // Fire the check to the API (POST method triggers the user-specific check)
-            const res = await fetch('/api/actions', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: user.id })
-            })
-            const data = await res.json()
-
-            // If the API reports that it processed new splits, REFRESH the table
-            if (data.success && data.processed > 0) {
-                console.log('Corporate actions applied:', data.logs)
-                fetchHoldings() // This refreshes the UI automatically
-            }
-        } catch (err) {
-            console.error('Background corporate action check failed', err)
-        }
-    }
-
-    checkCorporateActions()
-  }, [supabase, fetchHoldings])
 
   const handleRowClick = (asset: Holding) => {
     // CHANGED: Pass ALL merged asset IDs to the drawer
@@ -326,7 +297,7 @@ export default function HoldingsPage() {
                       ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-right font-medium text-indigo-600 dark:text-indigo-400">
-                        ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                       ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">
                       ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
