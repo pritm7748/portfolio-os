@@ -34,7 +34,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
   const supabase = createClient()
 
-  // Initialize Target Portfolio
   useEffect(() => {
     if (isOpen) {
         if (selectedPortfolio.id !== 'all') {
@@ -45,7 +44,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     }
   }, [isOpen, selectedPortfolio, portfolios])
 
-  // Search Logic
   useEffect(() => {
     if (type === 'Commodity') return 
 
@@ -65,14 +63,12 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     return () => clearTimeout(timer)
   }, [ticker, showResults, type])
 
-  // Handle Commodity Defaults & Action Reset
   useEffect(() => {
       if (type === 'Commodity') {
           if (!ticker.startsWith('COMMODITY:')) {
               setTicker('COMMODITY:GOLD')
               setAssetName('Physical Gold (24K)')
           }
-          // Force 'Buy' if current action is invalid for Commodity
           if (action === 'Dividend' || action === 'Interest') {
               setAction('Buy')
           }
@@ -103,7 +99,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
-      // 1. Resolve Portfolio ID
       let finalPortfolioId = targetPortfolioId
       if (!finalPortfolioId || finalPortfolioId === 0) {
           const { data: userPortfolios } = await supabase.from('portfolios').select('id').eq('user_id', user.id)
@@ -117,31 +112,14 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      // ------------------------------------------------------------------
-      // 2. SECURITY FIX: Find or Create Asset (Replaces dangerous Upsert)
-      // ------------------------------------------------------------------
-      
-      // Attempt to find the existing asset
-      let { data: assetData, error: findError } = await supabase
+      // RESTORED: Simple UPSERT (The way it was before)
+      const { data: assetData, error: assetError } = await supabase
         .from('assets')
-        .select('*')
-        .eq('ticker', ticker)
-        .maybeSingle()
+        .upsert({ ticker: ticker, name: assetName, asset_type: type }, { onConflict: 'ticker' })
+        .select()
+        .single()
 
-      if (findError) throw findError
-
-      // If it doesn't exist, create it (INSERT only)
-      if (!assetData) {
-        const { data: newAsset, error: createError } = await supabase
-          .from('assets')
-          .insert({ ticker: ticker, name: assetName, asset_type: type })
-          .select()
-          .single()
-        
-        if (createError) throw createError
-        assetData = newAsset
-      }
-      // ------------------------------------------------------------------
+      if (assetError) throw assetError
 
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
@@ -173,7 +151,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         })
 
         const currentHoldingQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
-        // Check for float precision issues
         if (Number(quantity) > currentHoldingQty + 0.0001) {
             throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units.`)
         }
@@ -207,7 +184,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       alert('Transaction saved!')
       onSuccess()
       onClose()
-      // Reset form
       setTicker(''); setAssetName(''); setQuantity(''); setPrice('')
 
     } catch (error: any) {
@@ -219,7 +195,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
   const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
   
-  // Only allow Dividend/Interest for Stocks/MFs
   const availableActions = (type === 'Commodity' || type === 'Currency') 
     ? ['Buy', 'Sell'] 
     : ['Buy', 'Sell', 'Dividend', 'Interest']
@@ -246,7 +221,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
              </div>
           )}
 
-          {/* 1. Asset Type */}
           <div>
                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
                <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
@@ -257,7 +231,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </select>
           </div>
 
-          {/* 2. Asset Selection */}
           {type === 'Commodity' ? (
               <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -283,7 +256,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                   </div>
               </div>
           ) : (
-              // Standard Search
               <div className="relative">
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
                 <div className="relative">
@@ -309,7 +281,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           )}
 
-          {/* Action Buttons (Filtered) */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>
@@ -328,7 +299,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             </div>
           </div>
 
-          {/* Qty & Price */}
           <div className="grid grid-cols-2 gap-4">
             {action !== 'Dividend' && action !== 'Interest' && (
                 <div>
