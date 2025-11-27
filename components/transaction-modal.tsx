@@ -1,3 +1,4 @@
+// components/transaction-modal.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -34,6 +35,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
   const supabase = createClient()
 
+  // Initialize Target Portfolio
   useEffect(() => {
     if (isOpen) {
         if (selectedPortfolio.id !== 'all') {
@@ -44,6 +46,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     }
   }, [isOpen, selectedPortfolio, portfolios])
 
+  // Search Logic (Skip for Commodities)
   useEffect(() => {
     if (type === 'Commodity') return 
 
@@ -63,6 +66,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     return () => clearTimeout(timer)
   }, [ticker, showResults, type])
 
+  // Handle Commodity Defaults
   useEffect(() => {
       if (type === 'Commodity') {
           if (!ticker.startsWith('COMMODITY:')) {
@@ -78,7 +82,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               setAssetName('')
           }
       }
-  }, [type, action])
+  }, [type])
 
   const handleSelectAsset = (item: SearchResult) => {
     setTicker(item.symbol)
@@ -112,15 +116,15 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      // RESTORED: Simple UPSERT (The way it was before)
+      // 1. Upsert Asset
       const { data: assetData, error: assetError } = await supabase
         .from('assets')
         .upsert({ ticker: ticker, name: assetName, asset_type: type }, { onConflict: 'ticker' })
-        .select()
-        .single()
+        .select().single()
 
       if (assetError) throw assetError
 
+      // 2. Logic based on Action
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
       let calculatedPnL = 0
@@ -130,6 +134,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           finalPrice = Number(price)
       } 
       else if (action === 'Sell') {
+        // --- VALIDATION: Check Holdings ---
         const { data: history } = await supabase
             .from('transactions')
             .select('*')
@@ -151,10 +156,13 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         })
 
         const currentHoldingQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
+        
+        // ALLOW 0.0001 MARGIN FOR FLOATING POINT ERRORS
         if (Number(quantity) > currentHoldingQty + 0.0001) {
             throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units.`)
         }
 
+        // Calculate FIFO P&L
         let qtyToSell = Number(quantity)
         let costBasis = 0
         const tempLots = JSON.parse(JSON.stringify(lots))
@@ -194,6 +202,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   }
 
   const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
+  const isIncome = action === 'Dividend' || action === 'Interest'
   
   const availableActions = (type === 'Commodity' || type === 'Currency') 
     ? ['Buy', 'Sell'] 
@@ -221,6 +230,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
              </div>
           )}
 
+          {/* 1. Asset Type */}
           <div>
                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
                <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
@@ -231,6 +241,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </select>
           </div>
 
+          {/* 2. Asset Selection */}
           {type === 'Commodity' ? (
               <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -256,6 +267,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                   </div>
               </div>
           ) : (
+              // Standard Search
               <div className="relative">
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
                 <div className="relative">
@@ -267,6 +279,17 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                         autoComplete="off"
                     />
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    
+                    {ticker && !searching && (
+                        <button 
+                            type="button" 
+                            onClick={() => { setTicker(''); setShowResults(false); }}
+                            className="absolute right-3 top-2.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                        >
+                            <X className="h-3 w-3" />
+                        </button>
+                    )}
+                    {searching && <div className="absolute right-3 top-2.5"><Loader2 className="h-4 w-4 animate-spin text-indigo-600" /></div>}
                 </div>
                 {showResults && results.length > 0 && (
                     <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">
@@ -281,6 +304,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           )}
 
+          {/* Action Buttons (Filtered) */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>
@@ -299,8 +323,9 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             </div>
           </div>
 
+          {/* Qty & Price */}
           <div className="grid grid-cols-2 gap-4">
-            {action !== 'Dividend' && action !== 'Interest' && (
+            {!isIncome && (
                 <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                     {type === 'Commodity' && ticker.includes('GOLD') ? 'Quantity (Grams)' : 
@@ -310,10 +335,10 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                 <input required type="number" step="any" placeholder="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
                 </div>
             )}
-            <div className={action === 'Dividend' || action === 'Interest' ? "col-span-2" : ""}>
+            <div className={isIncome ? "col-span-2" : ""}>
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {action === 'Dividend' || action === 'Interest' ? 'Total Amount Received (₹)' : 
-                   type === 'Commodity' ? 'Buy Price (per Unit)' : 'Price per Unit (₹)'}
+                  {isIncome ? 'Total Amount Received (₹)' : 
+                   type === 'Commodity' ? 'Price per Unit (₹)' : 'Price per Unit (₹)'}
               </label>
               <input required type="number" step="any" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} />
             </div>
