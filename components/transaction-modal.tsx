@@ -103,6 +103,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
+      // 1. Resolve Portfolio ID
       let finalPortfolioId = targetPortfolioId
       if (!finalPortfolioId || finalPortfolioId === 0) {
           const { data: userPortfolios } = await supabase.from('portfolios').select('id').eq('user_id', user.id)
@@ -116,12 +117,31 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      const { data: assetData, error: assetError } = await supabase
+      // ------------------------------------------------------------------
+      // 2. SECURITY FIX: Find or Create Asset (Replaces dangerous Upsert)
+      // ------------------------------------------------------------------
+      
+      // Attempt to find the existing asset
+      let { data: assetData, error: findError } = await supabase
         .from('assets')
-        .upsert({ ticker: ticker, name: assetName, asset_type: type }, { onConflict: 'ticker' })
-        .select().single()
+        .select('*')
+        .eq('ticker', ticker)
+        .maybeSingle()
 
-      if (assetError) throw assetError
+      if (findError) throw findError
+
+      // If it doesn't exist, create it (INSERT only)
+      if (!assetData) {
+        const { data: newAsset, error: createError } = await supabase
+          .from('assets')
+          .insert({ ticker: ticker, name: assetName, asset_type: type })
+          .select()
+          .single()
+        
+        if (createError) throw createError
+        assetData = newAsset
+      }
+      // ------------------------------------------------------------------
 
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
@@ -153,6 +173,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         })
 
         const currentHoldingQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
+        // Check for float precision issues
         if (Number(quantity) > currentHoldingQty + 0.0001) {
             throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units.`)
         }
@@ -186,6 +207,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       alert('Transaction saved!')
       onSuccess()
       onClose()
+      // Reset form
       setTicker(''); setAssetName(''); setQuantity(''); setPrice('')
 
     } catch (error: any) {
@@ -273,7 +295,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                         autoComplete="off"
                     />
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    {/* Clear Button Code Omitted for Brevity, keep existing */}
                 </div>
                 {showResults && results.length > 0 && (
                     <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">

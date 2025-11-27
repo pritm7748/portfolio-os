@@ -1,4 +1,3 @@
-// components/corporate-action-modal.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -19,7 +18,6 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
   const [loading, setLoading] = useState(false)
   
   // Form States
-  const [targetPortfolioId, setTargetPortfolioId] = useState<number>(0)
   const [ticker, setTicker] = useState('')
   const [assetName, setAssetName] = useState('')
   const [type, setType] = useState<'Split' | 'Bonus'>('Split')
@@ -34,14 +32,7 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
 
   const supabase = createClient()
 
-  useEffect(() => {
-    if (isOpen && portfolios.length > 0) {
-        if (selectedPortfolio.id !== 'all') setTargetPortfolioId(selectedPortfolio.id as number)
-        else setTargetPortfolioId(portfolios[0].id as number)
-    }
-  }, [isOpen, selectedPortfolio, portfolios])
-
-  // Search Logic (Reused)
+  // Search Logic
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (ticker.length > 2 && showResults) {
@@ -67,7 +58,7 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!confirm(`This will adjust ALL historical transactions for ${ticker} before ${exDate}. This cannot be undone easily. Proceed?`)) return
+    if (!confirm(`This will adjust ALL historical transactions for ${ticker} across ALL portfolios. Proceed?`)) return
 
     setLoading(true)
     try {
@@ -81,13 +72,25 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
         .eq('ticker', ticker)
         .single()
       
-      if (!assetData) throw new Error('Asset not found in database. Add a transaction first.')
+      if (!assetData) throw new Error('Asset not found in database.')
 
-      // 2. Calculate Adjustment Factor
-      // Split 10:1 means "10 new for 1 old" -> Factor = 10
-      // Bonus 1:1 means "1 bonus for 1 old" -> Total 2 -> Factor = 2
-      // Bonus 2:1 means "2 bonus for 1 old" -> Total 3 -> Factor = 3
-      
+      // 2. Check for Duplicate Action
+      const { data: existing } = await supabase
+        .from('applied_actions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('ticker', ticker)
+        .eq('ex_date', exDate)
+        .maybeSingle()
+    
+      if (existing) {
+          if (!confirm('A corporate action for this date was already recorded. Do you want to apply it again anyway?')) {
+              setLoading(false)
+              return
+          }
+      }
+
+      // 3. Calculate Adjustment Factor
       let factor = 1
       const rA = Number(ratioA)
       const rB = Number(ratioB)
@@ -101,31 +104,38 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
 
       if (isNaN(factor) || factor <= 0) throw new Error('Invalid Ratio')
 
-      // 3. Fetch Affected Transactions
+      // 4. Fetch Affected Transactions (GLOBAL for User)
       const { data: transactions } = await supabase
         .from('transactions')
         .select('*')
+        .eq('user_id', user.id) // Ensure we only touch this user's data
         .eq('asset_id', assetData.id)
-        .eq('portfolio_id', targetPortfolioId)
         .lt('date', exDate) // Only transactions BEFORE Ex-Date
 
       if (!transactions || transactions.length === 0) throw new Error('No transactions found before this date.')
 
-      // 4. Update Each Transaction
+      // 5. Update Each Transaction
       for (const txn of transactions) {
           const newQty = Number(txn.quantity) * factor
           const newPrice = Number(txn.price) / factor
           
-          // Update Buy/Sell Records
           await supabase
             .from('transactions')
             .update({
                 quantity: newQty,
                 price: newPrice,
-                // Note: total_value stays roughly the same, but we let DB/Logic handle it
             })
             .eq('id', txn.id)
       }
+
+      // 6. Record the Action (To prevent Auto-Cron from re-doing it)
+      await supabase.from('applied_actions').insert({
+          user_id: user.id,
+          ticker: ticker,
+          action_type: type.toUpperCase(),
+          ex_date: exDate,
+          ratio: `${ratioA}:${ratioB}`
+      })
 
       alert(`Success! Adjusted ${transactions.length} transactions by factor ${factor.toFixed(2)}x`)
       onSuccess()
