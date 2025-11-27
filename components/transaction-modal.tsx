@@ -1,8 +1,7 @@
-// components/transaction-modal.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Loader2, Search } from 'lucide-react'
+import { X, Loader2, Search, Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -66,17 +65,20 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     return () => clearTimeout(timer)
   }, [ticker, showResults, type])
 
-  // Handle Commodity Defaults
+  // Handle Commodity Defaults & Action Reset
   useEffect(() => {
       if (type === 'Commodity') {
+          // Default to Gold 24K if entering commodity mode
           if (!ticker.startsWith('COMMODITY:')) {
               setTicker('COMMODITY:GOLD')
               setAssetName('Physical Gold (24K)')
           }
+          // Force 'Buy' if current action is invalid for Commodity
           if (action === 'Dividend' || action === 'Interest') {
               setAction('Buy')
           }
       } else {
+          // Clear ticker if switching away from Commodity
           if (ticker.startsWith('COMMODITY:')) {
               setTicker('')
               setAssetName('')
@@ -134,7 +136,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           finalPrice = Number(price)
       } 
       else if (action === 'Sell') {
-        // --- VALIDATION: Check Holdings ---
         const { data: history } = await supabase
             .from('transactions')
             .select('*')
@@ -156,13 +157,10 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         })
 
         const currentHoldingQty = lots.reduce((sum, lot) => sum + lot.quantity, 0)
-        
-        // ALLOW 0.0001 MARGIN FOR FLOATING POINT ERRORS
         if (Number(quantity) > currentHoldingQty + 0.0001) {
-            throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units.`)
+            throw new Error(`Insufficient Holdings! You only own ${currentHoldingQty} units of ${assetName}.`)
         }
 
-        // Calculate FIFO P&L
         let qtyToSell = Number(quantity)
         let costBasis = 0
         const tempLots = JSON.parse(JSON.stringify(lots))
@@ -204,6 +202,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
   const isIncome = action === 'Dividend' || action === 'Interest'
   
+  // Filter available actions
   const availableActions = (type === 'Commodity' || type === 'Currency') 
     ? ['Buy', 'Sell'] 
     : ['Buy', 'Sell', 'Dividend', 'Interest']
@@ -268,39 +267,49 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           ) : (
               // Standard Search
-              <div className="relative">
-                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
-                <div className="relative">
-                    <input 
-                        required type="text" placeholder="Search e.g. TCS, HDFC..." 
-                        value={ticker}
-                        onChange={(e) => { setTicker(e.target.value); setShowResults(true) }}
-                        className={`${inputClass} pl-9 pr-8`} 
-                        autoComplete="off"
-                    />
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    
-                    {ticker && !searching && (
-                        <button 
-                            type="button" 
-                            onClick={() => { setTicker(''); setShowResults(false); }}
-                            className="absolute right-3 top-2.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                        >
-                            <X className="h-3 w-3" />
-                        </button>
+              <div>
+                  <div className="relative">
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
+                    <div className="relative">
+                        <input 
+                            required type="text" placeholder="Search e.g. TCS, HDFC..." 
+                            value={ticker}
+                            onChange={(e) => { setTicker(e.target.value); setShowResults(true) }}
+                            className={`${inputClass} pl-9 pr-8`} 
+                            autoComplete="off"
+                        />
+                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        
+                        {ticker && !searching && (
+                            <button 
+                                type="button" 
+                                onClick={() => { setTicker(''); setShowResults(false); }}
+                                className="absolute right-3 top-2.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                            >
+                                <X className="h-3 w-3" />
+                            </button>
+                        )}
+                        {searching && <div className="absolute right-3 top-2.5"><Loader2 className="h-4 w-4 animate-spin text-indigo-600" /></div>}
+                    </div>
+                    {showResults && results.length > 0 && (
+                        <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">
+                            {results.map((item) => (
+                                <li key={item.symbol} onClick={() => handleSelectAsset(item)} className="cursor-pointer px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 last:border-0 dark:border-slate-800 dark:hover:bg-slate-800">
+                                    <div className="font-bold text-slate-900 dark:text-white">{item.symbol}</div>
+                                    <div className="flex justify-between text-xs text-slate-500"><span>{item.name}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{item.type}</span></div>
+                                </li>
+                            ))}
+                        </ul>
                     )}
-                    {searching && <div className="absolute right-3 top-2.5"><Loader2 className="h-4 w-4 animate-spin text-indigo-600" /></div>}
-                </div>
-                {showResults && results.length > 0 && (
-                    <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:bg-slate-900 dark:border-slate-700">
-                        {results.map((item) => (
-                            <li key={item.symbol} onClick={() => handleSelectAsset(item)} className="cursor-pointer px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 last:border-0 dark:border-slate-800 dark:hover:bg-slate-800">
-                                <div className="font-bold text-slate-900 dark:text-white">{item.symbol}</div>
-                                <div className="flex justify-between text-xs text-slate-500"><span>{item.name}</span><span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{item.type}</span></div>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                  </div>
+                  
+                  {/* --- DISCLAIMER ADDED HERE --- */}
+                  <div className="mt-2 flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-900/10 p-2 rounded border border-amber-100 dark:border-amber-900/20">
+                    <Info className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                    <span>
+                        <strong className="text-amber-600 dark:text-amber-500">Tip:</strong> For Indian stocks, select tickers ending in <b>.NS</b> (NSE) or <b>.BO</b> (BSE) to ensure correct currency (INR).
+                    </span>
+                  </div>
               </div>
           )}
 
@@ -328,7 +337,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             {!isIncome && (
                 <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {type === 'Commodity' && ticker.includes('GOLD') ? 'Quantity (Grams)' : 
+                    {type === 'Commodity' && ticker.includes('GOLD') ? 'Quantity (10 Grams)' : 
                      type === 'Commodity' && ticker.includes('SILVER') ? 'Quantity (Kg)' : 
                      'Quantity'}
                 </label>

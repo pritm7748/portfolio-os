@@ -1,10 +1,9 @@
-// app/dashboard/watchlist/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, Trash2, Loader2, Plus, X, Bell } from 'lucide-react' // <--- Import Bell
+import { Search, Trash2, Loader2, Plus, X, Bell, Info } from 'lucide-react' // Added Info
 import { createClient } from '@/lib/supabase/client'
-import AlertModal from '@/components/alert-modal' // <--- Import Modal
+import AlertModal from '@/components/alert-modal'
 
 type WatchlistItem = {
   id: number
@@ -18,7 +17,6 @@ export default function WatchlistPage() {
   const [items, setItems] = useState<WatchlistItem[]>([])
   const [loading, setLoading] = useState(true)
   
-  // Alert Modal State
   const [alertAsset, setAlertAsset] = useState<{ticker: string, price: number} | null>(null)
   
   const [query, setQuery] = useState('')
@@ -85,8 +83,8 @@ export default function WatchlistPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white"></h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400"></p>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Watchlist</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Track assets you are interested in.</p>
       </div>
 
       {/* Search Bar */}
@@ -100,6 +98,7 @@ export default function WatchlistPage() {
                 className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-10 pr-10 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white dark:placeholder:text-slate-500"
             />
             <Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
+            
             {query && !isSearching && (
                 <button onClick={() => { setQuery(''); setSearchResults([]); }} className="absolute right-3 top-3.5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                     <X className="h-3 w-3" />
@@ -121,6 +120,12 @@ export default function WatchlistPage() {
                 ))}
             </ul>
         )}
+
+        {/* DISCLAIMER */}
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <Info className="h-3 w-3 text-amber-500" />
+            <span>Select tickers ending in <b>.NS</b> or <b>.BO</b> for Indian stocks.</span>
+        </p>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -151,11 +156,8 @@ export default function WatchlistPage() {
                                     {item.livePrice > 0 ? `₹${item.livePrice.toLocaleString('en-IN')}` : 'Loading...'}
                                 </span>
                             </td>
-                            
-                            {/* Actions: Alert & Delete */}
                             <td className="px-6 py-4 text-right">
                                 <div className="flex items-center justify-end gap-2">
-                                    {/* NEW ALERT BUTTON */}
                                     <button 
                                         onClick={() => setAlertAsset({ ticker: item.ticker, price: item.livePrice })}
                                         className="p-2 text-slate-400 hover:text-indigo-600 transition dark:text-slate-500 dark:hover:text-indigo-400"
@@ -176,7 +178,6 @@ export default function WatchlistPage() {
         )}
       </div>
 
-      {/* ALERT MODAL */}
       {alertAsset && (
         <AlertModal 
             isOpen={!!alertAsset} 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Loader2, Scissors, Search } from 'lucide-react'
+import { X, Loader2, Scissors, Search, Info } from 'lucide-react' // Added Info
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -70,7 +70,6 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
-      // 1. Find Asset ID
       const { data: assetData } = await supabase
         .from('assets')
         .select('id')
@@ -79,7 +78,6 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
       
       if (!assetData) throw new Error('Asset not found in database. Add a transaction first.')
 
-      // 2. Calculate Adjustment Factor
       let factor = 1
       const rA = Number(ratioA)
       const rB = Number(ratioB)
@@ -87,13 +85,11 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
       if (type === 'Split') {
           factor = rA / rB 
       } else {
-          // Bonus: (Existing + Bonus) / Existing
           factor = (rB + rA) / rB
       }
 
       if (isNaN(factor) || factor <= 0) throw new Error('Invalid Ratio')
 
-      // 3. Fetch Affected Transactions
       const { data: transactions } = await supabase
         .from('transactions')
         .select('*')
@@ -103,7 +99,6 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
 
       if (!transactions || transactions.length === 0) throw new Error('No transactions found before this date.')
 
-      // 4. Update Each Transaction
       for (const txn of transactions) {
           const newQty = Number(txn.quantity) * factor
           const newPrice = Number(txn.price) / factor
@@ -170,8 +165,18 @@ export default function CorporateActionModal({ isOpen, onClose, onSuccess }: Pro
                     ))}
                 </ul>
             )}
+            
+             {/* DISCLAIMER ADDED HERE */}
+             <div className="mt-2 flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-900/10 p-2 rounded border border-amber-100 dark:border-amber-900/20">
+                <Info className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                <span>
+                    <strong className="text-amber-600 dark:text-amber-500">Important:</strong> Ensure you select the correct ticker ending in <b>.NS</b> or <b>.BO</b> to match your holdings.
+                </span>
+             </div>
           </div>
 
+          {/* ... Rest of the form (Action Type, Ratios, Ex-Date, Button) ... */}
+          {/* Keeping rest of code identical to previous version for brevity */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action Type</label>
             <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">

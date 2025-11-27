@@ -1,31 +1,37 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Admin Client for Updates
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! 
-)
+// Service Role key needed to bypass RLS for batch updates
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY! 
 
 export async function POST(request: Request) {
   try {
     const { userId } = await request.json()
     if (!userId) return NextResponse.json({ error: 'User ID required' }, { status: 400 })
 
-    // 1. Get Distinct Assets
-    const { data: assets } = await supabase.from('assets').select('ticker, id').not('ticker', 'is', null)
+    // 1. Initialize Admin Client
+    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // 2. Get User's Distinct Tickers
+    const { data: assets } = await supabase
+        .from('assets')
+        .select('ticker, id')
+        .not('ticker', 'is', null)
+
     if (!assets || assets.length === 0) return NextResponse.json({ message: 'No assets found' })
 
     let processedCount = 0
     const logs: string[] = []
 
-    // 2. Process Each Asset
+    // 3. Iterate Tickers
     for (const asset of assets) {
         const ticker = asset.ticker
+        // Convert to Yahoo format
         let yahooTicker = ticker.toUpperCase().replace(/\s/g, '')
         if (!yahooTicker.includes('.') && !yahooTicker.includes('-')) yahooTicker += '.NS'
 
-        // 3. Fetch Splits from Yahoo (5 Years)
+        // 4. Fetch Splits from Yahoo (5 Years)
         const period1 = Math.floor(Date.now() / 1000) - (5 * 365 * 24 * 60 * 60)
         const period2 = Math.floor(Date.now() / 1000)
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?period1=${period1}&period2=${period2}&interval=1d&events=split`
@@ -38,13 +44,14 @@ export async function POST(request: Request) {
 
         const splits = Object.values(splitsObj) as any[]
 
+        // 5. Process Each Split
         for (const split of splits) {
-            const exDate = new Date(split.date * 1000).toISOString().split('T')[0]
+            const exDate = new Date(split.date * 1000).toISOString().split('T')[0] // YYYY-MM-DD
             const ratioNumerator = split.numerator
             const ratioDenominator = split.denominator
             const ratioString = `${ratioNumerator}:${ratioDenominator}`
 
-            // 4. Check if already applied
+            // A. Check if already applied to this user/ticker/date
             const { data: existing } = await supabase
                 .from('applied_actions')
                 .select('id')
@@ -55,33 +62,44 @@ export async function POST(request: Request) {
 
             if (existing) continue 
 
-            // 5. Calculate Factor
+            // B. Calculate Factor
             const factor = ratioNumerator / ratioDenominator
 
-            // 6. Fetch Transactions BEFORE Ex-Date
+            // C. Fetch Transactions created BEFORE the split Ex-Date
+            // CRITICAL CHANGE: Check 'created_at', not 'date' (Trade Date)
+            // This ensures we only modify records that existed in the system *before* the split event.
             const { data: txns } = await supabase
                 .from('transactions')
                 .select('*')
                 .eq('user_id', userId)
                 .eq('asset_id', asset.id)
-                .lt('date', exDate)
+                .lt('created_at', exDate) // <--- THE FIX
 
             if (!txns || txns.length === 0) {
-                // Log to skip next time
-                await supabase.from('applied_actions').insert({ user_id: userId, ticker, ex_date: exDate, ratio: ratioString })
+                // No relevant transactions found (user entered data after split, or didn't own it then)
+                // Log it so we don't check again
+                await supabase.from('applied_actions').insert({
+                    user_id: userId, ticker, ex_date: exDate, ratio: ratioString
+                })
                 continue
             }
 
-            // 7. Update Transactions
+            // D. Apply Updates
             for (const txn of txns) {
                 const newQty = Number(txn.quantity) * factor
                 const newPrice = Number(txn.price) / factor
                 
-                await supabase.from('transactions').update({ quantity: newQty, price: newPrice }).eq('id', txn.id)
+                await supabase
+                    .from('transactions')
+                    .update({ quantity: newQty, price: newPrice })
+                    .eq('id', txn.id)
             }
 
-            // 8. Record Action
-            await supabase.from('applied_actions').insert({ user_id: userId, ticker, ex_date: exDate, ratio: ratioString })
+            // E. Log Success
+            await supabase.from('applied_actions').insert({
+                user_id: userId, ticker, ex_date: exDate, ratio: ratioString
+            })
+            
             logs.push(`Applied ${ratioString} split for ${ticker} on ${exDate}`)
             processedCount++
         }
@@ -90,6 +108,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, processed: processedCount, logs })
 
   } catch (error: any) {
+    console.error(error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
