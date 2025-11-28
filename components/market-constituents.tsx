@@ -1,3 +1,4 @@
+// components/market-constituents.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -7,7 +8,7 @@ type Props = {
   indexName: string
   tickers: string[]
   onClose: () => void
-  filterText?: string // <--- Fixed: Added this optional prop
+  filterText?: string
 }
 
 type StockData = {
@@ -20,9 +21,6 @@ type StockData = {
 export default function MarketConstituents({ indexName, tickers, onClose, filterText = '' }: Props) {
   const [stocks, setStocks] = useState<StockData[]>([])
   const [loading, setLoading] = useState(false)
-  // We keep localSearch if you want a second search bar inside the panel, 
-  // but usually we just use the passed 'filterText' or combine them.
-  // For simplicity, let's use the passed filterText combined with local.
   const [localSearch, setLocalSearch] = useState('') 
 
   useEffect(() => {
@@ -61,7 +59,6 @@ export default function MarketConstituents({ indexName, tickers, onClose, filter
     fetchConstituents()
   }, [tickers])
 
-  // Combine Global Search (filterText) and Local Search
   const effectiveSearch = filterText || localSearch
 
   const filteredStocks = stocks.filter(stock => 
@@ -70,14 +67,17 @@ export default function MarketConstituents({ indexName, tickers, onClose, filter
   )
 
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-slate-900">
+    <div className="flex h-full flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 lg:rounded-xl lg:shadow-sm">
       
       {/* Header */}
       <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 p-4">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-                {/* Back Button for Mobile */}
-                <button onClick={onClose} className="lg:hidden p-1 -ml-2 text-slate-500">
+            <div className="flex items-center gap-3">
+                {/* Mobile Back Button */}
+                <button 
+                    onClick={onClose} 
+                    className="lg:hidden p-2 -ml-2 text-slate-600 dark:text-slate-300 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
                     <ArrowLeft className="h-5 w-5" />
                 </button>
                 
@@ -89,7 +89,7 @@ export default function MarketConstituents({ indexName, tickers, onClose, filter
                 </div>
             </div>
             
-            {/* Close Button for Desktop */}
+            {/* Desktop Close Button */}
             <button 
                 onClick={onClose} 
                 className="hidden lg:block rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
@@ -98,14 +98,14 @@ export default function MarketConstituents({ indexName, tickers, onClose, filter
             </button>
           </div>
 
-          {/* LOCAL SEARCH BAR (Optional, if you want to search specifically inside this list) */}
+          {/* Local Search */}
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input 
                 type="text"
                 value={localSearch}
                 onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder={filterText ? `Filtered by "${filterText}"` : `Search in ${indexName}...`}
+                placeholder={`Search in ${indexName}...`}
                 className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-4 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-800 dark:border-slate-700 dark:text-white"
             />
           </div>
