@@ -1,7 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { ArrowUpRight, ArrowDownRight, Wallet, PieChart as PieIcon, IndianRupee, Loader2, PiggyBank, Gem, TrendingUp, DollarSign } from 'lucide-react'
+import { ArrowUpRight, ArrowDownRight, Wallet, PieChart as PieIcon, IndianRupee, Loader2, PiggyBank, Gem, TrendingUp, DollarSign, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import AssetAllocationChart from '@/components/asset-allocation-chart'
 import MarketStatus from '@/components/market-status'
@@ -272,11 +273,21 @@ export default function DashboardPage() {
          </div>
 
          {/* Dividend Income */}
-         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-            <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"><PiggyBank className="h-5 w-5"/></div>
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Dividend Income</h3>
+         <div className="relative rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition hover:border-emerald-200 dark:hover:border-emerald-800 group">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+                        <PiggyBank className="h-5 w-5"/>
+                    </div>
+                    <h3 className="font-semibold text-slate-700 dark:text-slate-200">Dividend Income</h3>
+                </div>
+                
+                {/* THE ARROW LINK */}
+                <Link href="/dashboard/dividends" className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition dark:hover:bg-emerald-900/20">
+                    <ChevronRight className="h-5 w-5" />
+                </Link>
             </div>
+            
             <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{data.total.income.toLocaleString('en-IN')}</p>
             <p className="text-xs text-slate-400 mt-1">
                 {data.total.dividendCount > 0 
@@ -284,7 +295,7 @@ export default function DashboardPage() {
                     : 'No dividends detected yet'}
             </p>
          </div>
-      </div>
+         </div>
 
       {/* 2. CATEGORY BREAKDOWN */}
       <div>
