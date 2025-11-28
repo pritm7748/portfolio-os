@@ -1,4 +1,3 @@
-// app/dashboard/market/page.tsx
 'use client'
 
 import { useState } from 'react'
@@ -35,16 +34,15 @@ export default function MarketPage() {
   const selectedTickers = selectedSector ? (SECTOR_CONSTITUENTS[selectedSector] || []) : []
   const selectedName = INDICES.find(i => i.ticker === selectedSector)?.name || 'Select Index'
 
-  // Dynamic Grid: If panel open, use fewer columns.
   const gridClass = selectedSector 
     ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' 
     : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 relative items-start min-h-screen">
+    <div className="flex flex-col lg:flex-row gap-6 relative items-start min-h-[calc(100vh-100px)]">
       
-      {/* LEFT SIDE: Main Content (Flows naturally with page scroll) */}
-      <div className="flex-1 w-full">
+      {/* LEFT SIDE: Main Content */}
+      <div className="flex-1 w-full min-w-0">
         
         {/* Search Bar */}
         <div className="mb-6">
@@ -116,17 +114,10 @@ export default function MarketPage() {
       </div>
 
       {/* RIGHT SIDE: DETAILS PANEL */}
-      {/* Mobile: Full Screen Overlay. Desktop: Sticky Sidebar */}
       {selectedSector && (
         <>
-            {/* Mobile Overlay (Z-Index High) */}
+            {/* MOBILE OVERLAY (Z-Index High, Full Screen) */}
             <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 flex flex-col lg:hidden">
-                <div className="flex items-center p-4 border-b border-slate-100 dark:border-slate-800">
-                    <button onClick={handleClose} className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                        <ArrowLeft className="h-5 w-5" />
-                        <span className="font-medium">Back to Market</span>
-                    </button>
-                </div>
                 <div className="flex-1 overflow-hidden">
                     <MarketConstituents 
                         indexName={selectedName} 
@@ -137,14 +128,17 @@ export default function MarketPage() {
                 </div>
             </div>
 
-            {/* Desktop Sticky Panel */}
-            <div className="hidden lg:block w-96 flex-shrink-0 sticky top-4 h-[calc(100vh-40px)] border-l border-slate-200 dark:border-slate-800 pl-6">
-                <MarketConstituents 
-                    indexName={selectedName} 
-                    tickers={selectedTickers} 
-                    onClose={handleClose}
-                    filterText={searchQuery} 
-                />
+            {/* DESKTOP STICKY PANEL */}
+            {/* Fix: max-h-screen ensures it never grows taller than the viewport */}
+            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-0 flex-col border-l border-slate-200 dark:border-slate-800 pl-6 h-auto max-h-[calc(100vh-100px)]">
+                <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                    <MarketConstituents 
+                        indexName={selectedName} 
+                        tickers={selectedTickers} 
+                        onClose={handleClose}
+                        filterText={searchQuery} 
+                    />
+                </div>
             </div>
         </>
       )}
