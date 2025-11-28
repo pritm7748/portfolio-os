@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
     // 2. Call Gemini
     // Using "gemini-pro" or "gemini-1.5-flash" for better reasoning
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
     const result = await model.generateContent(prompt)
     const response = await result.response
     let text = response.text()
