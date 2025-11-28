@@ -2,7 +2,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Search, X, ArrowLeft } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import MarketCard from '@/components/market-card'
 import MarketConstituents from '@/components/market-constituents'
 import { INDICES, SECTOR_CONSTITUENTS } from '@/lib/market-data'
@@ -12,6 +12,7 @@ export default function MarketPage() {
   const [searchQuery, setSearchQuery] = useState('') 
   
   const toggleSector = (ticker: string) => {
+    // On Desktop: Toggle off if clicking same. On Mobile: Always open.
     if (selectedSector === ticker) {
         setSelectedSector(null)
     } else {
@@ -37,20 +38,24 @@ export default function MarketPage() {
   const selectedName = INDICES.find(i => i.ticker === selectedSector)?.name || 'Select Index'
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] overflow-hidden">
+    // Container locked to viewport height minus header (approx 80px)
+    <div className="flex h-[calc(100vh-100px)] gap-6 overflow-hidden">
       
-      {/* LEFT SIDE: THE LIST (Visible on Desktop, Hidden on Mobile if Detail is Open) */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* LEFT SIDE: MAIN SCROLLABLE LIST */}
+      <div className={`
+          flex-1 flex flex-col overflow-hidden transition-all duration-300
+          ${selectedSector ? 'lg:mr-0' : ''} 
+      `}>
         
-        {/* Search Bar Container */}
-        <div className="p-1 pb-4 flex-shrink-0">
-             <div className="relative w-full">
+        {/* Header & Search */}
+        <div className="mb-4 flex-shrink-0 pr-2">
+             <div className="relative w-full sm:max-w-md">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search indices (e.g. Bank, Auto)..."
+                    placeholder="Search indices..."
                     className="w-full h-10 rounded-lg border border-slate-300 bg-white pl-10 pr-8 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
                 />
                 {searchQuery && (
@@ -64,12 +69,15 @@ export default function MarketPage() {
              </div>
         </div>
 
-        {/* Scrollable Grid Area */}
-        <div className="flex-1 overflow-y-auto pb-20 pr-2 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto pr-2 pb-10 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
+            
             {/* Main Indices */}
             {highlights.length > 0 && (
-                <div className="mb-6">
-                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="mb-8">
+                    <h2 className="mb-4 text-xl font-bold text-slate-900 dark:text-white">Market Overview</h2>
+                    {/* Responsive Grid: 1 col mobile, up to 4 cols desktop */}
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {highlights.map(idx => (
                             <MarketCard 
                                 key={idx.ticker} 
@@ -86,8 +94,8 @@ export default function MarketPage() {
             {/* Sectoral Indices */}
             {secondary.length > 0 && (
                 <div>
-                    <h3 className="mb-3 text-xs font-semibold text-slate-500 uppercase tracking-wider dark:text-slate-400">Sectors & Themes</h3>
-                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Sectors & Themes</h3>
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {secondary.map(idx => (
                             <MarketCard 
                                 key={idx.ticker} 
@@ -111,28 +119,18 @@ export default function MarketPage() {
       </div>
 
       {/* RIGHT SIDE: DETAILS PANEL */}
-      {/* Desktop: Sticky Side Panel. Mobile: Full Screen Overlay */}
+      {/* Mobile: Fixed Full Screen Overlay. Desktop: Static Side Panel */}
       {selectedSector && (
         <div className="
-            fixed inset-0 z-50 bg-white flex flex-col
-            lg:static lg:z-auto lg:w-96 lg:bg-transparent lg:border-l lg:border-slate-200 lg:dark:border-slate-800 lg:ml-6
+            fixed inset-0 z-50 flex flex-col bg-white shadow-2xl
+            lg:static lg:z-auto lg:w-96 lg:bg-transparent lg:shadow-none lg:border-l lg:border-slate-200 lg:dark:border-slate-800 lg:pl-0
             dark:bg-slate-950
         ">
-            {/* Mobile Header (Back Button) */}
-            <div className="flex items-center p-4 border-b border-slate-100 dark:border-slate-800 lg:hidden">
-                <button onClick={handleClose} className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                    <ArrowLeft className="h-5 w-5" />
-                    <span className="font-medium">Back to Market</span>
-                </button>
-            </div>
-
-            {/* The Content */}
-            <div className="flex-1 overflow-hidden h-full lg:pt-0">
+            <div className="flex-1 overflow-hidden h-full">
                 <MarketConstituents 
                     indexName={selectedName} 
                     tickers={selectedTickers} 
                     onClose={handleClose}
-                    filterText={searchQuery} 
                 />
             </div>
         </div>

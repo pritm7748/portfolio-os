@@ -2,13 +2,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, X, TrendingUp, TrendingDown } from 'lucide-react'
+import { Loader2, X, TrendingUp, TrendingDown, Search, ArrowLeft } from 'lucide-react'
 
 type Props = {
   indexName: string
   tickers: string[]
   onClose: () => void
-  filterText?: string // <--- New Prop
 }
 
 type StockData = {
@@ -18,9 +17,10 @@ type StockData = {
     change: number
 }
 
-export default function MarketConstituents({ indexName, tickers, onClose, filterText = '' }: Props) {
+export default function MarketConstituents({ indexName, tickers, onClose }: Props) {
   const [stocks, setStocks] = useState<StockData[]>([])
   const [loading, setLoading] = useState(false)
+  const [localSearch, setLocalSearch] = useState('') // <--- Local Search State
 
   useEffect(() => {
     const fetchConstituents = async () => {
@@ -58,35 +58,63 @@ export default function MarketConstituents({ indexName, tickers, onClose, filter
     fetchConstituents()
   }, [tickers])
 
-  // Filter stocks based on the search query
+  // Filter stocks based on the LOCAL search query
   const filteredStocks = stocks.filter(stock => 
-    stock.name.toLowerCase().includes(filterText.toLowerCase()) || 
-    stock.ticker.toLowerCase().includes(filterText.toLowerCase())
+    stock.name.toLowerCase().includes(localSearch.toLowerCase()) || 
+    stock.ticker.toLowerCase().includes(localSearch.toLowerCase())
   )
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+    <div className="flex h-full flex-col bg-white dark:bg-slate-900">
       
-      <div className="flex items-center justify-between border-b border-slate-100 p-4 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900">
-        <div>
-            <h3 className="font-bold text-slate-900 dark:text-white">{indexName}</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-                {filteredStocks.length} Constituents
-            </p>
-        </div>
-        <button onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-white hover:text-slate-600 hover:shadow-sm dark:hover:bg-slate-800 dark:hover:text-slate-200 transition">
-            <X className="h-5 w-5" />
-        </button>
+      {/* Header */}
+      <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 p-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+                {/* Back Button for Mobile */}
+                <button onClick={onClose} className="lg:hidden p-1 -ml-2 text-slate-500">
+                    <ArrowLeft className="h-5 w-5" />
+                </button>
+                
+                <div>
+                    <h3 className="font-bold text-lg text-slate-900 dark:text-white leading-none">{indexName}</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        {filteredStocks.length} Constituents
+                    </p>
+                </div>
+            </div>
+            
+            {/* Close Button for Desktop */}
+            <button 
+                onClick={onClose} 
+                className="hidden lg:block rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+            >
+                <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* CONSTITUENT SEARCH BAR */}
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input 
+                type="text"
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                placeholder={`Search in ${indexName}...`}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-4 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            />
+          </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
+      {/* Scrollable List */}
+      <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
         {loading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
           </div>
         ) : filteredStocks.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-400">
-             No stocks match your search.
+             No stocks found.
           </div>
         ) : (
           <div className="space-y-1">
