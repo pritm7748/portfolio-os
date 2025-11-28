@@ -1,4 +1,3 @@
-// components/market-constituents.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -8,6 +7,7 @@ type Props = {
   indexName: string
   tickers: string[]
   onClose: () => void
+  filterText?: string // <--- Fixed: Added this optional prop
 }
 
 type StockData = {
@@ -17,10 +17,13 @@ type StockData = {
     change: number
 }
 
-export default function MarketConstituents({ indexName, tickers, onClose }: Props) {
+export default function MarketConstituents({ indexName, tickers, onClose, filterText = '' }: Props) {
   const [stocks, setStocks] = useState<StockData[]>([])
   const [loading, setLoading] = useState(false)
-  const [localSearch, setLocalSearch] = useState('') // <--- Local Search State
+  // We keep localSearch if you want a second search bar inside the panel, 
+  // but usually we just use the passed 'filterText' or combine them.
+  // For simplicity, let's use the passed filterText combined with local.
+  const [localSearch, setLocalSearch] = useState('') 
 
   useEffect(() => {
     const fetchConstituents = async () => {
@@ -58,10 +61,12 @@ export default function MarketConstituents({ indexName, tickers, onClose }: Prop
     fetchConstituents()
   }, [tickers])
 
-  // Filter stocks based on the LOCAL search query
+  // Combine Global Search (filterText) and Local Search
+  const effectiveSearch = filterText || localSearch
+
   const filteredStocks = stocks.filter(stock => 
-    stock.name.toLowerCase().includes(localSearch.toLowerCase()) || 
-    stock.ticker.toLowerCase().includes(localSearch.toLowerCase())
+    stock.name.toLowerCase().includes(effectiveSearch.toLowerCase()) || 
+    stock.ticker.toLowerCase().includes(effectiveSearch.toLowerCase())
   )
 
   return (
@@ -93,14 +98,14 @@ export default function MarketConstituents({ indexName, tickers, onClose }: Prop
             </button>
           </div>
 
-          {/* CONSTITUENT SEARCH BAR */}
+          {/* LOCAL SEARCH BAR (Optional, if you want to search specifically inside this list) */}
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input 
                 type="text"
                 value={localSearch}
                 onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder={`Search in ${indexName}...`}
+                placeholder={filterText ? `Filtered by "${filterText}"` : `Search in ${indexName}...`}
                 className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-4 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-800 dark:border-slate-700 dark:text-white"
             />
           </div>
