@@ -1,9 +1,8 @@
-// app/dashboard/dividends/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Loader2, ChevronDown, ChevronRight, PiggyBank, TrendingUp, Calendar } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, PiggyBank, TrendingUp, Calendar, Trophy, Hash } from 'lucide-react'
 import { usePortfolio } from '@/context/portfolio-context'
 
 type DividendPayout = {
@@ -18,8 +17,8 @@ type StockDividendSummary = {
     name: string
     totalReceived: number
     payouts: DividendPayout[]
-    currentValue: number // For yield calculation
-    investedValue: number // For yield on cost
+    currentValue: number
+    investedValue: number
 }
 
 export default function DividendsPage() {
@@ -27,7 +26,12 @@ export default function DividendsPage() {
   const [dividendData, setDividendData] = useState<StockDividendSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null)
-  const [totalStats, setTotalStats] = useState({ total: 0, yieldOnCost: 0 })
+  const [stats, setStats] = useState({
+      total: 0,
+      yieldOnCost: 0,
+      topPayer: '-',
+      payoutCount: 0
+  })
 
   const supabase = createClient()
 
@@ -52,7 +56,7 @@ export default function DividendsPage() {
 
       // 2. Identify Tickers & Holdings
       const uniqueTickers = new Set<string>()
-      const portfolioCost: Record<string, number> = {} // Cost basis per stock
+      const portfolioCost: Record<string, number> = {}
       
       transactions.forEach((txn: any) => {
           uniqueTickers.add(txn.assets.ticker)
@@ -75,51 +79,56 @@ export default function DividendsPage() {
       const stockSummaries: StockDividendSummary[] = []
       let grandTotal = 0
       let totalInvested = 0
+      let totalPayoutCount = 0
 
       tickersArray.forEach(ticker => {
           const dividends = dividendMap[ticker]
-          if (!dividends) return // Skip if no dividends found
+          // Check if manual dividends exist even if API returned none
+          const manualDivs = transactions.filter((t: any) => t.assets.ticker === ticker && (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest'))
+          
+          if (!dividends && manualDivs.length === 0) return 
           
           const stockTxns = transactions.filter((t: any) => t.assets.ticker === ticker)
           const payouts: DividendPayout[] = []
           let stockTotal = 0
 
-          dividends.forEach((div: any) => {
-              const divDate = new Date(div.date)
-              let qtyOnDate = 0
-              
-              stockTxns.forEach((t: any) => {
-                  const txnDate = new Date(t.date)
-                  if (txnDate < divDate) {
-                      if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
-                      else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
-                  }
+          // Auto-Detected
+          if (dividends) {
+            dividends.forEach((div: any) => {
+                const divDate = new Date(div.date)
+                let qtyOnDate = 0
+                
+                stockTxns.forEach((t: any) => {
+                    const txnDate = new Date(t.date)
+                    if (txnDate < divDate) {
+                        if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
+                        else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
+                    }
+                })
+
+                if (qtyOnDate > 0) {
+                    const payout = qtyOnDate * div.amount
+                    stockTotal += payout
+                    payouts.push({
+                        date: div.date,
+                        amountPerShare: div.amount,
+                        quantityHeld: qtyOnDate,
+                        totalPayout: payout
+                    })
+                }
+            })
+          }
+
+          // Manual Entries
+          manualDivs.forEach((t: any) => {
+              const val = Number(t.total_value)
+              stockTotal += val
+              payouts.push({
+                  date: t.date,
+                  amountPerShare: 0, 
+                  quantityHeld: 0,
+                  totalPayout: val
               })
-
-              if (qtyOnDate > 0) {
-                  const payout = qtyOnDate * div.amount
-                  stockTotal += payout
-                  payouts.push({
-                      date: div.date,
-                      amountPerShare: div.amount,
-                      quantityHeld: qtyOnDate,
-                      totalPayout: payout
-                  })
-              }
-          })
-
-          // Also check for manually added dividends
-          stockTxns.forEach((t: any) => {
-              if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
-                  const val = Number(t.total_value)
-                  stockTotal += val
-                  payouts.push({
-                      date: t.date,
-                      amountPerShare: 0, // Manual entry doesn't track per-share rate usually
-                      quantityHeld: 0,
-                      totalPayout: val
-                  })
-              }
           })
 
           if (stockTotal > 0) {
@@ -127,22 +136,25 @@ export default function DividendsPage() {
                   ticker,
                   name: stockTxns[0].assets.name,
                   totalReceived: stockTotal,
-                  payouts: payouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()), // Newest first
-                  currentValue: 0, // Could fetch live price if needed for yield
+                  payouts: payouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+                  currentValue: 0,
                   investedValue: portfolioCost[ticker] || 0
               })
               grandTotal += stockTotal
               totalInvested += (portfolioCost[ticker] || 0)
+              totalPayoutCount += payouts.length
           }
       })
 
-      // Sort stocks by highest payer
+      // Sort by highest payer
       stockSummaries.sort((a, b) => b.totalReceived - a.totalReceived)
 
       setDividendData(stockSummaries)
-      setTotalStats({
+      setStats({
           total: grandTotal,
-          yieldOnCost: totalInvested > 0 ? (grandTotal / totalInvested) * 100 : 0
+          yieldOnCost: totalInvested > 0 ? (grandTotal / totalInvested) * 100 : 0,
+          topPayer: stockSummaries.length > 0 ? stockSummaries[0].ticker : '-',
+          payoutCount: totalPayoutCount
       })
       setLoading(false)
     }
@@ -160,26 +172,42 @@ export default function DividendsPage() {
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Dividend Income</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Track your passive income streams.</p>
+      {/* METRICS GRID */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Total Income */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+                  <div className="p-1.5 bg-emerald-100 rounded text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"><PiggyBank className="h-4 w-4" /></div>
+                  <span>Total Income</span>
+              </div>
+              <div className="text-2xl font-bold text-slate-900 dark:text-white">₹{stats.total.toLocaleString('en-IN')}</div>
           </div>
-          
-          {/* Summary Stats */}
-          <div className="flex gap-4">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 min-w-[160px]">
-                  <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                      <PiggyBank className="h-4 w-4 text-emerald-500" /> Total Income
-                  </div>
-                  <div className="text-2xl font-bold text-slate-900 dark:text-white">₹{totalStats.total.toLocaleString('en-IN')}</div>
+
+          {/* Yield on Cost */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+                  <div className="p-1.5 bg-blue-100 rounded text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><TrendingUp className="h-4 w-4" /></div>
+                  <span>Yield on Cost</span>
               </div>
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 min-w-[160px]">
-                  <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                      <TrendingUp className="h-4 w-4 text-blue-500" /> Yield on Cost
-                  </div>
-                  <div className="text-2xl font-bold text-slate-900 dark:text-white">{totalStats.yieldOnCost.toFixed(2)}%</div>
+              <div className="text-2xl font-bold text-slate-900 dark:text-white">{stats.yieldOnCost.toFixed(2)}%</div>
+          </div>
+
+          {/* Top Payer */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+                  <div className="p-1.5 bg-amber-100 rounded text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"><Trophy className="h-4 w-4" /></div>
+                  <span>Top Payer</span>
               </div>
+              <div className="text-2xl font-bold text-slate-900 dark:text-white truncate">{stats.topPayer}</div>
+          </div>
+
+          {/* Total Payouts */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">
+                  <div className="p-1.5 bg-purple-100 rounded text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"><Hash className="h-4 w-4" /></div>
+                  <span>Total Payouts</span>
+              </div>
+              <div className="text-2xl font-bold text-slate-900 dark:text-white">{stats.payoutCount}</div>
           </div>
       </div>
 
