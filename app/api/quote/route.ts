@@ -61,7 +61,7 @@ export async function POST(request: Request) {
                     // Ideally we want full number. 1 Cr = 10,000,000.
                     // So:
                     rawMarketCap: marketCap * 10000000, 
-                    marketCap: marketCap * 10000000, 
+                    MarketCap: marketCap * 10000000, 
                     
                     peRatio: peRatio,
                     high52: high,
