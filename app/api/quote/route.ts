@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import yahooFinance from 'yahoo-finance2'
 
 export async function POST(request: Request) {
   try {
@@ -17,87 +18,54 @@ export async function POST(request: Request) {
          yahooTicker = `${yahooTicker}.NS`
     }
 
-    // 1. FETCH DEEP FUNDAMENTALS (QuoteSummary v10)
-    // We request multiple modules to ensure we find the data somewhere
-    const modules = ['financialData', 'defaultKeyStatistics', 'summaryDetail', 'price']
-    const quoteUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${yahooTicker}?modules=${modules.join(',')}`
-    
-    // 2. FETCH CHART (Reliable fallback for 52W High/Low)
-    const chartUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`
+    try {
+        // 1. Fetch Data with Library
+        // We cast to 'any' to prevent TypeScript issues with the dynamic response structure
+        const result = await yahooFinance.quoteSummary(yahooTicker, { 
+            modules: ["summaryDetail", "defaultKeyStatistics", "price"] 
+        }) as any
 
-    const headers = { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json'
-    }
+        const summary = result.summaryDetail || {}
+        const keyStats = result.defaultKeyStatistics || {}
+        const price = result.price || {}
 
-    const [quoteRes, chartRes] = await Promise.all([
-        fetch(quoteUrl, { headers, next: { revalidate: 300 } }).catch(() => null),
-        fetch(chartUrl, { headers, next: { revalidate: 300 } }).catch(() => null)
-    ])
+        return NextResponse.json({
+            marketCap: summary.marketCap || price.marketCap || 0,
+            peRatio: summary.trailingPE || keyStats.trailingPE || keyStats.forwardPE || 0,
+            high52: summary.fiftyTwoWeekHigh || 0,
+            low52: summary.fiftyTwoWeekLow || 0,
+            divYield: summary.dividendYield || summary.trailingAnnualDividendYield || 0,
+            currency: price.currency || 'INR',
+            symbol: price.symbol || yahooTicker
+        })
 
-    let q = {} as any
-    let c = {} as any
+    } catch (libError: any) {
+        console.warn(`Library fetch failed for ${yahooTicker}, trying fallback...`)
+        
+        // 2. Fallback: Raw Chart API (Gets Price/High/Low, but NO P/E)
+        // This runs if the library fails (e.g. blocked, or ticker invalid)
+        const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`
+        const res = await fetch(chartUrl)
+        const data = await res.json()
+        const meta = data?.chart?.result?.[0]?.meta
 
-    if (quoteRes && quoteRes.ok) {
-        const json = await quoteRes.json()
-        const root = json?.quoteSummary?.result?.[0] || {}
-        // Merge all modules into one object for easier lookup
-        q = { 
-            ...root.financialData, 
-            ...root.defaultKeyStatistics, 
-            ...root.summaryDetail,
-            ...root.price 
+        if (!meta) {
+             return NextResponse.json({ error: 'Data not found' }, { status: 404 })
         }
+
+        return NextResponse.json({
+            marketCap: 0,
+            peRatio: 0,
+            high52: meta.fiftyTwoWeekHigh || 0,
+            low52: meta.fiftyTwoWeekLow || 0,
+            divYield: 0,
+            currency: meta.currency || 'INR',
+            symbol: meta.symbol || yahooTicker
+        })
     }
-
-    if (chartRes && chartRes.ok) {
-        const json = await chartRes.json()
-        c = json?.chart?.result?.[0]?.meta || {}
-    }
-
-    // --- DATA MAPPING WITH FALLBACKS ---
-    // Yahoo returns data as objects { raw: 123, fmt: "123" } or direct values. We handle both.
-
-    const getVal = (obj: any, key: string) => {
-        if (!obj || !obj[key]) return 0
-        return obj[key].raw || obj[key] || 0
-    }
-
-    // 1. Market Cap (Try FinancialData -> SummaryDetail -> Price)
-    const marketCap = getVal(q, 'marketCap') || c.marketCap || 0
-
-    // 2. P/E Ratio (Try Trailing -> Forward)
-    // Note: Some companies have no P/E (losses). This is valid 0.
-    const peRatio = getVal(q, 'trailingPE') || getVal(q, 'forwardPE') || 0
-
-    // 3. 52 Week High/Low (Prefer Chart -> Summary)
-    const high52 = c.fiftyTwoWeekHigh || getVal(q, 'fiftyTwoWeekHigh') || 0
-    const low52 = c.fiftyTwoWeekLow || getVal(q, 'fiftyTwoWeekLow') || 0
-
-    // 4. Dividend Yield
-    const divYield = getVal(q, 'dividendYield') || getVal(q, 'trailingAnnualDividendYield') || 0
-
-    // 5. Meta
-    const currency = q.currency || c.currency || 'INR'
-    const symbol = q.symbol || c.symbol || yahooTicker
-
-    // Final Check: If we missed everything, return 404
-    if (marketCap === 0 && high52 === 0) {
-         return NextResponse.json({ error: 'Data unavailable' }, { status: 404 })
-    }
-
-    return NextResponse.json({
-        marketCap,
-        peRatio,
-        high52,
-        low52,
-        divYield,
-        currency,
-        symbol
-    })
 
   } catch (error: any) {
-    console.error("Fundamental API Error:", error)
+    console.error("Quote Error:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
