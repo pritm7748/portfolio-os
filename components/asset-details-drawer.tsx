@@ -1,8 +1,7 @@
-// components/asset-details-drawer.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, Activity, DollarSign, BarChart3 } from 'lucide-react'
+import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, Activity, BarChart3 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 type AssetDetailsDrawerProps = {
@@ -26,11 +25,9 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
   
-  // Fundamentals State
   const [stats, setStats] = useState<Fundamentals | null>(null)
   const [loadingStats, setLoadingStats] = useState(false)
   
-  // Edit Form State
   const [editQty, setEditQty] = useState('')
   const [editPrice, setEditPrice] = useState('')
   const [editDate, setEditDate] = useState('')
@@ -40,20 +37,23 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
-        fetchFundamentals(asset.ticker)
+        // Only fetch fundamentals for Stocks/MFs (Standard Tickers)
+        if (!asset.ticker.startsWith('COMMODITY:')) {
+            fetchFundamentals(asset.ticker)
+        } else {
+            setStats(null)
+        }
     }
   }, [asset, isOpen])
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
-    
     const { data } = await supabase
       .from('transactions')
       .select('*')
       .in('asset_id', asset.ids)
       .order('date', { ascending: false })
-      
     setTransactions(data || [])
     setLoading(false)
   }
@@ -65,9 +65,12 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             method: 'POST',
             body: JSON.stringify({ ticker })
         })
-        const data = await res.json()
-        if (data.symbol) setStats(data)
-        else setStats(null)
+        if (res.ok) {
+            const data = await res.json()
+            setStats(data)
+        } else {
+            setStats(null)
+        }
       } catch (e) {
           console.error(e)
           setStats(null)
@@ -87,15 +90,9 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     try {
         const { error } = await supabase
             .from('transactions')
-            .update({ 
-                quantity: Number(editQty), 
-                price: Number(editPrice), 
-                date: editDate,
-            })
+            .update({ quantity: Number(editQty), price: Number(editPrice), date: editDate })
             .eq('id', id)
-
         if (error) throw error
-        
         setEditingId(null)
         fetchHistory()
         onUpdate()
@@ -104,26 +101,15 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
-  // --- THE FIX: Auto-Close on Empty ---
   const handleDelete = async (txnId: number) => {
     if (!confirm('Delete this transaction?')) return
-    
     const { error } = await supabase.from('transactions').delete().eq('id', txnId)
-    
     if (!error) {
-        // Optimistically check if that was the last one
         const remaining = transactions.filter(t => t.id !== txnId)
         setTransactions(remaining)
-        
-        onUpdate() // Refresh parent data
-        
-        if (remaining.length === 0) {
-            // Close drawer if no transactions left
-            onClose()
-        } else {
-            // Otherwise refresh properly
-            fetchHistory()
-        }
+        onUpdate() 
+        if (remaining.length === 0) onClose()
+        else fetchHistory()
     }
   }
 
@@ -143,7 +129,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="relative h-full w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden dark:bg-slate-900">
         
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 p-6 bg-slate-50 dark:bg-slate-900 dark:border-slate-800">
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white">{asset.name}</h2>
@@ -156,41 +141,41 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
 
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
             
-            {/* NEW: Fundamentals Card */}
-            {stats && (
+            {/* Fundamentals Card */}
+            {!asset.ticker.startsWith('COMMODITY:') && (
                 <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:bg-slate-800/50 dark:border-slate-700">
                     <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <Activity className="h-3 w-3" /> Fundamentals
                     </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Market Cap</p>
-                            <p className="font-semibold text-slate-900 dark:text-white">₹{formatLargeNumber(stats.marketCap)}</p>
+                    {loadingStats ? (
+                        <div className="h-24 animate-pulse bg-slate-200 rounded dark:bg-slate-700"></div>
+                    ) : stats ? (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Market Cap</p>
+                                <p className="font-semibold text-slate-900 dark:text-white">₹{formatLargeNumber(stats.marketCap)}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">P/E Ratio</p>
+                                <p className="font-semibold text-slate-900 dark:text-white">{stats.peRatio > 0 ? stats.peRatio.toFixed(2) : 'N/A'}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">52W High / Low</p>
+                                <p className="font-semibold text-slate-900 dark:text-white">
+                                    {stats.high52?.toFixed(0)} / {stats.low52?.toFixed(0)}
+                                </p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Div Yield</p>
+                                <p className="font-semibold text-green-600 dark:text-green-400">{(stats.divYield * 100).toFixed(2)}%</p>
+                            </div>
                         </div>
-                        <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">P/E Ratio</p>
-                            <p className="font-semibold text-slate-900 dark:text-white">{stats.peRatio ? stats.peRatio.toFixed(2) : '-'}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">52W High / Low</p>
-                            <p className="font-semibold text-slate-900 dark:text-white">
-                                {stats.high52?.toFixed(0)} / {stats.low52?.toFixed(0)}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Div Yield</p>
-                            <p className="font-semibold text-green-600 dark:text-green-400">{(stats.divYield * 100).toFixed(2)}%</p>
-                        </div>
-                    </div>
+                    ) : (
+                        <p className="text-xs text-slate-400 italic">Data unavailable for this asset.</p>
+                    )}
                 </div>
             )}
-            
-            {/* Loading State for Stats */}
-            {loadingStats && !stats && (
-                <div className="mb-6 h-32 rounded-xl bg-slate-50 animate-pulse dark:bg-slate-800" />
-            )}
 
-            {/* Transactions List */}
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <BarChart3 className="h-3 w-3" /> Transaction History
             </h3>
@@ -204,7 +189,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                 {transactions.map((txn) => (
                     <div key={txn.id} className={`rounded-lg border p-4 transition ${editingId === txn.id ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-slate-100 bg-white dark:bg-slate-900 dark:border-slate-800'}`}>
                     
-                    {/* EDIT MODE */}
                     {editingId === txn.id ? (
                         <div className="space-y-3">
                             <div className="flex gap-2">
@@ -227,7 +211,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                             </div>
                         </div>
                     ) : (
-                        /* VIEW MODE */
                         <div className="flex items-center justify-between group">
                         <div className="flex items-center gap-4">
                             <div className={`rounded-full p-2 ${txn.transaction_type === 'Buy' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>

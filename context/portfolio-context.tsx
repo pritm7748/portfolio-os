@@ -1,4 +1,3 @@
-// context/portfolio-context.tsx
 'use client'
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
@@ -21,6 +20,7 @@ const PortfolioContext = createContext<PortfolioContextType | undefined>(undefin
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
+  // Default to 'All', but we will try to override this in useEffect
   const [selectedPortfolio, setSelectedPortfolio] = useState<Portfolio>({ id: 'all', name: 'All Portfolios' })
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
@@ -37,14 +37,19 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
       if (error) throw error
 
-      // Transform data to match our Type
       const items: Portfolio[] = data.map(p => ({ id: p.id, name: p.name }))
       setPortfolios(items)
       
-      // Default to "Main Portfolio" if available, else "All"
-      if (items.length > 0 && selectedPortfolio.id === 'all') {
-         // Optional: Default to the first portfolio instead of 'All'
-         // setSelectedPortfolio(items[0]) 
+      // --- PERSISTENCE LOGIC ---
+      // Check if we have a saved preference
+      const savedId = localStorage.getItem('selectedPortfolioId')
+      if (savedId) {
+          if (savedId === 'all') {
+              setSelectedPortfolio({ id: 'all', name: 'All Portfolios' })
+          } else {
+              const found = items.find(p => p.id === Number(savedId))
+              if (found) setSelectedPortfolio(found)
+          }
       }
     } catch (err) {
       console.error('Error fetching portfolios:', err)
@@ -53,15 +58,22 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Initial Load
   useEffect(() => {
     fetchPortfolios()
   }, [])
+
+  // Wrapper to save selection
+  const handleSelectPortfolio = (p: Portfolio) => {
+      setSelectedPortfolio(p)
+      localStorage.setItem('selectedPortfolioId', String(p.id))
+  }
 
   return (
     <PortfolioContext.Provider value={{ 
       portfolios, 
       selectedPortfolio, 
-      selectPortfolio: setSelectedPortfolio,
+      selectPortfolio: handleSelectPortfolio, // Use wrapper
       refreshPortfolios: fetchPortfolios,
       loading 
     }}>
@@ -70,7 +82,6 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   )
 }
 
-// This export is crucial!
 export function usePortfolio() {
   const context = useContext(PortfolioContext)
   if (context === undefined) {
