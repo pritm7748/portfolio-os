@@ -31,7 +31,6 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
   const [progress, setProgress] = useState(0)
   const [targetPortfolioId, setTargetPortfolioId] = useState<number>(0)
   
-  // NEW: Default Date for reports that lack a Date column (like Groww Holdings)
   const [defaultDate, setDefaultDate] = useState(new Date().toISOString().split('T')[0])
   
   const supabase = createClient()
@@ -40,6 +39,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
     if (e.target.files && e.target.files[0]) {
         const f = e.target.files[0]
         setFile(f)
+        
         if (f.name.endsWith('.csv')) {
             parseCSV(f)
         } else if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
@@ -50,30 +50,35 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
     }
   }
 
+  // --- SMART PARSING LOGIC ---
+  
+  const cleanNumber = (val: any) => {
+      if (typeof val === 'number') return val
+      if (typeof val === 'string') {
+          // Remove commas and currency symbols
+          return parseFloat(val.replace(/,/g, '').replace(/[^\d.-]/g, ''))
+      }
+      return 0
+  }
+
   const processRows = (rows: any[]) => {
     const mappedData: ParsedRow[] = []
     
     rows.forEach((row: any) => {
-        // Normalize Keys to lowercase & remove special chars for easier matching
-        // e.g. "Avg. Cost" -> "avgcost"
+        // Normalize Keys
         const keys = Object.keys(row).reduce((acc, k) => { 
             const cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, '')
             acc[cleanKey] = row[k]
             return acc 
         }, {} as any)
 
-        // 1. Ticker / Name
-        // Mappings: Symbol, Ticker, Instrument Name (Groww), Stock Name
-        const ticker = keys['symbol'] || keys['ticker'] || keys['stockname'] || keys['instrument'] || keys['instrumentname'] || row['Symbol']
+        // 1. Ticker (Groww: 'Instrument Name')
+        const ticker = keys['symbol'] || keys['ticker'] || keys['stockname'] || keys['instrumentname'] || keys['instrument'] || row['Symbol']
         
         // 2. Date
-        // Mappings: Date, Trade Date, Order Date
-        // If MISSING: Use the user-selected "Default Date"
         let finalDate = defaultDate
         const rawDate = keys['date'] || keys['tradedate'] || keys['orderdate']
-        
         if (rawDate) {
-            // Handle Excel Serial Numbers
             if (typeof rawDate === 'number') {
                  const dateObj = new Date((rawDate - (25567 + 2)) * 86400 * 1000)
                  finalDate = dateObj.toISOString().split('T')[0]
@@ -83,27 +88,25 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
             }
         }
         
-        // 3. Type
-        // Mappings: Type, Action, Transaction
-        // If MISSING: Default to 'Buy' (Holdings reports are implicitly Buys)
+        // 3. Type (Default to Buy for Holdings Reports)
         let type = keys['type'] || keys['action'] || keys['transaction'] || keys['tradetype']
         const normType = type?.toString().toLowerCase().includes('sell') ? 'Sell' : 'Buy'
 
-        // 4. Qty
-        // Mappings: Quantity, Qty, Exec Qty
-        const qty = keys['quantity'] || keys['qty'] || keys['execqty'] || keys['shares']
+        // 4. Qty (Groww: 'Qty.')
+        const qtyRaw = keys['quantity'] || keys['qty'] || keys['execqty'] || keys['shares'] || keys['balance']
+        const qty = cleanNumber(qtyRaw)
 
-        // 5. Price
-        // Mappings: Price, Rate, Avg Price, Avg Cost (Groww), Amount
-        const price = keys['price'] || keys['rate'] || keys['avgprice'] || keys['avgcost'] || keys['buyprice']
+        // 5. Price (Groww: 'Avg. Cost')
+        const priceRaw = keys['price'] || keys['rate'] || keys['avgprice'] || keys['avgcost'] || keys['buyprice']
+        const price = cleanNumber(priceRaw)
 
-        if (ticker && qty && price) {
+        if (ticker && qty > 0 && price >= 0) {
             mappedData.push({
                 ticker: ticker.toString().toUpperCase().trim(),
                 date: finalDate,
                 type: normType,
-                quantity: Math.abs(parseFloat(qty)),
-                price: Math.abs(parseFloat(price)),
+                quantity: Math.abs(qty),
+                price: Math.abs(price),
                 status: 'pending'
             })
         }
@@ -111,14 +114,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
     setPreview(mappedData)
   }
 
-  const parseCSV = (file: File) => {
-    Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => processRows(results.data)
-    })
-  }
-
+  // --- HEADER FINDER FOR EXCEL ---
   const parseExcel = (file: File) => {
       const reader = new FileReader()
       reader.onload = (e) => {
@@ -126,10 +122,54 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
           const workbook = XLSX.read(data, { type: 'binary' })
           const sheetName = workbook.SheetNames[0]
           const sheet = workbook.Sheets[sheetName]
-          const json = XLSX.utils.sheet_to_json(sheet)
+          
+          // Convert to array of arrays to find the header row
+          const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][]
+          
+          let headerRowIndex = 0
+          for (let i = 0; i < Math.min(rawData.length, 20); i++) {
+              const rowStr = rawData[i].join(' ').toLowerCase()
+              // Look for Groww specific headers
+              if (rowStr.includes('instrument name') || rowStr.includes('symbol') || rowStr.includes('ticker')) {
+                  headerRowIndex = i
+                  break
+              }
+          }
+
+          // Re-parse starting from the found header row
+          const json = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex })
           processRows(json)
       }
       reader.readAsBinaryString(file)
+  }
+
+  // --- HEADER FINDER FOR CSV ---
+  const parseCSV = (file: File) => {
+    // First read as text to find header line
+    const reader = new FileReader()
+    reader.onload = (e) => {
+        const text = e.target?.result as string
+        const lines = text.split('\n')
+        let headerLineIndex = 0
+        
+        for (let i = 0; i < Math.min(lines.length, 20); i++) {
+            const lineLower = lines[i].toLowerCase()
+            if (lineLower.includes('instrument name') || lineLower.includes('symbol') || lineLower.includes('ticker')) {
+                headerLineIndex = i
+                break
+            }
+        }
+
+        // Now pass the clean string (from header onwards) to PapaParse
+        const cleanText = lines.slice(headerLineIndex).join('\n')
+        
+        Papa.parse(cleanText, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => processRows(results.data)
+        })
+    }
+    reader.readAsText(file)
   }
 
   const handleImport = async () => {
@@ -156,7 +196,6 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
           const row = preview[i]
           try {
               let cleanTicker = row.ticker
-              // Simple heuristic: If it doesn't have a dot, assume .NS for now
               if (!cleanTicker.includes('.') && row.ticker.length < 10) cleanTicker += '.NS'
 
               const { data: asset, error: assetError } = await supabase
@@ -214,7 +253,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                 {/* DEFAULT DATE PICKER */}
                 <div className="mb-6 w-full max-w-xs">
                     <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">
-                        Default Date (if missing in file):
+                        Default Date (Required for Holdings Report):
                     </label>
                     <div className="relative">
                         <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -233,7 +272,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                 <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Upload Report</h3>
                 <p className="text-sm text-slate-500 mb-6 text-center max-w-xs">
                     Supports <b>.CSV</b> and <b>.XLSX</b> (Groww, Zerodha).<br/>
-                    We will auto-detect columns like <i>Instrument Name</i> and <i>Avg. Cost</i>.
+                    We auto-skip header rows to find your data.
                 </p>
                 <label className="cursor-pointer rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 transition">
                     Select File
@@ -247,7 +286,8 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                         <FileText className="h-4 w-4" />
                         {file.name} <span className="text-slate-400">({preview.length} rows)</span>
                     </div>
-                    <button onClick={() => { setFile(null); setPreview([]) }} className="text-xs text-red-500 hover:underline">Remove</button>
+                    
+                    <button onClick={() => { setFile(null); setPreview([]) }} className="text-xs text-red-500 hover:underline">Change File</button>
                 </div>
 
                 <div className="mb-4">
@@ -264,7 +304,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                     <table className="w-full text-left text-xs">
                         <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
                             <tr>
-                                <th className="p-3 font-medium">Date (Used)</th>
+                                <th className="p-3 font-medium">Date</th>
                                 <th className="p-3 font-medium">Ticker</th>
                                 <th className="p-3 font-medium">Type</th>
                                 <th className="p-3 font-medium text-right">Qty</th>
