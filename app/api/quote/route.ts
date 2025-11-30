@@ -17,48 +17,75 @@ export async function POST(request: Request) {
          yahooTicker = `${yahooTicker}.NS`
     }
 
-    // Using v7 Quote Endpoint - It is often more reliable for basic stats than v10
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooTicker}`
+    // --- STRATEGY: PARALLEL FETCH ---
+    // We fetch from TWO different endpoints to maximize success chance.
     
-    console.log(`Fetching fundamentals for: ${yahooTicker}`) // DEBUG LOG
+    // 1. Detailed Quote API (Best for P/E, Market Cap)
+    const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooTicker}`
+    
+    // 2. Chart API (Reliable fallback for 52W High/Low if Quote fails)
+    const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1d&range=1d`
 
-    const res = await fetch(url, { 
-        headers: { 
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9'
-        },
-        next: { revalidate: 60 } // Lower cache time to retry failures faster
-    })
-    
-    if (!res.ok) {
-        console.error(`Yahoo API Error: ${res.status} ${res.statusText}`)
-        return NextResponse.json({ error: `Yahoo API Error: ${res.status}` }, { status: res.status })
+    const headers = { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9'
     }
 
-    const data = await res.json()
-    const result = data?.quoteResponse?.result?.[0]
+    const [quoteRes, chartRes] = await Promise.all([
+        fetch(quoteUrl, { headers, next: { revalidate: 300 } }).catch(() => null),
+        fetch(chartUrl, { headers, next: { revalidate: 300 } }).catch(() => null)
+    ])
 
-    if (!result) {
-        console.error(`No data found for ticker: ${yahooTicker}`)
+    let quoteData = null
+    let chartMeta = null
+
+    if (quoteRes && quoteRes.ok) {
+        const j = await quoteRes.json()
+        quoteData = j?.quoteResponse?.result?.[0]
+    }
+
+    if (chartRes && chartRes.ok) {
+        const j = await chartRes.json()
+        chartMeta = j?.chart?.result?.[0]?.meta
+    }
+
+    // If both failed, return error
+    if (!quoteData && !chartMeta) {
+        console.error(`Both Yahoo endpoints failed for ${yahooTicker}`)
         return NextResponse.json({ error: 'Data not found' }, { status: 404 })
     }
 
-    // Extract with fallbacks
-    const stats = {
-        marketCap: result.marketCap || 0,
-        peRatio: result.trailingPE || result.forwardPE || 0,
-        high52: result.fiftyTwoWeekHigh || 0,
-        low52: result.fiftyTwoWeekLow || 0,
-        divYield: result.dividendYield || result.trailingAnnualDividendYield || 0,
-        currency: result.currency || 'INR',
-        symbol: result.symbol || yahooTicker
+    // --- MERGE DATA ---
+    // Prefer Quote Data, fallback to Chart Meta
+    const marketCap = quoteData?.marketCap || 0
+    const peRatio = quoteData?.trailingPE || quoteData?.forwardPE || 0
+    
+    // 52 Week Data: Chart Meta is often more reliable for "current" range
+    const high52 = quoteData?.fiftyTwoWeekHigh || chartMeta?.fiftyTwoWeekHigh || 0
+    const low52 = quoteData?.fiftyTwoWeekLow || chartMeta?.fiftyTwoWeekLow || 0
+    
+    const divYield = quoteData?.dividendYield || quoteData?.trailingAnnualDividendYield || 0
+    const currency = quoteData?.currency || chartMeta?.currency || 'INR'
+    const symbol = quoteData?.symbol || chartMeta?.symbol || yahooTicker
+
+    // Final Safety Check: If we have ZERO data points, return 404
+    if (marketCap === 0 && peRatio === 0 && high52 === 0) {
+         return NextResponse.json({ error: 'Incomplete data' }, { status: 404 })
     }
 
-    return NextResponse.json(stats)
+    return NextResponse.json({
+        marketCap,
+        peRatio,
+        high52,
+        low52,
+        divYield,
+        currency,
+        symbol
+    })
 
   } catch (error: any) {
-    console.error("Quote Fetch Exception:", error)
+    console.error("Fundamental Fetch Error:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
