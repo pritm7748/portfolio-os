@@ -34,6 +34,7 @@ export default function AnalyticsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
+      // 1. Fetch Transactions
       let query = supabase
         .from('transactions')
         .select(`*, assets ( ticker, asset_type )`)
@@ -50,13 +51,14 @@ export default function AnalyticsPage() {
           return
       }
 
-      // --- DATA PROCESSING ---
+      // --- Data Processing ---
       const assetLots: Record<string, any[]> = {}
       const holdingMap: Record<string, number> = {} 
+      const allTickers = new Set<string>()
       let totalRealized = 0
       let totalDividends = 0
 
-      // XIRR Flows
+      // XIRR Flows Arrays
       const flowsTotal: any[] = []
       const flowsEquity: any[] = []
       const flowsComm: any[] = []
@@ -65,19 +67,21 @@ export default function AnalyticsPage() {
         const ticker = t.assets.ticker
         const type = t.assets.asset_type
         const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
-        
+        allTickers.add(ticker)
+
         if (t.realised_pnl) totalRealized += Number(t.realised_pnl)
         if (!assetLots[ticker]) assetLots[ticker] = []
         if (!holdingMap[ticker]) holdingMap[ticker] = 0
 
-        // --- FIX: Manual Math for Total Value ---
-        const txnValue = Number(t.price) * Number(t.quantity)
+        // Calculate Transaction Value manually to be safe
+        const txnValue = Math.abs(Number(t.price) * Number(t.quantity))
 
+        // --- HOLDINGS & CASHFLOW LOGIC ---
         if (t.transaction_type === 'Buy') {
             assetLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
             holdingMap[ticker] += Number(t.quantity)
             
-            // Cashflow Out (Negative) - Using calculated value to be safe
+            // Cashflow OUT (Negative)
             const flow = { amount: -txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
@@ -87,7 +91,7 @@ export default function AnalyticsPage() {
             let qty = Number(t.quantity)
             holdingMap[ticker] -= qty
             
-            // FIFO Consume (for cost basis calculation later)
+            // FIFO Consume (for cost basis tracking)
             while (qty > 0 && assetLots[ticker].length > 0) {
                 const oldestLot = assetLots[ticker][0]
                 if (oldestLot.quantity > qty) {
@@ -99,41 +103,42 @@ export default function AnalyticsPage() {
                 }
             }
             
-            // Cashflow In (Positive)
+            // Cashflow IN (Positive)
             const flow = { amount: txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
             else flowsEquity.push(flow)
         } 
         else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
-            // For Dividends, price is the total amount
-            const incomeAmt = Number(t.total_value) || Number(t.price)
+            const incomeAmt = Number(t.total_value)
             totalDividends += incomeAmt
             
+            // Cashflow IN (Positive)
             const flow = { amount: incomeAmt, date: t.date }
             flowsTotal.push(flow)
-            flowsEquity.push(flow) // Attribute dividends to equity
+            if (isComm) flowsComm.push(flow)
+            else flowsEquity.push(flow)
         }
       })
       
-      // Fetch Prices
-      const tickersToFetch = Object.keys(holdingMap).filter(k => holdingMap[k] > 0)
-      const allUniqueTickers = Array.from(new Set(txns.map((t: any) => t.assets.ticker)))
+      // Fetch Prices & Dividends
+      const tickersArray = Array.from(allTickers)
+      const tickersToFetchPrice = Object.keys(holdingMap).filter(k => holdingMap[k] > 0)
 
       let priceMap: Record<string, number> = {}
       let dividendMap: Record<string, any[]> = {}
 
-      if (allUniqueTickers.length > 0) {
+      if (tickersArray.length > 0) {
         const [priceRes, divRes] = await Promise.all([
-             fetch('/api/prices', { method: 'POST', body: JSON.stringify({ tickers: tickersToFetch }) }),
-             fetch('/api/dividends', { method: 'POST', body: JSON.stringify({ tickers: allUniqueTickers }) })
+             fetch('/api/prices', { method: 'POST', body: JSON.stringify({ tickers: tickersToFetchPrice }) }),
+             fetch('/api/dividends', { method: 'POST', body: JSON.stringify({ tickers: tickersArray }) })
         ])
         priceMap = await priceRes.json()
         dividendMap = await divRes.json()
       }
 
-      // --- Auto-Calc Dividends ---
-      allUniqueTickers.forEach(ticker => {
+      // --- AUTO DIVIDEND CALCULATION ---
+      tickersArray.forEach(ticker => {
           const dividends = dividendMap[ticker]
           if (!dividends) return
           const stockTxns = txns.filter((t: any) => t.assets.ticker === ticker)
@@ -151,6 +156,8 @@ export default function AnalyticsPage() {
               if (qtyOnDate > 0) {
                   const divAmount = qtyOnDate * div.amount
                   totalDividends += divAmount
+                  
+                  // Add Dividend to XIRR Flows (Positive)
                   const flow = { amount: divAmount, date: div.date }
                   flowsTotal.push(flow)
                   flowsEquity.push(flow) 
@@ -158,7 +165,7 @@ export default function AnalyticsPage() {
           })
       })
 
-      // Calculate Current Values (Terminal Value for XIRR)
+      // Calculate Current Values
       let valTotal = 0, valEq = 0, valComm = 0
       let fifoCostTotal = 0
       const sectorMap: Record<string, number> = {}
@@ -182,7 +189,7 @@ export default function AnalyticsPage() {
 
              const type = txns.find((t: any) => t.assets.ticker === ticker)?.assets.asset_type || 'Other'
              const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
-
+             
              if (isComm) valComm += val
              else valEq += val
 
@@ -191,13 +198,14 @@ export default function AnalyticsPage() {
           }
       })
 
-      // XIRR Final Calc
-      const xirrTotal = calculateXIRR(flowsTotal, valTotal)
-      const xirrEq = calculateXIRR(flowsEquity, valEq)
-      const xirrComm = calculateXIRR(flowsComm, valComm)
+      // --- XIRR CALCULATION (FIXED: Check for empty flows) ---
+      const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
+      const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
+      const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
 
       const unrealizedPnL = valTotal - fifoCostTotal
       const totalRealizedProfit = totalRealized + totalDividends
+      const totalPnL = unrealizedPnL + totalRealizedProfit
 
       setMetrics({
         totalXirr: xirrTotal,
@@ -206,7 +214,7 @@ export default function AnalyticsPage() {
         netWorth: valTotal,
         unrealized: unrealizedPnL,
         realized: totalRealizedProfit,
-        totalProfit: unrealizedPnL + totalRealizedProfit,
+        totalProfit: totalPnL,
         investment: fifoCostTotal,
         currentVal: valTotal,
         xirr: xirrTotal 
@@ -223,7 +231,7 @@ export default function AnalyticsPage() {
 
       const aiData = {
           totalValue: valTotal,
-          totalProfit: unrealizedPnL + totalRealizedProfit,
+          totalProfit: totalPnL,
           xirr: xirrTotal.toFixed(2),
           sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })),
           holdings: topHoldings
@@ -241,6 +249,7 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6">
       
+      {/* XIRR GRID */}
       <div className="grid gap-6 md:grid-cols-3">
           <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg">
             <div className="flex items-center justify-between mb-2 opacity-80">
@@ -272,6 +281,7 @@ export default function AnalyticsPage() {
 
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
+      {/* BREAKDOWN */}
       <div className="grid gap-6 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Net Worth</h4>
@@ -284,13 +294,14 @@ export default function AnalyticsPage() {
             </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-            <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Realized P&L (Booked)</h4>
+            <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Realized P&L (Booked + Div)</h4>
             <div className={`mt-2 text-2xl font-bold ${metrics.realized >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                 {metrics.realized >= 0 ? '+' : ''}₹{metrics.realized.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
         </div>
       </div>
 
+      {/* CHARTS */}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="h-80 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h3 className="mb-4 font-semibold text-slate-800 dark:text-white">Allocation by Value (₹)</h3>
