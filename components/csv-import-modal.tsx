@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { X, UploadCloud, Loader2, FileText, CheckCircle, AlertTriangle } from 'lucide-react'
+import { X, UploadCloud, Loader2, FileText, CheckCircle, AlertTriangle, Calendar } from 'lucide-react'
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx' // <--- Import XLSX
+import * as XLSX from 'xlsx'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -24,12 +24,15 @@ type ParsedRow = {
 }
 
 export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
-  const { selectedPortfolio, portfolios } = usePortfolio()
+  const { portfolios } = usePortfolio()
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<ParsedRow[]>([])
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [targetPortfolioId, setTargetPortfolioId] = useState<number>(0)
+  
+  // NEW: Default Date for reports that lack a Date column (like Groww Holdings)
+  const [defaultDate, setDefaultDate] = useState(new Date().toISOString().split('T')[0])
   
   const supabase = createClient()
 
@@ -37,8 +40,6 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
     if (e.target.files && e.target.files[0]) {
         const f = e.target.files[0]
         setFile(f)
-        
-        // Check extension
         if (f.name.endsWith('.csv')) {
             parseCSV(f)
         } else if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
@@ -51,43 +52,55 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
 
   const processRows = (rows: any[]) => {
     const mappedData: ParsedRow[] = []
+    
     rows.forEach((row: any) => {
-        // Normalize Keys to lowercase to handle case-insensitive matching
-        // But keep values as is
-        const keys = Object.keys(row).reduce((acc, k) => { acc[k.toLowerCase()] = row[k]; return acc }, {} as any)
+        // Normalize Keys to lowercase & remove special chars for easier matching
+        // e.g. "Avg. Cost" -> "avgcost"
+        const keys = Object.keys(row).reduce((acc, k) => { 
+            const cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, '')
+            acc[cleanKey] = row[k]
+            return acc 
+        }, {} as any)
 
-        // 1. Ticker
-        const ticker = keys['symbol'] || keys['ticker'] || keys['stock symbol'] || keys['instrument'] || row['Symbol'] // Fallback to original case
+        // 1. Ticker / Name
+        // Mappings: Symbol, Ticker, Instrument Name (Groww), Stock Name
+        const ticker = keys['symbol'] || keys['ticker'] || keys['stockname'] || keys['instrument'] || keys['instrumentname'] || row['Symbol']
         
         // 2. Date
-        const rawDate = keys['date'] || keys['trade date'] || keys['order date']
+        // Mappings: Date, Trade Date, Order Date
+        // If MISSING: Use the user-selected "Default Date"
+        let finalDate = defaultDate
+        const rawDate = keys['date'] || keys['tradedate'] || keys['orderdate']
+        
+        if (rawDate) {
+            // Handle Excel Serial Numbers
+            if (typeof rawDate === 'number') {
+                 const dateObj = new Date((rawDate - (25567 + 2)) * 86400 * 1000)
+                 finalDate = dateObj.toISOString().split('T')[0]
+            } else {
+                 const d = new Date(rawDate)
+                 if (!isNaN(d.getTime())) finalDate = d.toISOString().split('T')[0]
+            }
+        }
         
         // 3. Type
-        let type = keys['type'] || keys['action'] || keys['transaction'] || keys['trade_type']
+        // Mappings: Type, Action, Transaction
+        // If MISSING: Default to 'Buy' (Holdings reports are implicitly Buys)
+        let type = keys['type'] || keys['action'] || keys['transaction'] || keys['tradetype']
         const normType = type?.toString().toLowerCase().includes('sell') ? 'Sell' : 'Buy'
 
         // 4. Qty
-        const qty = keys['quantity'] || keys['qty'] || keys['exec qty']
+        // Mappings: Quantity, Qty, Exec Qty
+        const qty = keys['quantity'] || keys['qty'] || keys['execqty'] || keys['shares']
 
         // 5. Price
-        const price = keys['price'] || keys['rate'] || keys['avg. price'] || keys['amount']
+        // Mappings: Price, Rate, Avg Price, Avg Cost (Groww), Amount
+        const price = keys['price'] || keys['rate'] || keys['avgprice'] || keys['avgcost'] || keys['buyprice']
 
         if (ticker && qty && price) {
-            let cleanDate = new Date().toISOString().split('T')[0]
-            if (rawDate) {
-                // Handle Excel Date Serial Numbers (e.g. 45231)
-                if (typeof rawDate === 'number') {
-                     const dateObj = new Date((rawDate - (25567 + 2)) * 86400 * 1000)
-                     cleanDate = dateObj.toISOString().split('T')[0]
-                } else {
-                     const d = new Date(rawDate)
-                     if (!isNaN(d.getTime())) cleanDate = d.toISOString().split('T')[0]
-                }
-            }
-
             mappedData.push({
                 ticker: ticker.toString().toUpperCase().trim(),
-                date: cleanDate,
+                date: finalDate,
                 type: normType,
                 quantity: Math.abs(parseFloat(qty)),
                 price: Math.abs(parseFloat(price)),
@@ -111,7 +124,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
       reader.onload = (e) => {
           const data = e.target?.result
           const workbook = XLSX.read(data, { type: 'binary' })
-          const sheetName = workbook.SheetNames[0] // Read first sheet
+          const sheetName = workbook.SheetNames[0]
           const sheet = workbook.Sheets[sheetName]
           const json = XLSX.utils.sheet_to_json(sheet)
           processRows(json)
@@ -143,7 +156,8 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
           const row = preview[i]
           try {
               let cleanTicker = row.ticker
-              if (!cleanTicker.includes('.') && row.ticker.length < 6) cleanTicker += '.NS'
+              // Simple heuristic: If it doesn't have a dot, assume .NS for now
+              if (!cleanTicker.includes('.') && row.ticker.length < 10) cleanTicker += '.NS'
 
               const { data: asset, error: assetError } = await supabase
                   .from('assets')
@@ -191,19 +205,35 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
       <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-2xl dark:bg-slate-900 dark:border dark:border-slate-800 max-h-[90vh] flex flex-col">
         
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Bulk Import Transactions</h2>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Bulk Import</h2>
           <button onClick={onClose} className="rounded-full p-1 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-6 w-6 text-slate-500" /></button>
         </div>
 
         {!file ? (
             <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-12 bg-slate-50 dark:bg-slate-900 dark:border-slate-700">
+                {/* DEFAULT DATE PICKER */}
+                <div className="mb-6 w-full max-w-xs">
+                    <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">
+                        Default Date (if missing in file):
+                    </label>
+                    <div className="relative">
+                        <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input 
+                            type="date" 
+                            value={defaultDate} 
+                            onChange={(e) => setDefaultDate(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:bg-slate-800 dark:border-slate-700 text-sm"
+                        />
+                    </div>
+                </div>
+
                 <div className="p-4 bg-indigo-100 text-indigo-600 rounded-full mb-4 dark:bg-indigo-900/30 dark:text-indigo-400">
                     <UploadCloud className="h-8 w-8" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Upload File</h3>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Upload Report</h3>
                 <p className="text-sm text-slate-500 mb-6 text-center max-w-xs">
-                    Supports <b>.CSV</b> and <b>.XLSX (Excel)</b> files.<br/>
-                    (Groww, Zerodha, Excel reports)
+                    Supports <b>.CSV</b> and <b>.XLSX</b> (Groww, Zerodha).<br/>
+                    We will auto-detect columns like <i>Instrument Name</i> and <i>Avg. Cost</i>.
                 </p>
                 <label className="cursor-pointer rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 transition">
                     Select File
@@ -215,12 +245,9 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
                         <FileText className="h-4 w-4" />
-                        {file.name} <span className="text-slate-400">({preview.length} rows found)</span>
+                        {file.name} <span className="text-slate-400">({preview.length} rows)</span>
                     </div>
-                    
-                    <button onClick={() => { setFile(null); setPreview([]) }} className="text-xs text-red-500 hover:underline">
-                        Remove File
-                    </button>
+                    <button onClick={() => { setFile(null); setPreview([]) }} className="text-xs text-red-500 hover:underline">Remove</button>
                 </div>
 
                 <div className="mb-4">
@@ -237,7 +264,7 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                     <table className="w-full text-left text-xs">
                         <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
                             <tr>
-                                <th className="p-3 font-medium">Date</th>
+                                <th className="p-3 font-medium">Date (Used)</th>
                                 <th className="p-3 font-medium">Ticker</th>
                                 <th className="p-3 font-medium">Type</th>
                                 <th className="p-3 font-medium text-right">Qty</th>
@@ -284,7 +311,6 @@ export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
                 </div>
             </div>
         )}
-
       </div>
     </div>
   )
