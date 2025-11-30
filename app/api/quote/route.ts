@@ -17,52 +17,48 @@ export async function POST(request: Request) {
          yahooTicker = `${yahooTicker}.NS`
     }
 
-    // REQUEST MULTIPLE MODULES TO COVER ALL DATA TYPES
-    const modules = ['summaryDetail', 'defaultKeyStatistics', 'price']
-    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooTicker}?modules=${modules.join(',')}`
+    // Using v7 Quote Endpoint - It is often more reliable for basic stats than v10
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooTicker}`
     
+    console.log(`Fetching fundamentals for: ${yahooTicker}`) // DEBUG LOG
+
     const res = await fetch(url, { 
         headers: { 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9'
         },
-        next: { revalidate: 300 } // Cache 5 mins
+        next: { revalidate: 60 } // Lower cache time to retry failures faster
     })
     
     if (!res.ok) {
-        console.error(`Yahoo API Error: ${res.status}`)
-        return NextResponse.json({ error: 'Yahoo API Error' }, { status: res.status })
+        console.error(`Yahoo API Error: ${res.status} ${res.statusText}`)
+        return NextResponse.json({ error: `Yahoo API Error: ${res.status}` }, { status: res.status })
     }
 
     const data = await res.json()
-    const result = data?.quoteSummary?.result?.[0]
+    const result = data?.quoteResponse?.result?.[0]
 
-    if (!result) return NextResponse.json({ error: 'Data not found' }, { status: 404 })
+    if (!result) {
+        console.error(`No data found for ticker: ${yahooTicker}`)
+        return NextResponse.json({ error: 'Data not found' }, { status: 404 })
+    }
 
-    const summary = result.summaryDetail || {}
-    const keyStats = result.defaultKeyStatistics || {}
-    const price = result.price || {}
+    // Extract with fallbacks
+    const stats = {
+        marketCap: result.marketCap || 0,
+        peRatio: result.trailingPE || result.forwardPE || 0,
+        high52: result.fiftyTwoWeekHigh || 0,
+        low52: result.fiftyTwoWeekLow || 0,
+        divYield: result.dividendYield || result.trailingAnnualDividendYield || 0,
+        currency: result.currency || 'INR',
+        symbol: result.symbol || yahooTicker
+    }
 
-    // ROBUST EXTRACTION WITH FALLBACKS
-    const marketCap = summary.marketCap?.raw || price.marketCap?.raw || 0
-    const peRatio = summary.trailingPE?.raw || keyStats.trailingPE?.raw || keyStats.forwardPE?.raw || 0
-    const high52 = summary.fiftyTwoWeekHigh?.raw || 0
-    const low52 = summary.fiftyTwoWeekLow?.raw || 0
-    const divYield = summary.dividendYield?.raw || summary.trailingAnnualDividendYield?.raw || 0
-    const currency = price.currency || 'INR'
-    const symbol = price.symbol || yahooTicker
-
-    return NextResponse.json({
-        marketCap,
-        peRatio,
-        high52,
-        low52,
-        divYield,
-        currency,
-        symbol
-    })
+    return NextResponse.json(stats)
 
   } catch (error: any) {
-    console.error("Quote Fetch Error:", error)
+    console.error("Quote Fetch Exception:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
