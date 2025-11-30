@@ -5,9 +5,9 @@ import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Sciss
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
+import CsvImportModal from '@/components/csv-import-modal' // Ensure this is imported
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
-import CsvImportModal from '@/components/csv-import-modal' // Add Modal
 
 type Holding = {
   ticker: string
@@ -32,14 +32,14 @@ export default function HoldingsPage() {
   const { selectedPortfolio } = usePortfolio()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
+  const [isImportOpen, setIsImportOpen] = useState(false) // Import Modal State
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [activeTab, setActiveTab] = useState('All')
-  const [isImportOpen, setIsImportOpen] = useState(false)
-
+  
   const supabase = createClient()
 
   const fetchHoldings = useCallback(async () => {
@@ -145,7 +145,6 @@ export default function HoldingsPage() {
 
             holdingList.forEach(h => {
                 let priceData = priceMap[h.ticker]
-                
                 if (!priceData) {
                     const root = h.ticker.split('.')[0]
                     const foundKey = Object.keys(priceMap).find(k => k.includes(root))
@@ -165,10 +164,8 @@ export default function HoldingsPage() {
 
       const finalHoldings = holdingList.map(h => {
         h.currentValue = h.quantity * h.currentPrice
-        
         const prevValue = h.currentValue / (1 + (h.dayChangePercent / 100))
         h.dayChangeValue = h.currentValue - prevValue
-
         h.pnl = h.currentValue - h.totalInvested
         h.pnlPercent = h.totalInvested > 0 ? (h.pnl / h.totalInvested) * 100 : 0
         return h
@@ -184,6 +181,24 @@ export default function HoldingsPage() {
   }, [supabase, selectedPortfolio])
 
   useEffect(() => { fetchHoldings() }, [fetchHoldings])
+
+  // --- EXPORT FUNCTION ---
+  const handleExport = () => {
+      if (holdings.length === 0) return alert("No holdings to export")
+      
+      const headers = ['Ticker,Name,Type,Quantity,Avg Price,Current Price,Day Change %,Day Gain,Total Value,Total P&L,P&L %']
+      const rows = holdings.map(h => 
+          `${h.ticker},"${h.name}",${h.type},${h.quantity},${h.avgPrice.toFixed(2)},${h.currentPrice.toFixed(2)},${h.dayChangePercent.toFixed(2)}%,${h.dayChangeValue.toFixed(2)},${h.currentValue.toFixed(2)},${h.pnl.toFixed(2)},${h.pnlPercent.toFixed(2)}%`
+      )
+      
+      const csvContent = "data:text/csv;charset=utf-8," + headers.concat(rows).join("\n")
+      const encodedUri = encodeURI(csvContent)
+      const link = document.createElement("a")
+      link.setAttribute("href", encodedUri)
+      link.setAttribute("download", `portfolio_holdings_${new Date().toISOString().split('T')[0]}.csv`)
+      document.body.appendChild(link)
+      link.click()
+  }
 
   const handleRowClick = (asset: Holding) => {
     setSelectedAsset({ ids: asset.assetIds, name: asset.name, ticker: asset.ticker })
@@ -232,22 +247,28 @@ export default function HoldingsPage() {
             >
                 <Scissors className="h-5 w-5" />
             </button>
+            
+            {/* Import Button */}
+            <button 
+                onClick={() => setIsImportOpen(true)}
+                className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" 
+                title="Import from CSV/Excel"
+            >
+                <Upload className="h-5 w-5" />
+            </button>
 
-          <button className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+          {/* Export Button */}
+          <button 
+            onClick={handleExport}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
             <Download className="h-4 w-4" />
             Export
           </button>
+
           <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-sm">
             <Plus className="h-4 w-4" />
             Add Transaction
-          </button>
-          {/* IMPORT BUTTON */}
-          <button 
-            onClick={() => setIsImportOpen(true)} 
-            className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Upload className="h-4 w-4" />
-            Import CSV
           </button>
         </div>
       </div>
@@ -286,7 +307,6 @@ export default function HoldingsPage() {
                     <th className="px-6 py-4 font-medium">Asset Name</th>
                     <th className="px-6 py-4 font-medium">Type</th>
                     <th className="px-6 py-4 font-medium text-right">Qty</th>
-                    {/* REMOVED FIFO BADGE */}
                     <th className="px-6 py-4 font-medium text-right">Avg. Price</th>
                     <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
                     <th className="px-6 py-4 font-medium text-right">Day Change</th> 
@@ -319,7 +339,6 @@ export default function HoldingsPage() {
                         ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </td>
                         
-                        {/* DAY CHANGE COLUMN */}
                         <td className={`px-6 py-4 text-right font-medium ${holding.dayChangeValue >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                             <div className="flex flex-col items-end">
                                 <span>{holding.dayChangeValue >= 0 ? '+' : ''}₹{holding.dayChangeValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
@@ -347,12 +366,6 @@ export default function HoldingsPage() {
         </div>
       </div>
 
-      {/* DISCLAIMER */}
-      <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
-        <Info className="h-4 w-4" />
-        <span>Note: Commodity prices (Gold/Silver) are approximations based on global spot rates + estimated duties and may differ slightly from local physical market rates.</span>
-      </div>
-
       <TransactionModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
@@ -365,17 +378,17 @@ export default function HoldingsPage() {
         onSuccess={fetchHoldings} 
       />
 
+      <CsvImportModal 
+        isOpen={isImportOpen} 
+        onClose={() => setIsImportOpen(false)} 
+        onSuccess={fetchHoldings} 
+      />
+
       <AssetDetailsDrawer 
         asset={selectedAsset}
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onUpdate={fetchHoldings}
-      />
-
-      <CsvImportModal 
-        isOpen={isImportOpen} 
-        onClose={() => setIsImportOpen(false)} 
-        onSuccess={fetchHoldings} 
       />
 
     </div>
