@@ -1,0 +1,274 @@
+'use client'
+
+import { useState } from 'react'
+import { X, UploadCloud, Loader2, FileText, CheckCircle, AlertTriangle } from 'lucide-react'
+import Papa from 'papaparse'
+import { createClient } from '@/lib/supabase/client'
+import { usePortfolio } from '@/context/portfolio-context'
+
+type Props = {
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
+}
+
+type ParsedRow = {
+  ticker: string
+  date: string
+  type: 'Buy' | 'Sell'
+  quantity: number
+  price: number
+  status: 'pending' | 'success' | 'error'
+  msg?: string
+}
+
+export default function CsvImportModal({ isOpen, onClose, onSuccess }: Props) {
+  const { selectedPortfolio, portfolios } = usePortfolio()
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<ParsedRow[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [targetPortfolioId, setTargetPortfolioId] = useState<number>(0)
+  
+  const supabase = createClient()
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+        setFile(e.target.files[0])
+        parseFile(e.target.files[0])
+    }
+  }
+
+  const parseFile = (file: File) => {
+    Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results: any) => {
+            const rows = results.data
+            const mappedData: ParsedRow[] = []
+
+            // SMART MAPPING LOGIC
+            rows.forEach((row: any) => {
+                // 1. Find Ticker
+                const ticker = row['Symbol'] || row['Ticker'] || row['Stock Name'] || row['Instrument']
+                
+                // 2. Find Date
+                const rawDate = row['Date'] || row['Trade Date'] || row['Order Date']
+                
+                // 3. Find Type (Buy/Sell)
+                let type = row['Type'] || row['Action'] || row['Transaction']
+                if (!type) {
+                    // Zerodha often puts buy/sell in "trade_type"
+                    type = row['trade_type']
+                }
+                // Normalize type
+                const normType = type?.toLowerCase().includes('sell') ? 'Sell' : 'Buy'
+
+                // 4. Find Qty
+                const qty = row['Quantity'] || row['Qty'] || row['Exec Qty']
+
+                // 5. Find Price
+                const price = row['Price'] || row['Rate'] || row['Avg. Price'] || row['Amount']
+
+                if (ticker && qty && price) {
+                    // Clean up data
+                    let cleanDate = new Date().toISOString().split('T')[0]
+                    if (rawDate) {
+                        const d = new Date(rawDate)
+                        if (!isNaN(d.getTime())) cleanDate = d.toISOString().split('T')[0]
+                    }
+
+                    mappedData.push({
+                        ticker: ticker.toUpperCase().trim(),
+                        date: cleanDate,
+                        type: normType,
+                        quantity: Math.abs(parseFloat(qty)),
+                        price: Math.abs(parseFloat(price)),
+                        status: 'pending'
+                    })
+                }
+            })
+            setPreview(mappedData)
+        }
+    })
+  }
+
+  const handleImport = async () => {
+      if (preview.length === 0) return
+      setUploading(true)
+      setProgress(0)
+
+      // 1. Get Portfolio ID
+      let finalPid = targetPortfolioId
+      if (!finalPid && portfolios.length > 0) finalPid = portfolios[0].id as number
+      if (!finalPid) {
+           // Fetch or create default if missing (Safety net)
+           const { data: { user } } = await supabase.auth.getUser()
+           if (user) {
+               const { data } = await supabase.from('portfolios').select('id').eq('user_id', user.id).limit(1).single()
+               if (data) finalPid = data.id
+           }
+      }
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      let successCount = 0
+
+      // 2. Process Rows
+      for (let i = 0; i < preview.length; i++) {
+          const row = preview[i]
+          try {
+              // A. Upsert Asset
+              let cleanTicker = row.ticker
+              if (!cleanTicker.includes('.') && row.ticker.length < 6) cleanTicker += '.NS'
+
+              const { data: asset, error: assetError } = await supabase
+                  .from('assets')
+                  .upsert({ ticker: cleanTicker, name: row.ticker, asset_type: 'Stock' }, { onConflict: 'ticker' })
+                  .select('id')
+                  .single()
+              
+              if (assetError) throw assetError
+
+              // B. Insert Transaction
+              const { error: txnError } = await supabase.from('transactions').insert({
+                  user_id: user.id,
+                  portfolio_id: finalPid,
+                  asset_id: asset.id,
+                  transaction_type: row.type,
+                  quantity: row.quantity,
+                  price: row.price,
+                  date: row.date,
+                  realised_pnl: 0 
+              })
+
+              if (txnError) throw txnError
+
+              row.status = 'success'
+              successCount++
+
+          } catch (err: any) {
+              console.error(err)
+              row.status = 'error'
+              row.msg = err.message
+          }
+          
+          // Update Progress UI
+          setProgress(Math.round(((i + 1) / preview.length) * 100))
+      }
+
+      setUploading(false)
+      alert(`Import Complete! Successfully imported ${successCount} of ${preview.length} transactions.`)
+      onSuccess()
+      onClose()
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-2xl dark:bg-slate-900 dark:border dark:border-slate-800 max-h-[90vh] flex flex-col">
+        
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Bulk Import Transactions</h2>
+          <button onClick={onClose} className="rounded-full p-1 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-6 w-6 text-slate-500" /></button>
+        </div>
+
+        {!file ? (
+            // UPLOAD STATE
+            <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-12 bg-slate-50 dark:bg-slate-900 dark:border-slate-700">
+                <div className="p-4 bg-indigo-100 text-indigo-600 rounded-full mb-4 dark:bg-indigo-900/30 dark:text-indigo-400">
+                    <UploadCloud className="h-8 w-8" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Upload CSV File</h3>
+                <p className="text-sm text-slate-500 mb-6 text-center max-w-xs">
+                    Supported columns: Symbol, Date, Type (Buy/Sell), Qty, Price. <br/>
+                    (Works with Zerodha/Groww reports)
+                </p>
+                <label className="cursor-pointer rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 transition">
+                    Select File
+                    <input type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+                </label>
+            </div>
+        ) : (
+            // PREVIEW STATE
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        <FileText className="h-4 w-4" />
+                        {file.name} <span className="text-slate-400">({preview.length} rows found)</span>
+                    </div>
+                    
+                    <button onClick={() => { setFile(null); setPreview([]) }} className="text-xs text-red-500 hover:underline">
+                        Remove File
+                    </button>
+                </div>
+
+                {/* Portfolio Selector */}
+                <div className="mb-4">
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Import To Portfolio</label>
+                    <select 
+                        className="w-full p-2 text-sm border border-slate-300 rounded-lg dark:bg-slate-950 dark:border-slate-700"
+                        onChange={(e) => setTargetPortfolioId(Number(e.target.value))}
+                    >
+                        {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                </div>
+
+                <div className="flex-1 overflow-auto border border-slate-200 rounded-lg dark:border-slate-800">
+                    <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 dark:bg-slate-800 sticky top-0">
+                            <tr>
+                                <th className="p-3 font-medium">Date</th>
+                                <th className="p-3 font-medium">Ticker</th>
+                                <th className="p-3 font-medium">Type</th>
+                                <th className="p-3 font-medium text-right">Qty</th>
+                                <th className="p-3 font-medium text-right">Price</th>
+                                <th className="p-3 font-medium text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {preview.map((row, i) => (
+                                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                    <td className="p-3 text-slate-500">{row.date}</td>
+                                    <td className="p-3 font-medium">{row.ticker}</td>
+                                    <td className={`p-3 font-medium ${row.type === 'Buy' ? 'text-green-600' : 'text-red-600'}`}>{row.type}</td>
+                                    <td className="p-3 text-right">{row.quantity}</td>
+                                    <td className="p-3 text-right">{row.price}</td>
+                                    <td className="p-3 text-center">
+                                        {row.status === 'pending' && <span className="text-slate-400">-</span>}
+                                        {row.status === 'success' && <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />}
+                                        {row.status === 'error' && (
+                                            <span title={row.msg} className="flex items-center justify-center cursor-help">
+                                                <AlertTriangle className="h-4 w-4 text-red-500" />
+                                            </span>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="mt-6 flex justify-end gap-3">
+                    <button onClick={onClose} disabled={uploading} className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg disabled:opacity-50">Cancel</button>
+                    <button 
+                        onClick={handleImport} 
+                        disabled={uploading}
+                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                        {uploading ? (
+                            <><Loader2 className="h-4 w-4 animate-spin" /> Importing {progress}%</>
+                        ) : (
+                            'Import All'
+                        )}
+                    </button>
+                </div>
+            </div>
+        )}
+
+      </div>
+    </div>
+  )
+}

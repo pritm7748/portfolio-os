@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown } from 'lucide-react'
+import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown, Upload } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
+import CsvImportModal from '@/components/csv-import-modal' // Add Modal
 
 type Holding = {
   ticker: string
@@ -18,8 +19,8 @@ type Holding = {
   totalInvested: number
   currentPrice: number 
   currentValue: number 
-  dayChangePercent: number // <--- New
-  dayChangeValue: number   // <--- New
+  dayChangePercent: number 
+  dayChangeValue: number   
   pnl: number
   pnlPercent: number
   assetIds: number[]
@@ -37,7 +38,8 @@ export default function HoldingsPage() {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [activeTab, setActiveTab] = useState('All')
-  
+  const [isImportOpen, setIsImportOpen] = useState(false)
+
   const supabase = createClient()
 
   const fetchHoldings = useCallback(async () => {
@@ -78,8 +80,8 @@ export default function HoldingsPage() {
             avgPrice: 0,
             currentPrice: 0,
             currentValue: 0,
-            dayChangePercent: 0, // Init
-            dayChangeValue: 0,   // Init
+            dayChangePercent: 0, 
+            dayChangeValue: 0,   
             pnl: 0,
             pnlPercent: 0,
             assetIds: [],
@@ -137,7 +139,6 @@ export default function HoldingsPage() {
             const response = await fetch('/api/prices', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // CHANGED: Request DETAILED data to get change %
                 body: JSON.stringify({ tickers, detailed: true }) 
             })
             const priceMap = await response.json()
@@ -145,7 +146,6 @@ export default function HoldingsPage() {
             holdingList.forEach(h => {
                 let priceData = priceMap[h.ticker]
                 
-                // Fallback logic for tickers
                 if (!priceData) {
                     const root = h.ticker.split('.')[0]
                     const foundKey = Object.keys(priceMap).find(k => k.includes(root))
@@ -166,8 +166,6 @@ export default function HoldingsPage() {
       const finalHoldings = holdingList.map(h => {
         h.currentValue = h.quantity * h.currentPrice
         
-        // Calculate Day Change Value based on % and Current Value
-        // Formula: CurrentValue - (CurrentValue / (1 + change/100))
         const prevValue = h.currentValue / (1 + (h.dayChangePercent / 100))
         h.dayChangeValue = h.currentValue - prevValue
 
@@ -243,6 +241,14 @@ export default function HoldingsPage() {
             <Plus className="h-4 w-4" />
             Add Transaction
           </button>
+          {/* IMPORT BUTTON */}
+          <button 
+            onClick={() => setIsImportOpen(true)} 
+            className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Upload className="h-4 w-4" />
+            Import CSV
+          </button>
         </div>
       </div>
 
@@ -280,11 +286,10 @@ export default function HoldingsPage() {
                     <th className="px-6 py-4 font-medium">Asset Name</th>
                     <th className="px-6 py-4 font-medium">Type</th>
                     <th className="px-6 py-4 font-medium text-right">Qty</th>
-                    <th className="px-6 py-4 font-medium text-right">
-                        Avg. Price <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300"></span>
-                    </th>
+                    {/* REMOVED FIFO BADGE */}
+                    <th className="px-6 py-4 font-medium text-right">Avg. Price</th>
                     <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
-                    <th className="px-6 py-4 font-medium text-right">Day Change</th> {/* NEW COLUMN */}
+                    <th className="px-6 py-4 font-medium text-right">Day Change</th> 
                     <th className="px-6 py-4 font-medium text-right">Total Value</th>
                     <th className="px-6 py-4 font-medium text-right">Total P&L</th>
                     <th className="px-4 py-4"></th>
@@ -365,6 +370,12 @@ export default function HoldingsPage() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onUpdate={fetchHoldings}
+      />
+
+      <CsvImportModal 
+        isOpen={isImportOpen} 
+        onClose={() => setIsImportOpen(false)} 
+        onSuccess={fetchHoldings} 
       />
 
     </div>
