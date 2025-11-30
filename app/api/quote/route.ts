@@ -17,34 +17,48 @@ export async function POST(request: Request) {
          yahooTicker = `${yahooTicker}.NS`
     }
 
-    // USE ROBUST v10 ENDPOINT
-    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooTicker}?modules=summaryDetail,price`
+    // REQUEST MULTIPLE MODULES TO COVER ALL DATA TYPES
+    const modules = ['summaryDetail', 'defaultKeyStatistics', 'price']
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooTicker}?modules=${modules.join(',')}`
     
     const res = await fetch(url, { 
         headers: { 
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
         next: { revalidate: 300 } // Cache 5 mins
     })
     
     if (!res.ok) {
+        console.error(`Yahoo API Error: ${res.status}`)
         return NextResponse.json({ error: 'Yahoo API Error' }, { status: res.status })
     }
 
     const data = await res.json()
-    const summary = data?.quoteSummary?.result?.[0]?.summaryDetail
-    const price = data?.quoteSummary?.result?.[0]?.price
+    const result = data?.quoteSummary?.result?.[0]
 
-    if (!summary) return NextResponse.json({ error: 'Data not found' }, { status: 404 })
+    if (!result) return NextResponse.json({ error: 'Data not found' }, { status: 404 })
+
+    const summary = result.summaryDetail || {}
+    const keyStats = result.defaultKeyStatistics || {}
+    const price = result.price || {}
+
+    // ROBUST EXTRACTION WITH FALLBACKS
+    const marketCap = summary.marketCap?.raw || price.marketCap?.raw || 0
+    const peRatio = summary.trailingPE?.raw || keyStats.trailingPE?.raw || keyStats.forwardPE?.raw || 0
+    const high52 = summary.fiftyTwoWeekHigh?.raw || 0
+    const low52 = summary.fiftyTwoWeekLow?.raw || 0
+    const divYield = summary.dividendYield?.raw || summary.trailingAnnualDividendYield?.raw || 0
+    const currency = price.currency || 'INR'
+    const symbol = price.symbol || yahooTicker
 
     return NextResponse.json({
-        marketCap: summary.marketCap?.raw || 0,
-        peRatio: summary.trailingPE?.raw || 0,
-        high52: summary.fiftyTwoWeekHigh?.raw || 0,
-        low52: summary.fiftyTwoWeekLow?.raw || 0,
-        divYield: summary.dividendYield?.raw || summary.trailingAnnualDividendYield?.raw || 0,
-        currency: price?.currency || 'INR',
-        symbol: price?.symbol || yahooTicker
+        marketCap,
+        peRatio,
+        high52,
+        low52,
+        divYield,
+        currency,
+        symbol
     })
 
   } catch (error: any) {
