@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown, Upload } from 'lucide-react'
+import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
-import CsvImportModal from '@/components/csv-import-modal' // Ensure this is imported
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -32,7 +31,6 @@ export default function HoldingsPage() {
   const { selectedPortfolio } = usePortfolio()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
-  const [isImportOpen, setIsImportOpen] = useState(false) // Import Modal State
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [holdings, setHoldings] = useState<Holding[]>([])
@@ -145,6 +143,7 @@ export default function HoldingsPage() {
 
             holdingList.forEach(h => {
                 let priceData = priceMap[h.ticker]
+                
                 if (!priceData) {
                     const root = h.ticker.split('.')[0]
                     const foundKey = Object.keys(priceMap).find(k => k.includes(root))
@@ -164,8 +163,10 @@ export default function HoldingsPage() {
 
       const finalHoldings = holdingList.map(h => {
         h.currentValue = h.quantity * h.currentPrice
+        
         const prevValue = h.currentValue / (1 + (h.dayChangePercent / 100))
         h.dayChangeValue = h.currentValue - prevValue
+
         h.pnl = h.currentValue - h.totalInvested
         h.pnlPercent = h.totalInvested > 0 ? (h.pnl / h.totalInvested) * 100 : 0
         return h
@@ -182,7 +183,6 @@ export default function HoldingsPage() {
 
   useEffect(() => { fetchHoldings() }, [fetchHoldings])
 
-  // --- EXPORT FUNCTION ---
   const handleExport = () => {
       if (holdings.length === 0) return alert("No holdings to export")
       
@@ -247,17 +247,7 @@ export default function HoldingsPage() {
             >
                 <Scissors className="h-5 w-5" />
             </button>
-            
-            {/* Import Button */}
-            <button 
-                onClick={() => setIsImportOpen(true)}
-                className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" 
-                title="Import from CSV/Excel"
-            >
-                <Upload className="h-5 w-5" />
-            </button>
 
-          {/* Export Button */}
           <button 
             onClick={handleExport}
             className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -307,6 +297,7 @@ export default function HoldingsPage() {
                     <th className="px-6 py-4 font-medium">Asset Name</th>
                     <th className="px-6 py-4 font-medium">Type</th>
                     <th className="px-6 py-4 font-medium text-right">Qty</th>
+                    {/* REMOVED FIFO BADGE HERE */}
                     <th className="px-6 py-4 font-medium text-right">Avg. Price</th>
                     <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
                     <th className="px-6 py-4 font-medium text-right">Day Change</th> 
@@ -366,6 +357,12 @@ export default function HoldingsPage() {
         </div>
       </div>
 
+      {/* DISCLAIMER */}
+      <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+        <Info className="h-4 w-4" />
+        <span>Note: Commodity prices (Gold/Silver) are approximations based on global spot rates + estimated duties and may differ slightly from local physical market rates.</span>
+      </div>
+
       <TransactionModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
@@ -375,12 +372,6 @@ export default function HoldingsPage() {
       <CorporateActionModal 
         isOpen={isSplitModalOpen} 
         onClose={() => setIsSplitModalOpen(false)} 
-        onSuccess={fetchHoldings} 
-      />
-
-      <CsvImportModal 
-        isOpen={isImportOpen} 
-        onClose={() => setIsImportOpen(false)} 
         onSuccess={fetchHoldings} 
       />
 
