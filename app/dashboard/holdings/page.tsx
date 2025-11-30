@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info } from 'lucide-react'
+import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
@@ -18,6 +18,8 @@ type Holding = {
   totalInvested: number
   currentPrice: number 
   currentValue: number 
+  dayChangePercent: number // <--- New
+  dayChangeValue: number   // <--- New
   pnl: number
   pnlPercent: number
   assetIds: number[]
@@ -28,7 +30,7 @@ type Holding = {
 export default function HoldingsPage() {
   const { selectedPortfolio } = usePortfolio()
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isSplitModalOpen, setIsSplitModalOpen] = useState(false) // State for Split Modal
+  const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [holdings, setHoldings] = useState<Holding[]>([])
@@ -54,7 +56,6 @@ export default function HoldingsPage() {
       }
 
       const { data: transactions, error } = await query
-      
       if (error) throw error
 
       const portfolio: Record<string, Holding> = {}
@@ -77,6 +78,8 @@ export default function HoldingsPage() {
             avgPrice: 0,
             currentPrice: 0,
             currentValue: 0,
+            dayChangePercent: 0, // Init
+            dayChangeValue: 0,   // Init
             pnl: 0,
             pnlPercent: 0,
             assetIds: [],
@@ -134,19 +137,26 @@ export default function HoldingsPage() {
             const response = await fetch('/api/prices', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tickers })
+                // CHANGED: Request DETAILED data to get change %
+                body: JSON.stringify({ tickers, detailed: true }) 
             })
             const priceMap = await response.json()
 
             holdingList.forEach(h => {
-                let price = priceMap[h.ticker]
-                if (!price) {
+                let priceData = priceMap[h.ticker]
+                
+                // Fallback logic for tickers
+                if (!priceData) {
                     const root = h.ticker.split('.')[0]
                     const foundKey = Object.keys(priceMap).find(k => k.includes(root))
-                    if (foundKey) price = priceMap[foundKey]
+                    if (foundKey) priceData = priceMap[foundKey]
                 }
-                if (price) h.currentPrice = price
-                else h.currentPrice = h.avgPrice 
+
+                const price = priceData?.price || h.avgPrice
+                const change = priceData?.change || 0
+                
+                h.currentPrice = price
+                h.dayChangePercent = change
             })
         } catch (err) {
             console.error("Failed to fetch prices", err)
@@ -155,8 +165,14 @@ export default function HoldingsPage() {
 
       const finalHoldings = holdingList.map(h => {
         h.currentValue = h.quantity * h.currentPrice
+        
+        // Calculate Day Change Value based on % and Current Value
+        // Formula: CurrentValue - (CurrentValue / (1 + change/100))
+        const prevValue = h.currentValue / (1 + (h.dayChangePercent / 100))
+        h.dayChangeValue = h.currentValue - prevValue
+
         h.pnl = h.currentValue - h.totalInvested
-        h.pnlPercent = h.totalInvested > 0 ? ((h.currentValue - h.totalInvested) / h.totalInvested) * 100 : 0
+        h.pnlPercent = h.totalInvested > 0 ? (h.pnl / h.totalInvested) * 100 : 0
         return h
       })
 
@@ -187,7 +203,6 @@ export default function HoldingsPage() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         
-        {/* Search Bar */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -207,13 +222,11 @@ export default function HoldingsPage() {
           )}
         </div>
 
-        {/* Buttons */}
         <div className="flex items-center gap-2">
             <button onClick={fetchHoldings} className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" title="Refresh Prices">
                 <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
             </button>
             
-            {/* Corporate Actions Button */}
             <button 
                 onClick={() => setIsSplitModalOpen(true)}
                 className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" 
@@ -249,74 +262,87 @@ export default function HoldingsPage() {
           ))}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm min-h-[300px] dark:bg-slate-900 dark:border-slate-800">
-        {loading ? (
-          <div className="flex h-64 items-center justify-center text-slate-500 dark:text-slate-400">
-            <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-            Updating prices...
-          </div>
-        ) : filteredHoldings.length === 0 ? (
-          <div className="flex h-64 flex-col items-center justify-center text-slate-500 dark:text-slate-400">
-            <p>No holdings found in this portfolio.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm min-h-[300px] dark:bg-slate-900 dark:border-slate-800">
+        <div className="min-w-[1000px]">
+            {loading ? (
+            <div className="flex h-64 items-center justify-center text-slate-500 dark:text-slate-400">
+                <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+                Updating prices...
+            </div>
+            ) : filteredHoldings.length === 0 ? (
+            <div className="flex h-64 flex-col items-center justify-center text-slate-500 dark:text-slate-400">
+                <p>No holdings found in this portfolio.</p>
+            </div>
+            ) : (
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                <tr>
-                  <th className="px-6 py-4 font-medium">Asset Name</th>
-                  <th className="px-6 py-4 font-medium">Type</th>
-                  <th className="px-6 py-4 font-medium text-right">Qty</th>
-                  <th className="px-6 py-4 font-medium text-right">
-                    Avg. Price <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300">FIFO</span>
-                  </th>
-                  <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
-                  <th className="px-6 py-4 font-medium text-right">Total Value</th>
-                  <th className="px-6 py-4 font-medium text-right">P&L</th>
-                  <th className="px-4 py-4"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredHoldings.map((holding) => (
-                  <tr 
-                    key={holding.rootSymbol} 
-                    onClick={() => handleRowClick(holding)} 
-                    className="hover:bg-slate-50 transition cursor-pointer group dark:hover:bg-slate-800/50"
-                  >
-                    <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">
-                      {holding.name}
-                      <span className="ml-2 text-xs text-slate-400">({holding.ticker})</span>
-                    </td>
-                    <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                        {holding.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-200">{holding.quantity}</td>
-                    <td className="px-6 py-4 text-right text-slate-600 dark:text-slate-400">
-                      ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-6 py-4 text-right font-medium text-indigo-600 dark:text-indigo-400">
-                       ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">
-                      ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </td>
-                    <td className={`px-6 py-4 text-right font-bold ${holding.pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                      {holding.pnlPercent.toFixed(2)}%
-                    </td>
-                    <td className="px-4 py-4 text-right">
-                        <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
+                <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    <tr>
+                    <th className="px-6 py-4 font-medium">Asset Name</th>
+                    <th className="px-6 py-4 font-medium">Type</th>
+                    <th className="px-6 py-4 font-medium text-right">Qty</th>
+                    <th className="px-6 py-4 font-medium text-right">
+                        Avg. Price <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300">FIFO</span>
+                    </th>
+                    <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
+                    <th className="px-6 py-4 font-medium text-right">Day Change</th> {/* NEW COLUMN */}
+                    <th className="px-6 py-4 font-medium text-right">Total Value</th>
+                    <th className="px-6 py-4 font-medium text-right">Total P&L</th>
+                    <th className="px-4 py-4"></th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredHoldings.map((holding) => (
+                    <tr 
+                        key={holding.rootSymbol} 
+                        onClick={() => handleRowClick(holding)} 
+                        className="hover:bg-slate-50 transition cursor-pointer group dark:hover:bg-slate-800/50"
+                    >
+                        <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">
+                        {holding.name}
+                        <span className="ml-2 text-xs text-slate-400">({holding.ticker})</span>
+                        </td>
+                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            {holding.type}
+                        </span>
+                        </td>
+                        <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-200">{holding.quantity}</td>
+                        <td className="px-6 py-4 text-right text-slate-600 dark:text-slate-400">
+                        ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 text-right font-medium text-indigo-600 dark:text-indigo-400">
+                        ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </td>
+                        
+                        {/* DAY CHANGE COLUMN */}
+                        <td className={`px-6 py-4 text-right font-medium ${holding.dayChangeValue >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            <div className="flex flex-col items-end">
+                                <span>{holding.dayChangeValue >= 0 ? '+' : ''}₹{holding.dayChangeValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                                <span className="text-xs opacity-80">{holding.dayChangePercent.toFixed(2)}%</span>
+                            </div>
+                        </td>
+
+                        <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">
+                        ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </td>
+                        <td className={`px-6 py-4 text-right font-bold ${holding.pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            <div className="flex flex-col items-end">
+                                <span>{holding.pnl >= 0 ? '+' : ''}₹{holding.pnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                                <span className="text-xs opacity-80">{holding.pnlPercent.toFixed(2)}%</span>
+                            </div>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                            <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                        </td>
+                    </tr>
+                    ))}
+                </tbody>
             </table>
-          </div>
-        )}
+            )}
+        </div>
       </div>
 
-      {/* DISCLAIMER FOOTER */}
+      {/* DISCLAIMER */}
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
         <Info className="h-4 w-4" />
         <span>Note: Commodity prices (Gold/Silver) are approximations based on global spot rates + estimated duties and may differ slightly from local physical market rates.</span>
