@@ -281,7 +281,7 @@ export default function HoldingsPage() {
                     <th className="px-6 py-4 font-medium">Type</th>
                     <th className="px-6 py-4 font-medium text-right">Qty</th>
                     <th className="px-6 py-4 font-medium text-right">
-                        Avg. Price <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300">FIFO</span>
+                        Avg. Price <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300"></span>
                     </th>
                     <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
                     <th className="px-6 py-4 font-medium text-right">Day Change</th> {/* NEW COLUMN */}
