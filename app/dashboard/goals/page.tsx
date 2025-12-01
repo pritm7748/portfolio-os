@@ -92,6 +92,17 @@ export default function GoalsPage() {
 
   }, [currentNetWorth, targetAmount, years, expectedReturn, monthlySip])
 
+  // --- SMART INPUT HANDLER ---
+  const handleFormattedInput = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: number) => void) => {
+      // Remove non-digits (commas)
+      const rawValue = e.target.value.replace(/,/g, '').replace(/[^0-9.]/g, '')
+      if (rawValue === '') {
+          setter(0)
+          return
+      }
+      setter(Number(rawValue))
+  }
+
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   const isGoalMet = projectedWealth >= targetAmount
@@ -99,7 +110,7 @@ export default function GoalsPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       
-      {/* STATUS BAR (Replaces the old Header section) */}
+      {/* STATUS BAR */}
       <div className={`w-full px-6 py-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 ${isGoalMet ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
           <div className="flex items-center gap-3">
               <div className={`p-2 rounded-full ${isGoalMet ? 'bg-green-100' : 'bg-amber-100'}`}>
@@ -130,12 +141,26 @@ export default function GoalsPage() {
               
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Target Amount (₹)</label>
-                  <input type="number" value={targetAmount} onChange={e => setTargetAmount(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
+                  <input 
+                    type="text" 
+                    inputMode="numeric"
+                    value={targetAmount > 0 ? targetAmount.toLocaleString('en-IN') : ''} 
+                    onChange={(e) => handleFormattedInput(e, setTargetAmount)} 
+                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" 
+                    placeholder="0"
+                  />
               </div>
 
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Monthly SIP (₹)</label>
-                  <input type="number" value={monthlySip} onChange={e => setMonthlySip(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
+                  <input 
+                    type="text" 
+                    inputMode="numeric"
+                    value={monthlySip > 0 ? monthlySip.toLocaleString('en-IN') : ''} 
+                    onChange={(e) => handleFormattedInput(e, setMonthlySip)} 
+                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none"
+                    placeholder="0"
+                  />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
