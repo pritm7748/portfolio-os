@@ -8,13 +8,12 @@ export async function POST(request: Request) {
 
     let cleanTicker = ticker.toUpperCase().replace(/\s/g, '')
     
-    // 1. Handle Commodities (No fundamentals available)
+    // 1. Handle Commodities (No fundamentals)
     if (cleanTicker.startsWith('COMMODITY:')) {
          return NextResponse.json({ error: 'Commodity fundamentals not supported' }, { status: 404 })
     } 
 
-    // 2. Detect if it's an Indian Stock
-    // If it ends in .NS, .BO or has no suffix, we assume Indian and try Screener.in
+    // 2. Detect Indian Stock
     const isIndian = cleanTicker.endsWith('.NS') || cleanTicker.endsWith('.BO') || (!cleanTicker.includes('.') && !cleanTicker.includes('^'))
     
     if (isIndian) {
@@ -22,48 +21,62 @@ export async function POST(request: Request) {
         const symbol = cleanTicker.split('.')[0]
         
         try {
-            // Fetch Screener Page
             const screenerUrl = `https://www.screener.in/company/${symbol}/`
             const res = await fetch(screenerUrl, {
                 headers: { 
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 },
-                next: { revalidate: 300 } // Cache for 5 minutes
+                next: { revalidate: 300 } // Cache for 5 mins
             })
             
             if (res.ok) {
                 const html = await res.text()
                 const $ = cheerio.load(html)
                 
-                // Helper to extract value by name from the top list
-                // Screener structure: <li class="flex flex-space-between"> <span class="name">Market Cap</span> <span class="nowrap value"> <span class="number">12,34,567</span> </span> </li>
-                const getData = (name: string) => {
-                    // Look for the list item containing the text
-                    // This is a robust search that looks for the specific label text
-                    const el = $(`li:contains("${name}") .value`)
-                    const text = el.text().trim().replace(/,/g, '') // Remove commas
-                    return parseFloat(text) || 0
+                // Data container
+                const data: Record<string, string> = {}
+
+                // Loop through the #top-ratios list seen in your screenshot
+                $('#top-ratios li').each((_, el) => {
+                    const name = $(el).find('.name').text().trim()
+                    const value = $(el).find('.value').text().trim()
+                    data[name] = value
+                })
+
+                // Helper to parse numbers (removes commas, %, Cr, etc.)
+                const parseVal = (key: string) => {
+                    const val = data[key]
+                    if (!val) return 0
+                    // Remove non-numeric chars except dot and slash (for High/Low)
+                    return parseFloat(val.replace(/,/g, '').replace(/[^\d./]/g, ''))
                 }
 
-                // Extract Data
-                const marketCap = getData('Market Cap')
-                const peRatio = getData('Stock P/E')
-                const high = getData('High')
-                const low = getData('Low')
-                const divYield = getData('Dividend Yield')
+                // Extract Fields
+                const marketCapRaw = parseVal('Market Cap') // Returns e.g. 1518348 (Cr implied)
+                const peRatio = parseVal('Stock P/E')
+                const divYield = parseVal('Dividend Yield')
+                
+                // Handle "High / Low" (e.g. "4586 / 3661")
+                let high52 = 0, low52 = 0
+                if (data['High / Low']) {
+                    const parts = data['High / Low'].split('/')
+                    if (parts.length === 2) {
+                        high52 = parseFloat(parts[0].replace(/,/g, ''))
+                        low52 = parseFloat(parts[1].replace(/,/g, ''))
+                    }
+                }
 
-                // If we found valid data, return it immediately
-                if (marketCap > 0) {
+                // If we found valid data, return it
+                if (marketCapRaw > 0) {
                     return NextResponse.json({
-                        // Screener gives Market Cap in Crores. 
-                        // We return the raw number (e.g. 1500000). 
-                        // Your UI formatter handles "Cr" label if needed, or we pass it as is.
-                        // Let's standardize: Return raw number.
-                        marketCap: marketCap * 10000000, // Convert Crores to absolute value if your UI expects full number
+                        // Convert "Cr" to full number for consistency with Yahoo data structure
+                        // Your screenshot shows "15,18,348", which is in Crores.
+                        // 15,18,348 Cr = 15,18,348 * 1,00,00,000
+                        marketCap: marketCapRaw * 10000000, 
                         peRatio: peRatio,
-                        high52: high,
-                        low52: low,
-                        divYield: divYield / 100, // Convert 1.5 to 0.015 for % logic
+                        high52: high52,
+                        low52: low52,
+                        divYield: divYield / 100, // Convert 1.35 to 0.0135
                         currency: 'INR',
                         symbol: symbol
                     })
@@ -74,9 +87,8 @@ export async function POST(request: Request) {
         }
     }
 
-    // 3. FALLBACK: Yahoo Finance (Chart API)
-    // If Screener failed (or it's a US Stock), use the Chart API.
-    // It won't have P/E, but it will have High/Low/Price so the UI doesn't break.
+    // 3. FALLBACK: Yahoo Finance Chart API
+    // If Screener failed (e.g. wrong symbol) or it's a US Stock, use the Chart API backup.
     
     if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
 
