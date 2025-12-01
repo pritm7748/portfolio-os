@@ -1,3 +1,4 @@
+// components/market-heatmap.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -31,9 +32,11 @@ export default function MarketHeatmap() {
       // 3. Transform Data
       const items = tickers.map(t => {
           const p = priceMap[t] || { price: 0, change: 0 }
+          // Clean name: "RELIANCE.NS" -> "RELIANCE"
+          const cleanName = t.replace('.NS', '').replace('.BO', '')
           return {
               ticker: t,
-              name: t.replace('.NS', ''),
+              name: cleanName,
               price: p.price,
               change: p.change
           }
@@ -72,28 +75,28 @@ export default function MarketHeatmap() {
   )
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 mb-8">
         <div className="flex items-center justify-between">
             <h3 className="font-bold text-lg text-slate-900 dark:text-white">Nifty 50 Heatmap</h3>
-            <button onClick={fetchHeatmap} className="p-2 text-slate-400 hover:text-indigo-600 transition">
+            <button onClick={fetchHeatmap} className="p-2 text-slate-400 hover:text-indigo-600 transition" title="Refresh Heatmap">
                 <RefreshCw className="h-4 w-4" />
             </button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-1">
             {data.map(item => (
                 <div 
                     key={item.ticker}
-                    className={`${getColor(item.change)} p-3 rounded-md text-white flex flex-col justify-between h-24 transition hover:scale-105 hover:z-10 cursor-default shadow-sm`}
+                    className={`${getColor(item.change)} p-2 rounded-md text-white flex flex-col justify-between h-20 transition hover:scale-105 hover:z-10 cursor-default shadow-sm`}
                     title={`${item.name}: ₹${item.price.toLocaleString()} (${item.change.toFixed(2)}%)`}
                 >
-                    <div className="text-xs font-bold truncate">{item.name}</div>
+                    <div className="text-[10px] font-bold truncate leading-tight">{item.name}</div>
                     <div className="text-right">
-                        <div className="text-[10px] opacity-90">
-                            {item.change > 0 ? '+' : ''}{item.change.toFixed(2)}%
+                        <div className="text-[10px] opacity-90 font-medium">
+                            {item.change > 0 ? '+' : ''}{item.change.toFixed(1)}%
                         </div>
-                        <div className="text-xs font-medium">
-                            ₹{item.price < 1000 ? item.price.toFixed(1) : item.price.toFixed(0)}
+                        <div className="text-[10px] opacity-80">
+                            {item.price < 1000 ? item.price.toFixed(0) : (item.price/1000).toFixed(1) + 'k'}
                         </div>
                     </div>
                 </div>

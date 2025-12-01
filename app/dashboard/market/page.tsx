@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Search, X, ArrowLeft } from 'lucide-react'
 import MarketCard from '@/components/market-card'
 import MarketConstituents from '@/components/market-constituents'
+import MarketHeatmap from '@/components/market-heatmap' // <--- New Import
 import { INDICES, SECTOR_CONSTITUENTS } from '@/lib/market-data'
 
 export default function MarketPage() {
@@ -68,6 +69,13 @@ export default function MarketPage() {
 
         {/* Content Area */}
         <div className="pb-20">
+            
+            {/* NEW: MARKET HEATMAP */}
+            {/* Only show heatmap if not searching, to keep search results clean */}
+            {!searchQuery && (
+                <MarketHeatmap />
+            )}
+
             {/* Main Indices */}
             {highlights.length > 0 && (
                 <div className="mb-8">
@@ -129,7 +137,6 @@ export default function MarketPage() {
             </div>
 
             {/* DESKTOP STICKY PANEL */}
-            {/* Fix: max-h-screen ensures it never grows taller than the viewport */}
             <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-0 flex-col border-l border-slate-200 dark:border-slate-800 pl-6 h-auto max-h-[calc(100vh-100px)]">
                 <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                     <MarketConstituents 
