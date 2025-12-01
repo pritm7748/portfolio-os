@@ -7,6 +7,7 @@ import { Loader2, TrendingUp, Info, Gem, BarChart3 } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
+import PortfolioHistoryChart from '@/components/portfolio-history-chart' // <--- New Component
 
 export default function AnalyticsPage() {
   const { selectedPortfolio } = usePortfolio()
@@ -25,6 +26,11 @@ export default function AnalyticsPage() {
   })
   const [sectorData, setSectorData] = useState<any[]>([])
   const [aiSummary, setAiSummary] = useState<any>(null)
+  
+  // --- Time Machine State ---
+  const [chartData, setChartData] = useState<any[]>([])
+  const [chartLoading, setChartLoading] = useState(false)
+  const [allTransactions, setAllTransactions] = useState<any[]>([]) // Store to avoid re-fetching
 
   const supabase = createClient()
 
@@ -34,7 +40,6 @@ export default function AnalyticsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 1. Fetch Transactions
       let query = supabase
         .from('transactions')
         .select(`*, assets ( ticker, asset_type )`)
@@ -50,8 +55,11 @@ export default function AnalyticsPage() {
           setLoading(false)
           return
       }
+      
+      // Save for Chart Logic
+      setAllTransactions(txns)
 
-      // --- Data Processing ---
+      // --- Data Processing (XIRR & Metrics) ---
       const assetLots: Record<string, any[]> = {}
       const holdingMap: Record<string, number> = {} 
       const allTickers = new Set<string>()
@@ -91,7 +99,7 @@ export default function AnalyticsPage() {
             let qty = Number(t.quantity)
             holdingMap[ticker] -= qty
             
-            // FIFO Consume (for cost basis tracking)
+            // FIFO Consume
             while (qty > 0 && assetLots[ticker].length > 0) {
                 const oldestLot = assetLots[ticker][0]
                 if (oldestLot.quantity > qty) {
@@ -110,7 +118,7 @@ export default function AnalyticsPage() {
             else flowsEquity.push(flow)
         } 
         else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
-            const incomeAmt = Number(t.total_value)
+            const incomeAmt = Math.abs(Number(t.total_value))
             totalDividends += incomeAmt
             
             // Cashflow IN (Positive)
@@ -156,8 +164,6 @@ export default function AnalyticsPage() {
               if (qtyOnDate > 0) {
                   const divAmount = qtyOnDate * div.amount
                   totalDividends += divAmount
-                  
-                  // Add Dividend to XIRR Flows (Positive)
                   const flow = { amount: divAmount, date: div.date }
                   flowsTotal.push(flow)
                   flowsEquity.push(flow) 
@@ -198,7 +204,7 @@ export default function AnalyticsPage() {
           }
       })
 
-      // --- XIRR CALCULATION (FIXED: Check for empty flows) ---
+      // --- XIRR CALCULATION ---
       const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
       const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
       const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
@@ -239,17 +245,98 @@ export default function AnalyticsPage() {
       setAiSummary(aiData)
 
       setLoading(false)
+      
+      // TRIGGER CHART FETCH (Default 1Y)
+      if (txns.length > 0) {
+          fetchChartData('1y', txns)
+      }
     }
 
     fetchData()
   }, [selectedPortfolio])
 
+
+  // --- TIME MACHINE ENGINE (Chart Logic) ---
+  const fetchChartData = async (range: string, txnsData = allTransactions) => {
+      if (!txnsData || txnsData.length === 0) return
+      setChartLoading(true)
+
+      try {
+        // 1. Get Unique Tickers from history
+        const uniqueTickers = Array.from(new Set(txnsData.map((t: any) => t.assets.ticker)))
+        
+        // 2. Fetch History
+        const res = await fetch('/api/history', {
+            method: 'POST',
+            body: JSON.stringify({ tickers: uniqueTickers, range })
+        })
+        const historyMap = await res.json()
+
+        // 3. Create Timeline
+        const firstKey = Object.keys(historyMap)[0]
+        if (!firstKey) { setChartLoading(false); return }
+        const timeline = historyMap[firstKey].map((h: any) => h.date)
+        
+        // 4. Reconstruct Portfolio Day-by-Day
+        const chartPoints = timeline.map((date: string) => {
+            const currentObjDate = new Date(date)
+            let invested = 0
+            let value = 0
+            const holdings: Record<string, number> = {}
+            
+            txnsData.forEach((t: any) => {
+                const tDate = new Date(t.date)
+                if (tDate <= currentObjDate) {
+                    if (t.transaction_type === 'Buy') {
+                        holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) + Number(t.quantity)
+                        invested += (Number(t.price) * Number(t.quantity))
+                    } else if (t.transaction_type === 'Sell') {
+                        holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
+                        invested -= (Number(t.price) * Number(t.quantity))
+                    }
+                }
+            })
+
+            Object.keys(holdings).forEach(ticker => {
+                const qty = holdings[ticker]
+                if (qty > 0) {
+                    const priceHistory = historyMap[ticker]
+                    const priceObj = priceHistory?.find((p: any) => p.date === date)
+                    const price = priceObj ? priceObj.price : 0
+                    value += (qty * price)
+                }
+            })
+
+            return { date, invested: Math.max(0, invested), value }
+        })
+
+        setChartData(chartPoints)
+      } catch (e) {
+          console.error("Chart Error", e)
+      } finally {
+          setChartLoading(false)
+      }
+  }
+
+
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       
-      {/* XIRR GRID */}
+      <div className="flex flex-col gap-2">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Performance Analytics</h2>
+          <p className="text-slate-500 dark:text-slate-400">Deep dive into your portfolio metrics and history.</p>
+      </div>
+
+      {/* 1. TIME MACHINE CHART */}
+      <PortfolioHistoryChart 
+         data={chartData} 
+         isLoading={chartLoading} 
+         onRangeChange={(r) => fetchChartData(r)} 
+      />
+
+      {/* 2. XIRR GRID */}
       <div className="grid gap-6 md:grid-cols-3">
           <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg">
             <div className="flex items-center justify-between mb-2 opacity-80">
@@ -279,9 +366,10 @@ export default function AnalyticsPage() {
           </div>
       </div>
 
+      {/* 3. AI ANALYST */}
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
-      {/* BREAKDOWN */}
+      {/* 4. BREAKDOWN */}
       <div className="grid gap-6 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Net Worth</h4>
@@ -301,7 +389,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* CHARTS */}
+      {/* 5. CHARTS */}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="h-80 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h3 className="mb-4 font-semibold text-slate-800 dark:text-white">Allocation by Value (₹)</h3>
