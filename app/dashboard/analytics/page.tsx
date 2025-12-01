@@ -323,8 +323,8 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-2">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Performance Analytics</h2>
-          <p className="text-slate-500 dark:text-slate-400">Deep dive into your portfolio metrics and history.</p>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white"></h2>
+          <p className="text-slate-500 dark:text-slate-400"></p>
       </div>
 
       {/* 1. TIME MACHINE CHART */}
