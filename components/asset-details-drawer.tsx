@@ -37,7 +37,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
-        // Only fetch fundamentals for Stocks/MFs (Standard Tickers)
+        // Only fetch fundamentals for Stocks/MFs
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
@@ -113,11 +113,25 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
-  const formatLargeNumber = (num: number) => {
+  // --- UPDATED FORMATTER FOR INDIAN MARKET CAP ---
+  const formatMarketCap = (num: number) => {
       if (!num) return '-'
-      if (num >= 1.0e+7) return (num / 1.0e+7).toFixed(2) + " Cr"
-      if (num >= 1.0e+5) return (num / 1.0e+5).toFixed(2) + " L"
-      return num.toLocaleString()
+      
+      // If value is large enough to be Crores (>= 1 Cr)
+      // We divide by 1 Cr (10,000,000) and format nicely
+      if (num >= 10000000) {
+          const crores = num / 10000000
+          // toLocaleString('en-IN') adds the commas: 1,50,000
+          return crores.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " Cr"
+      }
+      
+      // Fallback for smaller numbers (Lakhs)
+      if (num >= 100000) {
+          const lakhs = num / 100000
+          return lakhs.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " L"
+      }
+
+      return num.toLocaleString('en-IN')
   }
 
   const inputClass = "w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
@@ -153,7 +167,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Market Cap</p>
-                                <p className="font-semibold text-slate-900 dark:text-white">₹{formatLargeNumber(stats.marketCap)}</p>
+                                <p className="font-semibold text-slate-900 dark:text-white">₹{formatMarketCap(stats.marketCap)}</p>
                             </div>
                             <div>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">P/E Ratio</p>
