@@ -8,16 +8,14 @@ export async function POST(request: Request) {
 
     let cleanTicker = ticker.toUpperCase().replace(/\s/g, '')
     
-    // 1. Handle Commodities (No fundamentals)
     if (cleanTicker.startsWith('COMMODITY:')) {
          return NextResponse.json({ error: 'Commodity fundamentals not supported' }, { status: 404 })
     } 
 
-    // 2. Detect Indian Stock
+    // Detect Indian Stock
     const isIndian = cleanTicker.endsWith('.NS') || cleanTicker.endsWith('.BO') || (!cleanTicker.includes('.') && !cleanTicker.includes('^'))
     
     if (isIndian) {
-        // Remove suffix for Screener (TCS.NS -> TCS)
         const symbol = cleanTicker.split('.')[0]
         
         try {
@@ -26,57 +24,58 @@ export async function POST(request: Request) {
                 headers: { 
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 },
-                next: { revalidate: 300 } // Cache for 5 mins
+                next: { revalidate: 300 } 
             })
             
             if (res.ok) {
                 const html = await res.text()
                 const $ = cheerio.load(html)
                 
-                // Data container
-                const data: Record<string, string> = {}
+                let marketCap = 0
+                let peRatio = 0
+                let high52 = 0
+                let low52 = 0
+                let divYield = 0
 
-                // Loop through the #top-ratios list seen in your screenshot
+                // Robust Loop: Check every item in the top-ratios list
                 $('#top-ratios li').each((_, el) => {
-                    const name = $(el).find('.name').text().trim()
-                    const value = $(el).find('.value').text().trim()
-                    data[name] = value
+                    const name = $(el).find('.name').text().trim().toLowerCase()
+                    const valueText = $(el).find('.value').text().trim()
+                    
+                    // Remove commas for parsing
+                    const valClean = valueText.replace(/,/g, '')
+
+                    if (name.includes('market cap')) {
+                        marketCap = parseFloat(valClean)
+                    } 
+                    else if (name.includes('stock p/e')) {
+                        peRatio = parseFloat(valClean)
+                    } 
+                    else if (name.includes('dividend yield')) {
+                        divYield = parseFloat(valClean)
+                    } 
+                    else if (name.includes('high') && name.includes('low')) {
+                        // Format is usually "4586 / 3661"
+                        // Split by "/" and trim whitespace
+                        const parts = valClean.split('/')
+                        if (parts.length === 2) {
+                            high52 = parseFloat(parts[0].trim())
+                            low52 = parseFloat(parts[1].trim())
+                        }
+                    }
                 })
 
-                // Helper to parse numbers (removes commas, %, Cr, etc.)
-                const parseVal = (key: string) => {
-                    const val = data[key]
-                    if (!val) return 0
-                    // Remove non-numeric chars except dot and slash (for High/Low)
-                    return parseFloat(val.replace(/,/g, '').replace(/[^\d./]/g, ''))
-                }
-
-                // Extract Fields
-                const marketCapRaw = parseVal('Market Cap') // Returns e.g. 1518348 (Cr implied)
-                const peRatio = parseVal('Stock P/E')
-                const divYield = parseVal('Dividend Yield')
-                
-                // Handle "High / Low" (e.g. "4586 / 3661")
-                let high52 = 0, low52 = 0
-                if (data['High / Low']) {
-                    const parts = data['High / Low'].split('/')
-                    if (parts.length === 2) {
-                        high52 = parseFloat(parts[0].replace(/,/g, ''))
-                        low52 = parseFloat(parts[1].replace(/,/g, ''))
-                    }
-                }
-
-                // If we found valid data, return it
-                if (marketCapRaw > 0) {
+                if (marketCap > 0) {
                     return NextResponse.json({
-                        // Convert "Cr" to full number for consistency with Yahoo data structure
-                        // Your screenshot shows "15,18,348", which is in Crores.
-                        // 15,18,348 Cr = 15,18,348 * 1,00,00,000
-                        marketCap: marketCapRaw * 10000000, 
-                        peRatio: peRatio,
-                        high52: high52,
-                        low52: low52,
-                        divYield: divYield / 100, // Convert 1.35 to 0.0135
+                        // Screener Market Cap is in Crores.
+                        // If you want to show "15.25 L Cr", multiply by 1 Cr (10,000,000)
+                        // BUT your UI 'formatLargeNumber' might expect raw units. 
+                        // Let's send the full number for consistency.
+                        marketCap: marketCap * 10000000, 
+                        peRatio,
+                        high52,
+                        low52,
+                        divYield: divYield / 100, 
                         currency: 'INR',
                         symbol: symbol
                     })
@@ -88,8 +87,6 @@ export async function POST(request: Request) {
     }
 
     // 3. FALLBACK: Yahoo Finance Chart API
-    // If Screener failed (e.g. wrong symbol) or it's a US Stock, use the Chart API backup.
-    
     if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
 
     const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}?interval=1d&range=1d`
@@ -102,8 +99,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-        marketCap: 0, // Not available in Chart API
-        peRatio: 0,   // Not available in Chart API
+        marketCap: 0, 
+        peRatio: 0,   
         high52: meta.fiftyTwoWeekHigh || 0,
         low52: meta.fiftyTwoWeekLow || 0,
         divYield: 0,
