@@ -321,7 +321,7 @@ export default function AnalyticsPage() {
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-2">
       <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white"></h2>
           <p className="text-slate-500 dark:text-slate-400"></p>
