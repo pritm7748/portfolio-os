@@ -19,7 +19,6 @@ export default function SettingsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setUser(user)
-        // Fetch profile data
         const { data } = await supabase
             .from('profiles')
             .select('full_name')
@@ -33,7 +32,6 @@ export default function SettingsPage() {
     getProfile()
   }, [])
 
-  // 1. UPDATE PROFILE
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault()
     setUpdating(true)
@@ -47,8 +45,6 @@ export default function SettingsPage() {
 
         if (error) throw error
         setSuccessMsg('Profile updated successfully.')
-        
-        // Clear success message after 3s
         setTimeout(() => setSuccessMsg(''), 3000)
     } catch (error) {
         alert('Error updating profile')
@@ -58,11 +54,9 @@ export default function SettingsPage() {
     }
   }
 
-  // 2. EXPORT DATA (JSON)
   const handleExportData = async () => {
       setExporting(true)
       try {
-          // Fetch EVERYTHING associated with user
           const { data: transactions } = await supabase.from('transactions').select('*, assets(ticker, name, asset_type)').eq('user_id', user.id)
           const { data: portfolios } = await supabase.from('portfolios').select('*').eq('user_id', user.id)
           const { data: watchlist } = await supabase.from('watchlist').select('*').eq('user_id', user.id)
@@ -75,7 +69,6 @@ export default function SettingsPage() {
               watchlist
           }
 
-          // Create Downloadable Blob
           const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
           const url = window.URL.createObjectURL(blob)
           const a = document.createElement('a')
@@ -93,23 +86,25 @@ export default function SettingsPage() {
       }
   }
 
-  // 3. PASSWORD RESET
   const handlePasswordReset = async () => {
+      // Note: This relies on Supabase SMTP.
       const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
           redirectTo: `${window.location.origin}/auth/update-password`,
       })
-      if (error) alert(error.message)
-      else alert("Password reset link sent to your email.")
+      if (error) {
+          // If rate limited, it will show here
+          alert("Error: " + error.message) 
+      } else {
+          alert("Password reset link sent to your email (Check Spam folder).")
+      }
   }
 
-  // 4. DANGER ZONE (Reset Data)
   const handleResetAccount = async () => {
       const confirmText = prompt("Type 'DELETE' to confirm deleting ALL your transactions and portfolios. This cannot be undone.")
       if (confirmText !== 'DELETE') return
 
       setLoading(true)
       try {
-          // Delete transactions first (FK constraint)
           await supabase.from('transactions').delete().eq('user_id', user.id)
           await supabase.from('portfolios').delete().eq('user_id', user.id)
           await supabase.from('watchlist').delete().eq('user_id', user.id)
@@ -129,11 +124,6 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-12">
       
-      <div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Account Settings</h2>
-          <p className="text-slate-500 dark:text-slate-400">Manage your profile, security, and data.</p>
-      </div>
-
       {/* PROFILE SECTION */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
           <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-6">
