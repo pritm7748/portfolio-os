@@ -1,4 +1,3 @@
-// app/dashboard/goals/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -71,20 +70,18 @@ export default function GoalsPage() {
       const data = []
       
       let wealth = currentNetWorth
-      let invested = currentNetWorth // Assuming lump sum is base invested
+      let invested = currentNetWorth 
 
       for (let i = 1; i <= months; i++) {
-          // Future Value of SIP: P * ((1+r)^n - 1) / r * (1+r)
-          // Iterative approach for graph
           wealth = (wealth + monthlySip) * (1 + monthlyRate)
           invested += monthlySip
 
-          if (i % 12 === 0) { // Add data point every year
+          if (i % 12 === 0) { 
               data.push({
                   year: `Year ${i/12}`,
                   invested: Math.round(invested),
                   wealth: Math.round(wealth),
-                  target: targetAmount // Reference line
+                  target: targetAmount 
               })
           }
       }
@@ -100,25 +97,30 @@ export default function GoalsPage() {
   const isGoalMet = projectedWealth >= targetAmount
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto">
       
-      <div className="flex flex-col md:flex-row justify-between items-start gap-6">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Target className="h-6 w-6 text-indigo-600" /> Goal Planning
-            </h2>
-            <p className="text-slate-500 dark:text-slate-400">Plan your SIPs to reach your financial freedom.</p>
-          </div>
-          
-          <div className={`px-6 py-3 rounded-xl border ${isGoalMet ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
-              <div className="text-xs font-semibold uppercase tracking-wider mb-1">Projected Outcome</div>
-              <div className="text-xl font-bold">
-                  {isGoalMet ? "Goal Achieved! 🎉" : `Shortfall: ₹${Math.abs(shortfall).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+      {/* STATUS BAR (Replaces the old Header section) */}
+      <div className={`w-full px-6 py-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 ${isGoalMet ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${isGoalMet ? 'bg-green-100' : 'bg-amber-100'}`}>
+                  <Target className="h-5 w-5" />
+              </div>
+              <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider opacity-80">Projected Outcome</div>
+                  <div className="text-lg font-bold">
+                      {isGoalMet ? "Goal Achieved! 🎉" : `Shortfall: ₹${Math.abs(shortfall).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                  </div>
               </div>
           </div>
+          
+          {!isGoalMet && (
+              <div className="text-sm font-medium opacity-90 bg-white/50 px-3 py-1.5 rounded-lg">
+                  Tip: Increase SIP by ₹{Math.round(Math.abs(shortfall) / (years * 12)).toLocaleString('en-IN')} to hit goal.
+              </div>
+          )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* INPUTS PANEL */}
           <div className="space-y-6 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 h-fit">
@@ -128,22 +130,22 @@ export default function GoalsPage() {
               
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Target Amount (₹)</label>
-                  <input type="number" value={targetAmount} onChange={e => setTargetAmount(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono" />
+                  <input type="number" value={targetAmount} onChange={e => setTargetAmount(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
               </div>
 
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Monthly SIP (₹)</label>
-                  <input type="number" value={monthlySip} onChange={e => setMonthlySip(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono" />
+                  <input type="number" value={monthlySip} onChange={e => setMonthlySip(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Time (Years)</label>
-                    <input type="number" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono" />
+                    <input type="number" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Exp. Return (%)</label>
-                    <input type="number" value={expectedReturn} onChange={e => setExpectedReturn(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono" />
+                    <input type="number" value={expectedReturn} onChange={e => setExpectedReturn(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
                 </div>
               </div>
 

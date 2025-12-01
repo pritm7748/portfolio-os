@@ -56,6 +56,7 @@ export default function Header({ onMenuClick }: { onMenuClick: () => void }) {
     if (pathname.includes('/watchlist')) return 'Watchlist'
     if (pathname.includes('/alerts')) return 'Alerts & Notifications'
     if (pathname.includes('/dividends')) return 'Dividends'
+    if (pathname.includes('/goals')) return 'Goal Planning'
     return 'Dashboard'
   }
 
