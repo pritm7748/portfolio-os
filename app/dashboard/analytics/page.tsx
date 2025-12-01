@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { calculateXIRR } from '@/lib/xirr'
-import { Loader2, TrendingUp, Info, Gem, BarChart3, Wallet } from 'lucide-react'
+import { Loader2, TrendingUp, Info, Gem, BarChart3 } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
@@ -12,14 +12,26 @@ import PortfolioHistoryChart from '@/components/portfolio-history-chart'
 export default function AnalyticsPage() {
   const { selectedPortfolio } = usePortfolio()
   const [loading, setLoading] = useState(true)
-  const [metrics, setMetrics] = useState<any>({})
+  const [metrics, setMetrics] = useState({
+    totalXirr: 0,
+    equityXirr: 0,
+    commXirr: 0,
+    netWorth: 0,
+    unrealized: 0,
+    realized: 0,
+    totalProfit: 0,
+    investment: 0,
+    currentVal: 0,
+    xirr: 0 
+  })
   const [sectorData, setSectorData] = useState<any[]>([])
   const [aiSummary, setAiSummary] = useState<any>(null)
   
-  // Chart State
+  // --- Time Machine State ---
   const [chartData, setChartData] = useState<any[]>([])
   const [chartLoading, setChartLoading] = useState(false)
-  const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity') // <--- New Toggle State
+  const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity')
+  const [currentRange, setCurrentRange] = useState('1y') // Track range to preserve it on category switch
   const [allTransactions, setAllTransactions] = useState<any[]>([]) 
 
   const supabase = createClient()
@@ -30,6 +42,7 @@ export default function AnalyticsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
+      // 1. Fetch Transactions
       let query = supabase
         .from('transactions')
         .select(`*, assets ( ticker, asset_type )`)
@@ -48,13 +61,16 @@ export default function AnalyticsPage() {
       
       setAllTransactions(txns)
 
-      // --- METRICS LOGIC (Kept same as before) ---
+      // --- Metrics Processing (XIRR & Totals) ---
       const assetLots: Record<string, any[]> = {}
       const holdingMap: Record<string, number> = {} 
       const allTickers = new Set<string>()
       let totalRealized = 0
       let totalDividends = 0
-      const flowsTotal: any[] = [], flowsEquity: any[] = [], flowsComm: any[] = []
+
+      const flowsTotal: any[] = []
+      const flowsEquity: any[] = []
+      const flowsComm: any[] = []
 
       txns.forEach((t: any) => {
         const ticker = t.assets.ticker
@@ -71,23 +87,31 @@ export default function AnalyticsPage() {
         if (t.transaction_type === 'Buy') {
             assetLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
             holdingMap[ticker] += Number(t.quantity)
+            
             const flow = { amount: -txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
             else flowsEquity.push(flow)
+
         } else if (t.transaction_type === 'Sell') {
             let qty = Number(t.quantity)
             holdingMap[ticker] -= qty
             while (qty > 0 && assetLots[ticker].length > 0) {
-                const oldest = assetLots[ticker][0]
-                if (oldest.quantity > qty) { oldest.quantity -= qty; qty = 0 } 
-                else { qty -= oldest.quantity; assetLots[ticker].shift() }
+                const oldestLot = assetLots[ticker][0]
+                if (oldestLot.quantity > qty) {
+                    oldestLot.quantity -= qty
+                    qty = 0
+                } else {
+                    qty -= oldestLot.quantity
+                    assetLots[ticker].shift()
+                }
             }
             const flow = { amount: txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
             else flowsEquity.push(flow)
-        } else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
+        } 
+        else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
             const incomeAmt = Math.abs(Number(t.total_value))
             totalDividends += incomeAmt
             const flow = { amount: incomeAmt, date: t.date }
@@ -97,6 +121,7 @@ export default function AnalyticsPage() {
         }
       })
       
+      // Fetch Prices & Dividends
       const tickersArray = Array.from(allTickers)
       const tickersToFetchPrice = Object.keys(holdingMap).filter(k => holdingMap[k] > 0)
       let priceMap: Record<string, number> = {}
@@ -131,52 +156,71 @@ export default function AnalyticsPage() {
                   totalDividends += divAmount
                   const flow = { amount: divAmount, date: div.date }
                   flowsTotal.push(flow)
-                  flowsEquity.push(flow)
+                  flowsEquity.push(flow) 
               }
           })
       })
 
-      let valTotal = 0, valEq = 0, valComm = 0, fifoCostTotal = 0
+      // Calculate Current Values
+      let valTotal = 0, valEq = 0, valComm = 0
+      let fifoCostTotal = 0
       const sectorMap: Record<string, number> = {}
 
       Object.keys(assetLots).forEach(ticker => {
-          let lotCost = 0, lotQty = 0
-          assetLots[ticker].forEach(lot => { lotCost += (lot.quantity * lot.price); lotQty += lot.quantity })
+          let lotCost = 0
+          let lotQty = 0
+          assetLots[ticker].forEach(lot => {
+              lotCost += (lot.quantity * lot.price)
+              lotQty += lot.quantity
+          })
+
           if (lotQty > 0) {
              const clean = ticker.toUpperCase().replace(/\s/g, '')
              const foundKey = Object.keys(priceMap).find(k => k.includes(clean.split('.')[0]))
              const price = foundKey ? priceMap[foundKey] : (lotCost / lotQty)
+             
              const val = lotQty * price
              valTotal += val
              fifoCostTotal += lotCost
+
              const type = txns.find((t: any) => t.assets.ticker === ticker)?.assets.asset_type || 'Other'
              const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
+             
              if (isComm) valComm += val
              else valEq += val
+
              if (!sectorMap[type]) sectorMap[type] = 0
              sectorMap[type] += val
           }
       })
 
+      // XIRR
       const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
       const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
       const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
 
+      const unrealizedPnL = valTotal - fifoCostTotal
+      const totalRealizedProfit = totalRealized + totalDividends
+      const totalPnL = unrealizedPnL + totalRealizedProfit
+
       setMetrics({
         totalXirr: xirrTotal, equityXirr: xirrEq, commXirr: xirrComm,
-        netWorth: valTotal, unrealized: valTotal - fifoCostTotal, realized: totalRealized + totalDividends,
-        totalProfit: (valTotal - fifoCostTotal) + (totalRealized + totalDividends),
-        investment: fifoCostTotal, currentVal: valTotal
+        netWorth: valTotal, unrealized: unrealizedPnL, realized: totalRealizedProfit,
+        totalProfit: totalPnL, investment: fifoCostTotal, currentVal: valTotal,
+        xirr: xirrTotal 
       })
+
       setSectorData(Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })))
       
       const topHoldings = Object.keys(holdingMap).filter(k => holdingMap[k] > 0).map(k => ({ ticker: k, value: holdingMap[k] * (priceMap[k] || 0) })).sort((a, b) => b.value - a.value).slice(0, 5)
-      setAiSummary({ totalValue: valTotal, totalProfit: (valTotal - fifoCostTotal) + totalRealized + totalDividends, xirr: xirrTotal.toFixed(2), sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })), holdings: topHoldings })
+      setAiSummary({ totalValue: valTotal, totalProfit: totalPnL, xirr: xirrTotal.toFixed(2), sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })), holdings: topHoldings })
 
       setLoading(false)
       
-      // Initial Chart: Equity
-      if (txns.length > 0) fetchChartData('1y', 'equity', txns)
+      // --- Initial Chart Load (Default: 1y, Equity) ---
+      if (txns.length > 0) {
+          fetchChartData('1y', 'equity', txns)
+      }
     }
     fetchData()
   }, [selectedPortfolio])
@@ -185,10 +229,12 @@ export default function AnalyticsPage() {
   const fetchChartData = async (range: string, category: 'equity' | 'commodity', txnsData = allTransactions) => {
       if (!txnsData || txnsData.length === 0) return
       setChartLoading(true)
-      setChartCategory(category) // Update state
+      setChartCategory(category) // Update UI State
+      setCurrentRange(range)     // Remember range
 
       try {
-        // Filter tickers relevant to the selected category
+        // 1. Filter Tickers relevant to this category
+        // We need to fetch history only for stocks in this category to save bandwidth/errors
         const relevantTickers = new Set<string>()
         txnsData.forEach((t: any) => {
             const type = t.assets.asset_type
@@ -198,19 +244,21 @@ export default function AnalyticsPage() {
         })
 
         if (relevantTickers.size === 0) {
-             setChartData([])
-             setChartLoading(false)
-             return
+            setChartData([])
+            setChartLoading(false)
+            return
         }
         
+        // 2. Fetch History
         const res = await fetch('/api/history', {
             method: 'POST',
             body: JSON.stringify({ tickers: Array.from(relevantTickers), range })
         })
         const historyMap = await res.json()
+
+        // 3. Build Timeline
         const firstKey = Object.keys(historyMap)[0]
         if (!firstKey) { setChartLoading(false); return }
-        
         const timeline = historyMap[firstKey].map((h: any) => h.date)
         
         const chartPoints = timeline.map((date: string) => {
@@ -224,7 +272,7 @@ export default function AnalyticsPage() {
                 const type = t.assets.asset_type
                 const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
                 
-                // Strict Filtering: Only process transactions for the active category
+                // Strict Filtering: Only count transactions for the ACTIVE category
                 if ((category === 'equity' && isComm) || (category === 'commodity' && !isComm)) return
 
                 const tDate = new Date(t.date)
@@ -234,11 +282,14 @@ export default function AnalyticsPage() {
                         invested += (Number(t.price) * Number(t.quantity))
                     } else if (t.transaction_type === 'Sell') {
                         holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
+                        // Reduce invested by cost of sold? Or just net flow?
+                        // For "Invested vs Value" chart, net cash flow for "Invested" is the standard simple metric
                         invested -= (Number(t.price) * Number(t.quantity))
                     }
                 }
             })
 
+            // Calculate Market Value
             Object.keys(holdings).forEach(ticker => {
                 const qty = holdings[ticker]
                 if (qty > 0) {
@@ -257,33 +308,22 @@ export default function AnalyticsPage() {
       finally { setChartLoading(false) }
   }
 
+  // Handlers for the Chart Component
+  const handleRangeChange = (r: string) => {
+      fetchChartData(r, chartCategory)
+  }
+  
+  const handleCategoryChange = (c: 'equity' | 'commodity') => {
+      // When switching category, keep the current time range
+      fetchChartData(currentRange, c)
+  }
+
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   return (
     <div className="space-y-8">
-      
-      {/* CHART HEADER */}
-      <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Performance Analytics</h2>
-            
-            {/* TOGGLE SWITCH */}
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                <button 
-                    onClick={() => fetchChartData('1y', 'equity')}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${chartCategory === 'equity' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-white' : 'text-slate-500'}`}
-                >
-                    Equity
-                </button>
-                <button 
-                    onClick={() => fetchChartData('1y', 'commodity')}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${chartCategory === 'commodity' ? 'bg-white dark:bg-slate-700 shadow-sm text-amber-600 dark:text-white' : 'text-slate-500'}`}
-                >
-                    Commodity
-                </button>
-            </div>
-          </div>
-          
+      <div className="flex flex-col gap-2">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Performance Analytics</h2>
           <p className="text-slate-500 dark:text-slate-400">Deep dive into your portfolio metrics and history.</p>
       </div>
 
@@ -292,12 +332,12 @@ export default function AnalyticsPage() {
          data={chartData} 
          isLoading={chartLoading} 
          category={chartCategory}
-         onRangeChange={(r) => fetchChartData(r, chartCategory)} 
+         onRangeChange={handleRangeChange} 
+         onCategoryChange={handleCategoryChange}
       />
 
       {/* 2. XIRR GRID */}
       <div className="grid gap-6 md:grid-cols-3">
-          {/* ... (Same XIRR Cards) ... */}
           <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg">
             <div className="flex items-center justify-between mb-2 opacity-80">
                 <span className="font-medium">Total Portfolio XIRR</span>

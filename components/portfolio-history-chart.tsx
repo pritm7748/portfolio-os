@@ -13,11 +13,12 @@ type ChartDataPoint = {
 type Props = {
     data: ChartDataPoint[]
     onRangeChange: (range: string) => void
+    onCategoryChange: (category: 'equity' | 'commodity') => void
     isLoading: boolean
-    category: 'equity' | 'commodity' // <--- New Prop
+    category: 'equity' | 'commodity'
 }
 
-export default function PortfolioHistoryChart({ data, onRangeChange, isLoading, category }: Props) {
+export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryChange, isLoading, category }: Props) {
   const [activeRange, setActiveRange] = useState('1y')
 
   const handleRange = (r: string) => {
@@ -58,34 +59,61 @@ export default function PortfolioHistoryChart({ data, onRangeChange, isLoading, 
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-          <div className="space-y-1">
-            <h3 className="font-bold text-lg text-slate-900 dark:text-white">
-                {category === 'equity' ? 'Equity Performance' : 'Commodity Performance'}
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-                Invested vs Current Value over time
-            </p>
-          </div>
+      <div className="flex flex-col gap-6">
           
-          <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 self-start">
-              {['1mo', '6mo', '1y', '5y', 'all'].map((range) => (
-                  <button
-                    key={range}
-                    onClick={() => handleRange(range)}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all uppercase ${
-                        activeRange === range 
-                        ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-900 dark:text-white' 
+          {/* Header Row: Title & Category Switcher */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Portfolio Performance</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Track value vs. investment over time.</p>
+            </div>
+
+            {/* CATEGORY SWITCHER */}
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start md:self-auto">
+                <button
+                    onClick={() => onCategoryChange('equity')}
+                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
+                        category === 'equity'
+                        ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm'
                         : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
                     }`}
-                  >
-                      {range}
-                  </button>
-              ))}
+                >
+                    Equity & Mutual Funds
+                </button>
+                <button
+                    onClick={() => onCategoryChange('commodity')}
+                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
+                        category === 'commodity'
+                        ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
+                    }`}
+                >
+                    Commodity & Currency
+                </button>
+            </div>
+          </div>
+
+          {/* Time Range Selector (Moved below or separate line for better mobile fit) */}
+          <div className="flex justify-end">
+            <div className="flex bg-slate-50 dark:bg-slate-800/50 rounded-lg p-1">
+                {['1mo', '6mo', '1y', '5y', 'all'].map((range) => (
+                    <button
+                        key={range}
+                        onClick={() => handleRange(range)}
+                        className={`px-3 py-1 text-[10px] sm:text-xs font-medium rounded-md transition-all uppercase ${
+                            activeRange === range 
+                            ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm ring-1 ring-black/5' 
+                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
+                        }`}
+                    >
+                        {range}
+                    </button>
+                ))}
+            </div>
           </div>
       </div>
 
-      <div className="h-[350px] w-full relative">
+      <div className="h-[350px] w-full relative mt-4">
         {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-slate-900/50 z-10 backdrop-blur-sm rounded-lg">
                 <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
@@ -94,7 +122,7 @@ export default function PortfolioHistoryChart({ data, onRangeChange, isLoading, 
         
         {data.length === 0 && !isLoading ? (
             <div className="flex h-full items-center justify-center text-slate-400 text-sm">
-                No historical data for this category.
+                No historical data found for {category === 'equity' ? 'Equity' : 'Commodities'}.
             </div>
         ) : (
             <ResponsiveContainer width="100%" height="100%">
