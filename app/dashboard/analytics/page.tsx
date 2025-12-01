@@ -7,30 +7,19 @@ import { Loader2, TrendingUp, Info, Gem, BarChart3 } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
-import PortfolioHistoryChart from '@/components/portfolio-history-chart' // <--- New Component
+import PortfolioHistoryChart from '@/components/portfolio-history-chart'
 
 export default function AnalyticsPage() {
   const { selectedPortfolio } = usePortfolio()
   const [loading, setLoading] = useState(true)
-  const [metrics, setMetrics] = useState({
-    totalXirr: 0,
-    equityXirr: 0,
-    commXirr: 0,
-    netWorth: 0,
-    unrealized: 0,
-    realized: 0,
-    totalProfit: 0,
-    investment: 0,
-    currentVal: 0,
-    xirr: 0 
-  })
+  const [metrics, setMetrics] = useState<any>({})
   const [sectorData, setSectorData] = useState<any[]>([])
   const [aiSummary, setAiSummary] = useState<any>(null)
   
-  // --- Time Machine State ---
+  // Time Machine State
   const [chartData, setChartData] = useState<any[]>([])
   const [chartLoading, setChartLoading] = useState(false)
-  const [allTransactions, setAllTransactions] = useState<any[]>([]) // Store to avoid re-fetching
+  const [allTransactions, setAllTransactions] = useState<any[]>([]) // Store raw txns
 
   const supabase = createClient()
 
@@ -50,26 +39,17 @@ export default function AnalyticsPage() {
       }
 
       const { data: txns } = await query
-
-      if (!txns) {
-          setLoading(false)
-          return
-      }
+      if (!txns) { setLoading(false); return }
       
-      // Save for Chart Logic
-      setAllTransactions(txns)
+      setAllTransactions(txns) // Save for chart
 
-      // --- Data Processing (XIRR & Metrics) ---
+      // --- XIRR & METRICS LOGIC (Same as previous working version) ---
       const assetLots: Record<string, any[]> = {}
       const holdingMap: Record<string, number> = {} 
       const allTickers = new Set<string>()
       let totalRealized = 0
       let totalDividends = 0
-
-      // XIRR Flows Arrays
-      const flowsTotal: any[] = []
-      const flowsEquity: any[] = []
-      const flowsComm: any[] = []
+      const flowsTotal: any[] = [], flowsEquity: any[] = [], flowsComm: any[] = []
 
       txns.forEach((t: any) => {
         const ticker = t.assets.ticker
@@ -81,47 +61,30 @@ export default function AnalyticsPage() {
         if (!assetLots[ticker]) assetLots[ticker] = []
         if (!holdingMap[ticker]) holdingMap[ticker] = 0
 
-        // Calculate Transaction Value manually to be safe
         const txnValue = Math.abs(Number(t.price) * Number(t.quantity))
 
-        // --- HOLDINGS & CASHFLOW LOGIC ---
         if (t.transaction_type === 'Buy') {
             assetLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
             holdingMap[ticker] += Number(t.quantity)
-            
-            // Cashflow OUT (Negative)
             const flow = { amount: -txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
             else flowsEquity.push(flow)
-
         } else if (t.transaction_type === 'Sell') {
             let qty = Number(t.quantity)
             holdingMap[ticker] -= qty
-            
-            // FIFO Consume
             while (qty > 0 && assetLots[ticker].length > 0) {
-                const oldestLot = assetLots[ticker][0]
-                if (oldestLot.quantity > qty) {
-                    oldestLot.quantity -= qty
-                    qty = 0
-                } else {
-                    qty -= oldestLot.quantity
-                    assetLots[ticker].shift()
-                }
+                const oldest = assetLots[ticker][0]
+                if (oldest.quantity > qty) { oldest.quantity -= qty; qty = 0 } 
+                else { qty -= oldest.quantity; assetLots[ticker].shift() }
             }
-            
-            // Cashflow IN (Positive)
             const flow = { amount: txnValue, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
             else flowsEquity.push(flow)
-        } 
-        else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
+        } else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
             const incomeAmt = Math.abs(Number(t.total_value))
             totalDividends += incomeAmt
-            
-            // Cashflow IN (Positive)
             const flow = { amount: incomeAmt, date: t.date }
             flowsTotal.push(flow)
             if (isComm) flowsComm.push(flow)
@@ -129,10 +92,8 @@ export default function AnalyticsPage() {
         }
       })
       
-      // Fetch Prices & Dividends
       const tickersArray = Array.from(allTickers)
       const tickersToFetchPrice = Object.keys(holdingMap).filter(k => holdingMap[k] > 0)
-
       let priceMap: Record<string, number> = {}
       let dividendMap: Record<string, any[]> = {}
 
@@ -145,12 +106,10 @@ export default function AnalyticsPage() {
         dividendMap = await divRes.json()
       }
 
-      // --- AUTO DIVIDEND CALCULATION ---
       tickersArray.forEach(ticker => {
           const dividends = dividendMap[ticker]
           if (!dividends) return
           const stockTxns = txns.filter((t: any) => t.assets.ticker === ticker)
-          
           dividends.forEach((div: any) => {
               const divDate = new Date(div.date)
               let qtyOnDate = 0
@@ -166,95 +125,58 @@ export default function AnalyticsPage() {
                   totalDividends += divAmount
                   const flow = { amount: divAmount, date: div.date }
                   flowsTotal.push(flow)
-                  flowsEquity.push(flow) 
+                  flowsEquity.push(flow)
               }
           })
       })
 
-      // Calculate Current Values
-      let valTotal = 0, valEq = 0, valComm = 0
-      let fifoCostTotal = 0
+      let valTotal = 0, valEq = 0, valComm = 0, fifoCostTotal = 0
       const sectorMap: Record<string, number> = {}
 
       Object.keys(assetLots).forEach(ticker => {
-          let lotCost = 0
-          let lotQty = 0
-          assetLots[ticker].forEach(lot => {
-              lotCost += (lot.quantity * lot.price)
-              lotQty += lot.quantity
-          })
-
+          let lotCost = 0, lotQty = 0
+          assetLots[ticker].forEach(lot => { lotCost += (lot.quantity * lot.price); lotQty += lot.quantity })
           if (lotQty > 0) {
              const clean = ticker.toUpperCase().replace(/\s/g, '')
              const foundKey = Object.keys(priceMap).find(k => k.includes(clean.split('.')[0]))
              const price = foundKey ? priceMap[foundKey] : (lotCost / lotQty)
-             
              const val = lotQty * price
              valTotal += val
              fifoCostTotal += lotCost
-
              const type = txns.find((t: any) => t.assets.ticker === ticker)?.assets.asset_type || 'Other'
              const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
-             
              if (isComm) valComm += val
              else valEq += val
-
              if (!sectorMap[type]) sectorMap[type] = 0
              sectorMap[type] += val
           }
       })
 
-      // --- XIRR CALCULATION ---
-      const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
-      const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
-      const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
-
+      const xirrTotal = calculateXIRR(flowsTotal, valTotal)
+      const xirrEq = calculateXIRR(flowsEquity, valEq)
+      const xirrComm = calculateXIRR(flowsComm, valComm)
       const unrealizedPnL = valTotal - fifoCostTotal
       const totalRealizedProfit = totalRealized + totalDividends
-      const totalPnL = unrealizedPnL + totalRealizedProfit
 
       setMetrics({
-        totalXirr: xirrTotal,
-        equityXirr: xirrEq,
-        commXirr: xirrComm,
-        netWorth: valTotal,
-        unrealized: unrealizedPnL,
-        realized: totalRealizedProfit,
-        totalProfit: totalPnL,
-        investment: fifoCostTotal,
-        currentVal: valTotal,
-        xirr: xirrTotal 
+        totalXirr: xirrTotal, equityXirr: xirrEq, commXirr: xirrComm,
+        netWorth: valTotal, unrealized: unrealizedPnL, realized: totalRealizedProfit,
+        totalProfit: unrealizedPnL + totalRealizedProfit, investment: fifoCostTotal, currentVal: valTotal
       })
-
       setSectorData(Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })))
       
-      // AI Data
-      const topHoldings = Object.keys(holdingMap)
-        .filter(ticker => holdingMap[ticker] > 0)
-        .map(ticker => ({ ticker, value: holdingMap[ticker] * (priceMap[ticker] || 0) }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5)
-
-      const aiData = {
-          totalValue: valTotal,
-          totalProfit: totalPnL,
-          xirr: xirrTotal.toFixed(2),
-          sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })),
-          holdings: topHoldings
-      }
-      setAiSummary(aiData)
+      const topHoldings = Object.keys(holdingMap).filter(k => holdingMap[k] > 0).map(k => ({ ticker: k, value: holdingMap[k] * (priceMap[k] || 0) })).sort((a, b) => b.value - a.value).slice(0, 5)
+      setAiSummary({ totalValue: valTotal, totalProfit: unrealizedPnL + totalRealizedProfit, xirr: xirrTotal.toFixed(2), sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })), holdings: topHoldings })
 
       setLoading(false)
       
-      // TRIGGER CHART FETCH (Default 1Y)
+      // INITIAL CHART LOAD
       if (txns.length > 0) {
           fetchChartData('1y', txns)
       }
     }
-
     fetchData()
   }, [selectedPortfolio])
-
 
   // --- TIME MACHINE ENGINE (Chart Logic) ---
   const fetchChartData = async (range: string, txnsData = allTransactions) => {
@@ -262,28 +184,21 @@ export default function AnalyticsPage() {
       setChartLoading(true)
 
       try {
-        // 1. Get Unique Tickers from history
         const uniqueTickers = Array.from(new Set(txnsData.map((t: any) => t.assets.ticker)))
-        
-        // 2. Fetch History
-        const res = await fetch('/api/history', {
-            method: 'POST',
-            body: JSON.stringify({ tickers: uniqueTickers, range })
-        })
+        const res = await fetch('/api/history', { method: 'POST', body: JSON.stringify({ tickers: uniqueTickers, range }) })
         const historyMap = await res.json()
-
-        // 3. Create Timeline
         const firstKey = Object.keys(historyMap)[0]
         if (!firstKey) { setChartLoading(false); return }
         const timeline = historyMap[firstKey].map((h: any) => h.date)
         
-        // 4. Reconstruct Portfolio Day-by-Day
         const chartPoints = timeline.map((date: string) => {
             const currentObjDate = new Date(date)
             let invested = 0
-            let value = 0
+            let valEq = 0
+            let valComm = 0
             const holdings: Record<string, number> = {}
             
+            // 1. Reconstruct Holdings for this date
             txnsData.forEach((t: any) => {
                 const tDate = new Date(t.date)
                 if (tDate <= currentObjDate) {
@@ -297,33 +212,35 @@ export default function AnalyticsPage() {
                 }
             })
 
+            // 2. Calculate Value using History
             Object.keys(holdings).forEach(ticker => {
                 const qty = holdings[ticker]
                 if (qty > 0) {
+                    const type = txnsData.find((t: any) => t.assets.ticker === ticker)?.assets.asset_type
+                    const isComm = type === 'Commodity' || type === 'Currency' || type === 'Gold'
+                    
                     const priceHistory = historyMap[ticker]
                     const priceObj = priceHistory?.find((p: any) => p.date === date)
                     const price = priceObj ? priceObj.price : 0
-                    value += (qty * price)
+                    
+                    const val = qty * price
+                    if (isComm) valComm += val
+                    else valEq += val
                 }
             })
-
-            return { date, invested: Math.max(0, invested), value }
+            // Invested floor at 0 for clean chart
+            return { date, invested: Math.max(0, invested), equity: valEq, commodity: valComm }
         })
 
         setChartData(chartPoints)
-      } catch (e) {
-          console.error("Chart Error", e)
-      } finally {
-          setChartLoading(false)
-      }
+      } catch (e) { console.error("Chart Error", e) } 
+      finally { setChartLoading(false) }
   }
-
 
   if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   return (
     <div className="space-y-8">
-      
       <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Performance Analytics</h2>
           <p className="text-slate-500 dark:text-slate-400">Deep dive into your portfolio metrics and history.</p>
@@ -366,10 +283,9 @@ export default function AnalyticsPage() {
           </div>
       </div>
 
-      {/* 3. AI ANALYST */}
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
-      {/* 4. BREAKDOWN */}
+      {/* BREAKDOWN */}
       <div className="grid gap-6 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Net Worth</h4>
@@ -389,7 +305,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* 5. CHARTS */}
+      {/* CHARTS */}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="h-80 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h3 className="mb-4 font-semibold text-slate-800 dark:text-white">Allocation by Value (₹)</h3>
