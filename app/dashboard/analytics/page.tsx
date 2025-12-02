@@ -168,9 +168,9 @@ export default function AnalyticsPage() {
       })
 
       // Calculate XIRR
-      const xirrTotal = calculateXIRR(flowsTotal, valTotal)
-      const xirrEq = calculateXIRR(flowsEquity, valEq)
-      const xirrComm = calculateXIRR(flowsComm, valComm)
+      const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
+      const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
+      const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
 
       // Final Metric Aggregation
       // Note: totalInvested here is "Net Invested" (Buys - Sells). 
