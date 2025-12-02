@@ -1,20 +1,18 @@
-// app/dashboard/page.tsx
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
 import { ArrowUpRight, ArrowDownRight, Wallet, PieChart as PieIcon, IndianRupee, Loader2, PiggyBank, Gem, TrendingUp, DollarSign, Activity, ChevronRight } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import AssetAllocationChart from '@/components/asset-allocation-chart'
 import MarketStatus from '@/components/market-status'
-import { usePortfolio } from '@/context/portfolio-context'
+import { useTransactions, useLivePrices, useDividends } from '@/hooks/use-portfolio-data'
 
 type SummaryStats = {
   invested: number
   current: number
   unrealizedPnl: number
   pnlPercent: number
-  dayPnl: number // <--- NEW
+  dayPnl: number
 }
 
 type DashboardData = {
@@ -26,43 +24,49 @@ type DashboardData = {
 type AllocationData = { name: string; value: number }
 
 export default function DashboardPage() {
-  const { selectedPortfolio } = usePortfolio()
-  const [data, setData] = useState<DashboardData | null>(null)
-  const [allocationData, setAllocationData] = useState<AllocationData[]>([])
-  const [loading, setLoading] = useState(true)
-  const supabase = createClient()
+  // 1. Fetch Core Data (Cached)
+  const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+  // 2. Derive Ticker List
+  const allTickers = useMemo(() => {
+      if (!transactions) return []
+      const set = new Set<string>()
+      transactions.forEach(t => set.add(t.assets.ticker))
+      return Array.from(set)
+  }, [transactions])
 
-        let query = supabase.from('transactions').select(`*, assets ( ticker, asset_type )`).order('date', { ascending: true })
-        if (selectedPortfolio.id !== 'all') query = query.eq('portfolio_id', selectedPortfolio.id)
+  // 3. Fetch Market Data (Cached + Auto-Refresh)
+  const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
+  const { data: dividendMap, isLoading: divLoading } = useDividends(allTickers)
 
-        const { data: transactions } = await query
-        if (!transactions) { setLoading(false); return }
+  const isLoading = txnsLoading || pricesLoading || divLoading
 
-        // --- DATA PROCESSING ---
-        const assetLots: Record<string, { price: number, quantity: number }[]> = {}
-        const portfolio: Record<string, any> = {}
-        const allTickers = new Set<string>()
-        
-        let totalIncome = 0
-        let dividendCount = 0
-        let realizedPnL = 0 
+  // 4. THE CALCULATION ENGINE (Memoized)
+  const { dashboardData, allocationData } = useMemo(() => {
+      if (!transactions || !priceMap || !dividendMap) {
+          return { dashboardData: null, allocationData: [] }
+      }
 
-        transactions.forEach((txn: any) => {
+      const assetLots: Record<string, { price: number, quantity: number }[]> = {}
+      const portfolio: Record<string, any> = {}
+      
+      let totalIncome = 0
+      let dividendCount = 0
+      let realizedPnL = 0 
+
+      // Step A: Process Transactions (FIFO Logic)
+      transactions.forEach((txn) => {
           const type = txn.assets.asset_type
           const ticker = txn.assets.ticker
-          allTickers.add(ticker)
           
           if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') {
-              totalIncome += Number(txn.total_value)
+              // Note: We use the stored total_value for historical record, 
+              // but we also re-calculate below to catch missed dividends if needed.
+              // For dashboard summary, let's rely on the DB record for accuracy of "received" money.
+              // totalIncome += Number(txn.total_value) <--- We calculate this dynamically below instead
               return
           }
+          
           if (txn.realised_pnl) realizedPnL += Number(txn.realised_pnl)
 
           if (!assetLots[ticker]) {
@@ -82,131 +86,121 @@ export default function DashboardPage() {
                 }
             }
           }
-        })
+      })
 
-        Object.keys(assetLots).forEach(ticker => {
-            let q = 0, c = 0
-            assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
-            portfolio[ticker].quantity = q
-            portfolio[ticker].totalInvested = c
-        })
+      // Step B: Calculate Holdings Summary
+      Object.keys(assetLots).forEach(ticker => {
+          let q = 0, c = 0
+          assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
+          portfolio[ticker].quantity = q
+          portfolio[ticker].totalInvested = c
+      })
 
-        const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0)
-        const tickersArray = Array.from(allTickers)
-        const holdingTickers = holdingList.map((h: any) => h.ticker)
+      const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0)
 
-        // FETCH DETAILED PRICES (Price + Change)
-        let priceMap: Record<string, { price: number, change: number }> = {}
-        let dividendMap: Record<string, any[]> = {}
+      // Step C: Dividend Calculation (Dynamic)
+      allTickers.forEach(ticker => {
+          const dividends = dividendMap[ticker]
+          if (!dividends) return
+          
+          // Get only relevant txns for this stock
+          const stockTxns = transactions.filter((t) => t.assets.ticker === ticker)
+          
+          dividends.forEach((div: any) => {
+              const divDate = new Date(div.date)
+              let qtyOnDate = 0
+              stockTxns.forEach((t) => {
+                  const txnDate = new Date(t.date)
+                  if (txnDate < divDate) {
+                      if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
+                      else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
+                  }
+              })
+              
+              if (qtyOnDate > 0) {
+                  totalIncome += (qtyOnDate * div.amount)
+                  dividendCount++
+              }
+          })
+      })
 
-        if (tickersArray.length > 0) {
-            const [priceRes, divRes] = await Promise.all([
-                // Note: detailed: true is crucial here
-                fetch('/api/prices', { method: 'POST', body: JSON.stringify({ tickers: holdingTickers, detailed: true }) }),
-                fetch('/api/dividends', { method: 'POST', body: JSON.stringify({ tickers: tickersArray }) })
-            ])
-            priceMap = await priceRes.json()
-            dividendMap = await divRes.json()
-        }
+      // Step D: Valuation & Day P&L
+      const equity = { invested: 0, current: 0, dayPnl: 0 }
+      const commodity = { invested: 0, current: 0, dayPnl: 0 }
+      const typeMap: Record<string, number> = {}
 
-        // --- DIVIDEND LOGIC ---
-        tickersArray.forEach(ticker => {
-            const dividends = dividendMap[ticker]
-            if (!dividends) return
-            const stockTxns = transactions.filter((t: any) => t.assets.ticker === ticker)
-            dividends.forEach((div: any) => {
-                const divDate = new Date(div.date)
-                let qtyOnDate = 0
-                stockTxns.forEach((t: any) => {
-                    const txnDate = new Date(t.date)
-                    if (txnDate < divDate) {
-                        if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
-                        else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
-                    }
-                })
-                if (qtyOnDate > 0) {
-                    totalIncome += (qtyOnDate * div.amount)
-                    dividendCount++
-                }
-            })
-        })
+      holdingList.forEach((h: any) => {
+          const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
+          
+          // Fuzzy match for price keys
+          let priceData = priceMap[h.ticker]
+          if (!priceData) {
+              const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+              if (foundKey) priceData = priceMap[foundKey]
+          }
 
-        // Buckets & Day P&L
-        const equity = { invested: 0, current: 0, dayPnl: 0 }
-        const commodity = { invested: 0, current: 0, dayPnl: 0 }
-        const typeMap: Record<string, number> = {}
+          const price = priceData?.price || (h.totalInvested / h.quantity)
+          const changePercent = priceData?.change || 0 // 'change' from API is %
 
-        holdingList.forEach((h: any) => {
-            const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
-            
-            // Get Price Data (Object)
-            let priceData = priceMap[h.ticker]
-            if (!priceData) {
-                const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
-                if (foundKey) priceData = priceMap[foundKey]
-            }
+          const val = h.quantity * price
+          
+          // Day P&L Logic
+          const prevPrice = price / (1 + (changePercent / 100))
+          const dayChange = (price - prevPrice) * h.quantity
 
-            const price = priceData?.price || (h.totalInvested / h.quantity)
-            const changePercent = priceData?.change || 0
+          // Bucketing
+          const isComm = h.type === 'Commodity' || h.type === 'Currency' || h.type === 'Gold' || h.ticker.startsWith('COMMODITY:')
 
-            const val = h.quantity * price
-            
-            // Calculate Day P&L from Change %
-            // If Change is +2%, then PrevPrice = Current / 1.02
-            // DayPnL = Current - PrevPrice
-            const prevPrice = price / (1 + (changePercent / 100))
-            const dayChange = (price - prevPrice) * h.quantity
+          if (isComm) {
+              commodity.invested += h.totalInvested
+              commodity.current += val
+              commodity.dayPnl += dayChange
+          } else {
+              equity.invested += h.totalInvested
+              equity.current += val
+              equity.dayPnl += dayChange
+          }
 
-            const isComm = h.type === 'Commodity' || h.type === 'Currency' || h.type === 'Gold'
+          if (!typeMap[h.type]) typeMap[h.type] = 0
+          typeMap[h.type] += val
+      })
 
-            if (isComm) {
-                commodity.invested += h.totalInvested
-                commodity.current += val
-                commodity.dayPnl += dayChange
-            } else {
-                equity.invested += h.totalInvested
-                equity.current += val
-                equity.dayPnl += dayChange
-            }
+      const calcStats = (inv: number, curr: number, day: number) => {
+          const unrealized = curr - inv
+          const pct = inv > 0 ? (unrealized / inv) * 100 : 0
+          return { invested: inv, current: curr, unrealizedPnl: unrealized, pnlPercent: pct, dayPnl: day }
+      }
 
-            if (!typeMap[h.type]) typeMap[h.type] = 0
-            typeMap[h.type] += val
-        })
+      const eqStats = calcStats(equity.invested, equity.current, equity.dayPnl)
+      const commStats = calcStats(commodity.invested, commodity.current, commodity.dayPnl)
+      
+      const totalStats = {
+          invested: eqStats.invested + commStats.invested,
+          current: eqStats.current + commStats.current,
+          unrealizedPnl: eqStats.unrealizedPnl + commStats.unrealizedPnl,
+          pnlPercent: (eqStats.invested + commStats.invested) > 0 ? 
+              ((eqStats.current + commStats.current - (eqStats.invested + commStats.invested)) / (eqStats.invested + commStats.invested)) * 100 : 0,
+          dayPnl: eqStats.dayPnl + commStats.dayPnl,
+          income: totalIncome,
+          dividendCount,
+          realizedPnl: realizedPnL
+      }
 
-        const calcStats = (inv: number, curr: number, day: number) => {
-            const unrealized = curr - inv
-            const pct = inv > 0 ? (unrealized / inv) * 100 : 0
-            return { invested: inv, current: curr, unrealizedPnl: unrealized, pnlPercent: pct, dayPnl: day }
-        }
+      return {
+          dashboardData: { total: totalStats, equity: eqStats, commodity: commStats },
+          allocationData: Object.keys(typeMap).map(type => ({ name: type, value: typeMap[type] }))
+      }
 
-        const eqStats = calcStats(equity.invested, equity.current, equity.dayPnl)
-        const commStats = calcStats(commodity.invested, commodity.current, commodity.dayPnl)
-        
-        const totalStats = {
-            invested: eqStats.invested + commStats.invested,
-            current: eqStats.current + commStats.current,
-            unrealizedPnl: eqStats.unrealizedPnl + commStats.unrealizedPnl,
-            pnlPercent: (eqStats.invested + commStats.invested) > 0 ? 
-                        ((eqStats.current + commStats.current - (eqStats.invested + commStats.invested)) / (eqStats.invested + commStats.invested)) * 100 : 0,
-            dayPnl: eqStats.dayPnl + commStats.dayPnl,
-            income: totalIncome,
-            dividendCount,
-            realizedPnl: realizedPnL
-        }
+  }, [transactions, priceMap, dividendMap, allTickers])
 
-        setData({ total: totalStats, equity: eqStats, commodity: commStats })
-        setAllocationData(Object.keys(typeMap).map(type => ({ name: type, value: typeMap[type] })))
 
-      } catch (error) { console.error("Dashboard Error:", error) } 
-      finally { setLoading(false) }
-    }
-    fetchData()
-  }, [selectedPortfolio])
+  if (isLoading && !dashboardData) {
+      return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
+  }
 
-  if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
-  if (!data) return <div>Error loading data</div>
+  if (!dashboardData) return <div className="p-8 text-center text-slate-500">No data found. Add a transaction to get started.</div>
 
-  // Updated StatsRow with Day P&L
+  // Helper for Stats Row
   const StatsRow = ({ title, icon: Icon, stats, colorClass }: any) => {
       const isProfitable = stats.unrealizedPnl >= 0
       const isDayGreen = stats.dayPnl >= 0
@@ -265,11 +259,11 @@ export default function DashboardPage() {
          {/* Net Worth & Day P&L */}
          <div className="rounded-xl bg-indigo-600 p-6 text-white shadow-lg dark:bg-indigo-700">
             <p className="text-indigo-200 text-sm font-medium mb-1">Total Net Worth</p>
-            <h2 className="text-3xl font-bold">₹{data.total.current.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h2>
+            <h2 className="text-3xl font-bold">₹{dashboardData.total.current.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h2>
             <div className="mt-4 flex items-center gap-4 text-sm">
                  <div className="flex items-center gap-1">
-                    <span className={data.total.dayPnl >= 0 ? 'text-green-300' : 'text-red-300'}>
-                        {data.total.dayPnl >= 0 ? '+' : ''}₹{data.total.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    <span className={dashboardData.total.dayPnl >= 0 ? 'text-green-300' : 'text-red-300'}>
+                        {dashboardData.total.dayPnl >= 0 ? '+' : ''}₹{dashboardData.total.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                     <span className="text-indigo-200 text-xs uppercase">Today</span>
                  </div>
@@ -282,11 +276,11 @@ export default function DashboardPage() {
                 <div className="p-2 bg-blue-100 rounded-lg text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Wallet className="h-5 w-5"/></div>
                 <h3 className="font-semibold text-slate-700 dark:text-slate-200">Total Invested</h3>
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{data.total.invested.toLocaleString('en-IN')}</p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.invested.toLocaleString('en-IN')}</p>
             <p className="text-xs text-slate-400 mt-1 flex justify-between">
                 <span>Unrealized:</span>
-                <span className={data.total.unrealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}>
-                    {data.total.unrealizedPnl > 0 ? '+' : ''}{((data.total.unrealizedPnl/data.total.invested)*100).toFixed(1)}%
+                <span className={dashboardData.total.unrealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                    {dashboardData.total.unrealizedPnl > 0 ? '+' : ''}{((dashboardData.total.unrealizedPnl/dashboardData.total.invested)*100).toFixed(1)}%
                 </span>
             </p>
          </div>
@@ -297,8 +291,8 @@ export default function DashboardPage() {
                 <div className="p-2 bg-purple-100 rounded-lg text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"><DollarSign className="h-5 w-5"/></div>
                 <h3 className="font-semibold text-slate-700 dark:text-slate-200">Realized P&L</h3>
             </div>
-            <p className={`text-2xl font-bold ${data.total.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                {data.total.realizedPnl >= 0 ? '+' : ''}₹{data.total.realizedPnl.toLocaleString('en-IN')}
+            <p className={`text-2xl font-bold ${dashboardData.total.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                {dashboardData.total.realizedPnl >= 0 ? '+' : ''}₹{dashboardData.total.realizedPnl.toLocaleString('en-IN')}
             </p>
             <p className="text-xs text-slate-400 mt-1">Booked Profits</p>
          </div>
@@ -317,10 +311,10 @@ export default function DashboardPage() {
                 </div>
                 <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-emerald-500 transition-colors" />
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{data.total.income.toLocaleString('en-IN')}</p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.income.toLocaleString('en-IN')}</p>
             <p className="text-xs text-slate-400 mt-1">
-                {data.total.dividendCount > 0 
-                    ? `${data.total.dividendCount} payouts detected` 
+                {dashboardData.total.dividendCount > 0 
+                    ? `${dashboardData.total.dividendCount} payouts detected` 
                     : 'No dividends detected yet'}
             </p>
          </Link>
@@ -330,8 +324,8 @@ export default function DashboardPage() {
       <div>
         <h3 className="text-lg font-bold text-slate-800 mb-4 dark:text-white">Portfolio Breakdown</h3>
         <div className="grid gap-6 md:grid-cols-2">
-            <StatsRow title="Equity (Stocks & MF)" icon={TrendingUp} stats={data.equity} colorClass="bg-indigo-500" />
-            <StatsRow title="Commodities & Others" icon={Gem} stats={data.commodity} colorClass="bg-amber-500" />
+            <StatsRow title="Equity (Stocks & MF)" icon={TrendingUp} stats={dashboardData.equity} colorClass="bg-indigo-500" />
+            <StatsRow title="Commodities & Others" icon={Gem} stats={dashboardData.commodity} colorClass="bg-amber-500" />
         </div>
       </div>
 
