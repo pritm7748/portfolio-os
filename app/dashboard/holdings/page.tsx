@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
-import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
+import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 
 type Holding = {
   ticker: string
@@ -33,316 +33,252 @@ export default function HoldingsPage() {
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const [holdings, setHoldings] = useState<Holding[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [activeTab, setActiveTab] = useState('All')
   
-  const supabase = createClient()
+  // UI State
+  const [filterType, setFilterType] = useState('All')
+  const [searchQuery, setSearchQuery] = useState('')
 
-  const fetchHoldings = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+  // 1. DATA HOOKS (Cached & Fast)
+  const { data: transactions, isLoading: txnsLoading, refetch: refetchTxns } = useTransactions()
 
-      let query = supabase
-        .from('transactions')
-        .select(`*, assets ( id, ticker, name, asset_type )`)
-        .order('date', { ascending: true })
+  // 2. Derive Tickers for Price Fetching
+  const allTickers = useMemo(() => {
+      if (!transactions) return []
+      const set = new Set<string>()
+      transactions.forEach(t => set.add(t.assets.ticker))
+      return Array.from(set)
+  }, [transactions])
 
-      if (selectedPortfolio.id !== 'all') {
-          query = query.eq('portfolio_id', selectedPortfolio.id)
-      }
+  // 3. Fetch Prices (Auto-Refresh)
+  const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
-      const { data: transactions, error } = await query
-      if (error) throw error
+  const loading = txnsLoading || pricesLoading
 
-      const portfolio: Record<string, Holding> = {}
+  // 4. CALCULATION ENGINE (Memoized)
+  const holdings = useMemo(() => {
+      if (!transactions) return []
+
+      const map: Record<string, Holding> = {}
+
+      // FIFO Logic to calculate Holdings
       const assetLots: Record<string, { price: number, quantity: number }[]> = {}
 
-      transactions?.forEach((txn: any) => {
-        const rawTicker = txn.assets.ticker.toUpperCase()
-        const rootSymbol = rawTicker.split('.')[0]
-        const isStandardStock = rawTicker.endsWith('.NS') || rawTicker.endsWith('.BO')
-        const key = isStandardStock ? rootSymbol : rawTicker
-
-        if (!portfolio[key]) {
-          portfolio[key] = {
-            ticker: rawTicker, 
-            rootSymbol: key,
-            name: txn.assets.name,
-            type: txn.assets.asset_type,
-            quantity: 0,
-            totalInvested: 0,
-            avgPrice: 0,
-            currentPrice: 0,
-            currentValue: 0,
-            dayChangePercent: 0, 
-            dayChangeValue: 0,   
-            pnl: 0,
-            pnlPercent: 0,
-            assetIds: [],
-            hasNSE: false,
-            hasBSE: false
+      transactions.forEach(txn => {
+          const t = txn.assets
+          const ticker = t.ticker
+          
+          if (!assetLots[ticker]) assetLots[ticker] = []
+          
+          if (txn.transaction_type === 'Buy') {
+              assetLots[ticker].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
+          } else if (txn.transaction_type === 'Sell') {
+              let qtyToSell = Number(txn.quantity)
+              while (qtyToSell > 0 && assetLots[ticker].length > 0) {
+                  if (assetLots[ticker][0].quantity > qtyToSell) {
+                      assetLots[ticker][0].quantity -= qtyToSell; qtyToSell = 0
+                  } else {
+                      qtyToSell -= assetLots[ticker][0].quantity; assetLots[ticker].shift()
+                  }
+              }
           }
-          assetLots[key] = []
-        }
 
-        if (rawTicker.endsWith('.NS')) portfolio[key].hasNSE = true
-        if (rawTicker.endsWith('.BO')) portfolio[key].hasBSE = true
-        
-        if (!portfolio[key].assetIds.includes(txn.assets.id)) {
-            portfolio[key].assetIds.push(txn.assets.id)
-        }
-
-        if (txn.transaction_type === 'Buy') {
-            assetLots[key].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
-        } else if (txn.transaction_type === 'Sell') {
-            let qtyToSell = Number(txn.quantity)
-            while (qtyToSell > 0 && assetLots[key].length > 0) {
-                const oldestLot = assetLots[key][0]
-                if (oldestLot.quantity > qtyToSell) {
-                    oldestLot.quantity -= qtyToSell
-                    qtyToSell = 0
-                } else {
-                    qtyToSell -= oldestLot.quantity
-                    assetLots[key].shift()
-                }
-            }
-        }
+          if (!map[ticker]) {
+              map[ticker] = {
+                  ticker, rootSymbol: ticker.split('.')[0], name: t.name, type: t.asset_type,
+                  quantity: 0, avgPrice: 0, totalInvested: 0,
+                  currentPrice: 0, currentValue: 0, dayChangePercent: 0, dayChangeValue: 0,
+                  pnl: 0, pnlPercent: 0, assetIds: []
+              }
+          }
+          // Collect IDs for the Drawer
+          if (!map[ticker].assetIds.includes(txn.assets.id as any)) { // Type cast if needed based on your DB types
+             // map[ticker].assetIds.push(txn.assets.id) 
+             // Note: In your Supabase join, 'assets' is an object. We might need the asset_id from the txn row
+             // Let's use the asset_id from the transaction row itself
+             if (!map[ticker].assetIds.includes(txn.asset_id as any)) map[ticker].assetIds.push(txn.asset_id as any) 
+          }
+          // Assuming transactions have asset_id. If not, use txn.asset_id
       })
 
-      Object.values(portfolio).forEach(p => {
-          if (p.hasNSE) p.ticker = `${p.rootSymbol}.NS`
-          else if (p.hasBSE) p.ticker = `${p.rootSymbol}.BO`
+      // Final Aggregation
+      return Object.values(map).map(h => {
+          // Sum remaining lots
+          let q = 0, c = 0
+          if (assetLots[h.ticker]) {
+              assetLots[h.ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
+          }
+          
+          if (q <= 0.000001) return null // Filter sold out positions
 
-          let totalQty = 0
-          let totalCost = 0
-          assetLots[p.rootSymbol].forEach(lot => {
-              totalQty += lot.quantity
-              totalCost += (lot.quantity * lot.price)
-          })
+          h.quantity = q
+          h.totalInvested = c
+          h.avgPrice = c / q
 
-          p.quantity = totalQty
-          p.totalInvested = totalCost
-          p.avgPrice = totalQty > 0 ? totalCost / totalQty : 0
-      })
+          // Price Application
+          const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
+          let priceData = priceMap?.[h.ticker]
+          
+          if (!priceData && priceMap) {
+              const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+              if (foundKey) priceData = priceMap[foundKey]
+          }
 
-      const holdingList = Object.values(portfolio).filter(h => h.quantity > 0)
-      const tickers = holdingList.map(h => h.ticker)
+          h.currentPrice = priceData?.price || h.avgPrice
+          h.dayChangePercent = priceData?.change || 0
+          
+          h.currentValue = h.quantity * h.currentPrice
+          h.pnl = h.currentValue - h.totalInvested
+          h.pnlPercent = (h.pnl / h.totalInvested) * 100
 
-      if (tickers.length > 0) {
-        try {
-            const response = await fetch('/api/prices', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tickers, detailed: true }) 
-            })
-            const priceMap = await response.json()
+          // Day Change Value Calc
+          const prevPrice = h.currentPrice / (1 + (h.dayChangePercent / 100))
+          h.dayChangeValue = (h.currentPrice - prevPrice) * h.quantity
 
-            holdingList.forEach(h => {
-                let priceData = priceMap[h.ticker]
-                
-                if (!priceData) {
-                    const root = h.ticker.split('.')[0]
-                    const foundKey = Object.keys(priceMap).find(k => k.includes(root))
-                    if (foundKey) priceData = priceMap[foundKey]
-                }
+          return h
+      }).filter(Boolean) as Holding[]
 
-                const price = priceData?.price || h.avgPrice
-                const change = priceData?.change || 0
-                
-                h.currentPrice = price
-                h.dayChangePercent = change
-            })
-        } catch (err) {
-            console.error("Failed to fetch prices", err)
-        }
-      }
+  }, [transactions, priceMap])
 
-      const finalHoldings = holdingList.map(h => {
-        h.currentValue = h.quantity * h.currentPrice
-        
-        const prevValue = h.currentValue / (1 + (h.dayChangePercent / 100))
-        h.dayChangeValue = h.currentValue - prevValue
+  // Filtering Logic
+  const filteredHoldings = holdings.filter(h => {
+      const matchesSearch = h.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            h.ticker.toLowerCase().includes(searchQuery.toLowerCase())
+      
+      if (filterType === 'All') return matchesSearch
+      if (filterType === 'Stock') return matchesSearch && h.type === 'Stock'
+      if (filterType === 'Mutual Fund') return matchesSearch && h.type === 'Mutual Fund'
+      if (filterType === 'Commodity') return matchesSearch && (h.type === 'Commodity' || h.type === 'Gold' || h.type === 'Silver')
+      if (filterType === 'Currency') return matchesSearch && h.type === 'Currency'
+      return matchesSearch
+  })
 
-        h.pnl = h.currentValue - h.totalInvested
-        h.pnlPercent = h.totalInvested > 0 ? (h.pnl / h.totalInvested) * 100 : 0
-        return h
-      })
-
-      setHoldings(finalHoldings)
-
-    } catch (error) {
-      console.error('Error fetching holdings:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [supabase, selectedPortfolio])
-
-  useEffect(() => { fetchHoldings() }, [fetchHoldings])
+  // Handlers
+  const handleAssetClick = (h: Holding) => {
+      // Find asset_ids from transactions for this ticker
+      // We essentially just need to pass the ticker and name to the drawer
+      // The drawer fetches transactions by asset_id, so we need valid IDs.
+      // Our logic above collected them.
+      setSelectedAsset({ ids: h.assetIds, name: h.name, ticker: h.ticker })
+      setIsDrawerOpen(true)
+  }
 
   const handleExport = () => {
-      if (holdings.length === 0) return alert("No holdings to export")
-      
-      const headers = ['Ticker,Name,Type,Quantity,Avg Price,Current Price,Day Change %,Day Gain,Total Value,Total P&L,P&L %']
-      const rows = holdings.map(h => 
-          `${h.ticker},"${h.name}",${h.type},${h.quantity},${h.avgPrice.toFixed(2)},${h.currentPrice.toFixed(2)},${h.dayChangePercent.toFixed(2)}%,${h.dayChangeValue.toFixed(2)},${h.currentValue.toFixed(2)},${h.pnl.toFixed(2)},${h.pnlPercent.toFixed(2)}%`
-      )
-      
-      const csvContent = "data:text/csv;charset=utf-8," + headers.concat(rows).join("\n")
+      const csvContent = "data:text/csv;charset=utf-8," 
+          + "Ticker,Name,Type,Quantity,Avg Price,Current Price,Invested,Current Value,P&L\n"
+          + holdings.map(h => 
+              `${h.ticker},"${h.name}",${h.type},${h.quantity},${h.avgPrice.toFixed(2)},${h.currentPrice},${h.totalInvested.toFixed(2)},${h.currentValue.toFixed(2)},${h.pnl.toFixed(2)}`
+          ).join("\n")
       const encodedUri = encodeURI(csvContent)
       const link = document.createElement("a")
       link.setAttribute("href", encodedUri)
-      link.setAttribute("download", `portfolio_holdings_${new Date().toISOString().split('T')[0]}.csv`)
+      link.setAttribute("download", "holdings.csv")
       document.body.appendChild(link)
       link.click()
   }
 
-  const handleRowClick = (asset: Holding) => {
-    setSelectedAsset({ ids: asset.assetIds, name: asset.name, ticker: asset.ticker })
-    setIsDrawerOpen(true)
-  }
-
-  const filteredHoldings = holdings.filter(h => {
-    const matchesSearch = h.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          h.ticker.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesTab = activeTab === 'All' || h.type === activeTab
-    return matchesSearch && matchesTab
-  })
+  if (loading && holdings.length === 0) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search holdings..."
-            className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-10 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-700 dark:text-white"
-          />
-          {searchTerm && (
-            <button 
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-            >
-                <X className="h-3 w-3" />
+    <div className="space-y-6 pb-20">
+      
+      {/* HEADER ACTIONS */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Holdings</h2>
+        <div className="flex gap-2">
+            <button onClick={() => setIsSplitModalOpen(true)} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
+                <Scissors className="h-4 w-4" /> <span className="hidden sm:inline">Corp Actions</span>
             </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-            <button onClick={fetchHoldings} className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" title="Refresh Prices">
-                <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+            <button onClick={handleExport} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
+                <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
             </button>
-            
-            <button 
-                onClick={() => setIsSplitModalOpen(true)}
-                className="p-2 text-slate-500 hover:text-indigo-600 transition dark:text-slate-400 dark:hover:text-indigo-400" 
-                title="Stock Splits & Bonus"
-            >
-                <Scissors className="h-5 w-5" />
+            <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 shadow-sm">
+                <Plus className="h-4 w-4" /> Add Transaction
             </button>
-
-          <button 
-            onClick={handleExport}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Download className="h-4 w-4" />
-            Export
-          </button>
-
-          <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-sm">
-            <Plus className="h-4 w-4" />
-            Add Transaction
-          </button>
         </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
-          {['All', 'Stock', 'Mutual Fund', 'Commodity', 'Currency'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                activeTab === tab
-                  ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+      {/* FILTERS & SEARCH */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input 
+                type="text" placeholder="Search holdings..." 
+                value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-4 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
+            />
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+            {['All', 'Stock', 'Mutual Fund', 'Commodity', 'Currency'].map(type => (
+                <button 
+                    key={type} 
+                    onClick={() => setFilterType(type)}
+                    className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${filterType === type ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'}`}
+                >
+                    {type}
+                </button>
+            ))}
+        </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm min-h-[300px] dark:bg-slate-900 dark:border-slate-800">
-        <div className="min-w-[1000px]">
-            {loading ? (
-            <div className="flex h-64 items-center justify-center text-slate-500 dark:text-slate-400">
-                <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-                Updating prices...
-            </div>
-            ) : filteredHoldings.length === 0 ? (
-            <div className="flex h-64 flex-col items-center justify-center text-slate-500 dark:text-slate-400">
-                <p>No holdings found in this portfolio.</p>
-            </div>
+      {/* TABLE */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
+        <div className="overflow-x-auto">
+            {filteredHoldings.length === 0 ? (
+                <div className="flex h-60 flex-col items-center justify-center text-slate-400">
+                    <p>No holdings found matching your criteria.</p>
+                </div>
             ) : (
             <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                     <tr>
-                    <th className="px-6 py-4 font-medium">Asset Name</th>
-                    <th className="px-6 py-4 font-medium">Type</th>
-                    <th className="px-6 py-4 font-medium text-right">Qty</th>
-                    {/* REMOVED FIFO BADGE HERE */}
-                    <th className="px-6 py-4 font-medium text-right">Avg. Price</th>
-                    <th className="px-6 py-4 font-medium text-right text-indigo-600 dark:text-indigo-400">Live Price</th>
-                    <th className="px-6 py-4 font-medium text-right">Day Change</th> 
-                    <th className="px-6 py-4 font-medium text-right">Total Value</th>
-                    <th className="px-6 py-4 font-medium text-right">Total P&L</th>
-                    <th className="px-4 py-4"></th>
+                        <th className="px-6 py-4">Asset Name</th>
+                        <th className="hidden sm:table-cell px-4 py-4">Type</th>
+                        <th className="px-4 py-4 text-right">Qty</th>
+                        <th className="hidden md:table-cell px-4 py-4 text-right">Avg. Price</th>
+                        <th className="px-4 py-4 text-right">Live Price</th>
+                        <th className="hidden md:table-cell px-4 py-4 text-right">Day Change</th>
+                        <th className="hidden lg:table-cell px-4 py-4 text-right">Total Value</th>
+                        <th className="px-4 py-4 text-right">Total P&L</th>
+                        <th className="px-4 py-4"></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredHoldings.map((holding) => (
                     <tr 
-                        key={holding.rootSymbol} 
-                        onClick={() => handleRowClick(holding)} 
-                        className="hover:bg-slate-50 transition cursor-pointer group dark:hover:bg-slate-800/50"
+                        key={holding.ticker} 
+                        onClick={() => handleAssetClick(holding)}
+                        className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                     >
-                        <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">
-                        {holding.name}
-                        <span className="ml-2 text-xs text-slate-400">({holding.ticker})</span>
+                        <td className="px-6 py-4">
+                            <div className="font-bold text-slate-900 dark:text-white">{holding.name}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{holding.ticker}</div>
                         </td>
-                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            {holding.type}
-                        </span>
+                        <td className="hidden sm:table-cell px-4 py-4">
+                            <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                {holding.type}
+                            </span>
                         </td>
-                        <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-200">{holding.quantity}</td>
-                        <td className="px-6 py-4 text-right text-slate-600 dark:text-slate-400">
-                        ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        <td className="px-4 py-4 text-right font-medium text-slate-700 dark:text-slate-300">
+                            {holding.quantity}
                         </td>
-                        <td className="px-6 py-4 text-right font-medium text-indigo-600 dark:text-indigo-400">
-                        ₹{holding.currentPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        <td className="hidden md:table-cell px-4 py-4 text-right text-slate-600 dark:text-slate-400">
+                            ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </td>
-                        
-                        <td className={`px-6 py-4 text-right font-medium ${holding.dayChangeValue >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                            <div className="flex flex-col items-end">
-                                <span>{holding.dayChangeValue >= 0 ? '+' : ''}₹{holding.dayChangeValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-                                <span className="text-xs opacity-80">{holding.dayChangePercent.toFixed(2)}%</span>
+                        <td className="px-4 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                            ₹{holding.currentPrice.toLocaleString('en-IN')}
+                        </td>
+                        <td className="hidden md:table-cell px-4 py-4 text-right">
+                            <div className={`flex flex-col items-end ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                <span className="font-medium">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
+                                <span className="text-xs opacity-80">{Math.abs(holding.dayChangePercent).toFixed(2)}%</span>
                             </div>
                         </td>
-
-                        <td className="px-6 py-4 text-right font-medium text-slate-900 dark:text-white">
-                        ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        <td className="hidden lg:table-cell px-4 py-4 text-right font-semibold text-slate-900 dark:text-white">
+                            ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                         </td>
-                        <td className={`px-6 py-4 text-right font-bold ${holding.pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                            <div className="flex flex-col items-end">
-                                <span>{holding.pnl >= 0 ? '+' : ''}₹{holding.pnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                        <td className="px-4 py-4 text-right">
+                            <div className={`flex flex-col items-end ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                <span className="font-bold">{holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
                                 <span className="text-xs opacity-80">{holding.pnlPercent.toFixed(2)}%</span>
                             </div>
                         </td>
@@ -357,31 +293,33 @@ export default function HoldingsPage() {
         </div>
       </div>
 
-      {/* DISCLAIMER */}
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
         <Info className="h-4 w-4" />
-        <span>Note: Commodity prices (Gold/Silver) are approximations based on global spot rates + estimated duties and may differ slightly from local physical market rates.</span>
+        <span>Note: Commodity prices are approximations based on global spot rates + estimated duties.</span>
       </div>
 
+      {/* Modals - Refetch on success triggers React Query invalidation in future, for now it triggers the hook to re-run via key update if needed, but actually we need to tell React Query to invalidate. 
+          The 'onSuccess' in the modals currently calls a manual 'fetchHoldings'. 
+          Since we are using hooks, we should pass 'refetchTxns' to onSuccess. 
+      */}
       <TransactionModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
-        onSuccess={fetchHoldings} 
+        onSuccess={() => refetchTxns()} 
       />
 
       <CorporateActionModal 
         isOpen={isSplitModalOpen} 
         onClose={() => setIsSplitModalOpen(false)} 
-        onSuccess={fetchHoldings} 
+        onSuccess={() => refetchTxns()} 
       />
 
       <AssetDetailsDrawer 
         asset={selectedAsset}
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        onUpdate={fetchHoldings}
+        onUpdate={() => refetchTxns()}
       />
-
     </div>
   )
 }

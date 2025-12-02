@@ -4,6 +4,7 @@ import { usePortfolio } from '@/context/portfolio-context'
 
 // TYPE DEFINITIONS (Shared)
 export type Transaction = {
+    asset_id: any
     id: number
     date: string
     transaction_type: string
@@ -13,6 +14,7 @@ export type Transaction = {
     realised_pnl: number | null
     portfolio_id: number
     assets: {
+        id: any
         ticker: string
         name: string
         asset_type: string
