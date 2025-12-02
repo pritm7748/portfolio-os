@@ -17,19 +17,24 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
 
   useEffect(() => {
     const fetchData = async () => {
-      setLoading(true) // Reset loading on ticker change
+      setLoading(true)
       try {
         const res = await fetch('/api/history', {
           method: 'POST',
-          // FIX 1: Send 'tickers' as an array
-          body: JSON.stringify({ tickers: [ticker], range: '1d' }), 
+          // FIX 1: Send as Array to match API expectation
+          // FIX 2: Send 'detailed: true' to get Price/Change info
+          body: JSON.stringify({ 
+              tickers: [ticker], 
+              range: '1d', 
+              detailed: true 
+          }), 
         })
         
         if (!res.ok) throw new Error('Failed to fetch')
 
         const result = await res.json()
         
-        // FIX 2: The API returns a map { "TICKER": data }, so we access result[ticker]
+        // Access the specific ticker data from the response map
         if (result && result[ticker]) {
             setData(result[ticker])
         }
@@ -42,7 +47,6 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
     fetchData()
   }, [ticker])
 
-  // Helper variables
   const isPositive = data?.change >= 0
   const color = isPositive ? '#10b981' : '#ef4444'
 
