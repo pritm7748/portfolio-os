@@ -1,27 +1,31 @@
 'use client'
 
-import { useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { Search, X, Loader2 } from 'lucide-react'
 import MarketCard from '@/components/market-card'
 import MarketConstituents from '@/components/market-constituents'
 import { INDICES, SECTOR_CONSTITUENTS } from '@/lib/market-data'
+import { useMarketHistory } from '@/hooks/use-portfolio-data'
 
 export default function MarketPage() {
   const [selectedSector, setSelectedSector] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('') 
   
+  // 1. Prepare Ticker List (Memoized)
+  // We extract all tickers from your constants to make ONE batch request
+  const allTickers = useMemo(() => INDICES.map(i => i.ticker), [])
+
+  // 2. BATCH FETCH (The Performance Fix)
+  // This loads all 20+ charts in a single HTTP request instead of 20 separate ones
+  const { data: marketMap, isLoading } = useMarketHistory(allTickers, '1d')
+
   const toggleSector = (ticker: string) => {
-    if (selectedSector === ticker) {
-        setSelectedSector(null)
-    } else {
-        setSelectedSector(ticker)
-    }
+    setSelectedSector(prev => prev === ticker ? null : ticker)
   }
 
-  const handleClose = () => {
-      setSelectedSector(null)
-  }
+  const handleClose = () => setSelectedSector(null)
 
+  // Filter Logic
   const filteredIndices = INDICES.filter(idx => 
     idx.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     idx.ticker.toLowerCase().includes(searchQuery.toLowerCase())
@@ -78,6 +82,8 @@ export default function MarketPage() {
                                 key={idx.ticker} 
                                 name={idx.name} 
                                 ticker={idx.ticker} 
+                                data={marketMap?.[idx.ticker]} // Pass cached data
+                                isLoading={isLoading}
                                 onClick={() => toggleSector(idx.ticker)}
                                 isSelected={selectedSector === idx.ticker}
                             />
@@ -96,6 +102,8 @@ export default function MarketPage() {
                                 key={idx.ticker} 
                                 name={idx.name} 
                                 ticker={idx.ticker} 
+                                data={marketMap?.[idx.ticker]} // Pass cached data
+                                isLoading={isLoading}
                                 onClick={() => toggleSector(idx.ticker)}
                                 isSelected={selectedSector === idx.ticker}
                             />
@@ -129,8 +137,6 @@ export default function MarketPage() {
             </div>
 
             {/* DESKTOP STICKY PANEL */}
-            {/* FIX: Changed top-[65px] to top-4 to align with search bar */}
-            {/* FIX: Adjusted height calculation to maximize space */}
             <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-4 flex-col h-[calc(100vh-40px)] border-l border-slate-200 dark:border-slate-800 pl-6">
                 <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                     <MarketConstituents 

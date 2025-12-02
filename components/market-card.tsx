@@ -1,52 +1,21 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { Loader2, TrendingUp, TrendingDown, Activity } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts'
 
+// FIX: Added 'data' and 'isLoading' to the Props definition
 type MarketCardProps = {
   name: string
   ticker: string
+  data?: any       // <--- Now accepts data object from parent
+  isLoading?: boolean // <--- Now accepts loading state from parent
   onClick?: () => void
   isSelected?: boolean
 }
 
-export default function MarketCard({ name, ticker, onClick, isSelected }: MarketCardProps) {
-  const [data, setData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch('/api/history', {
-          method: 'POST',
-          // FIX 1: Send as Array to match API expectation
-          // FIX 2: Send 'detailed: true' to get Price/Change info
-          body: JSON.stringify({ 
-              tickers: [ticker], 
-              range: '1d', 
-              detailed: true 
-          }), 
-        })
-        
-        if (!res.ok) throw new Error('Failed to fetch')
-
-        const result = await res.json()
-        
-        // Access the specific ticker data from the response map
-        if (result && result[ticker]) {
-            setData(result[ticker])
-        }
-      } catch (e) {
-        console.error(e)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchData()
-  }, [ticker])
-
+export default function MarketCard({ name, ticker, data, isLoading, onClick, isSelected }: MarketCardProps) {
+  
+  // Helper variables
   const isPositive = data?.change >= 0
   const color = isPositive ? '#10b981' : '#ef4444'
 
@@ -61,7 +30,7 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
             }
         `}
     >
-      {loading ? (
+      {isLoading ? (
         <div className="flex h-full w-full items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
         </div>

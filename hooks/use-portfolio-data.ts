@@ -28,6 +28,16 @@ export type WatchlistItem = {
     created_at: string
 }
 
+export type PriceAlert = {
+    id: number
+    ticker: string
+    target_price: number
+    condition: 'above' | 'below'
+    is_active: boolean
+    created_at: string
+    triggered_at: string | null
+}
+
 // --- 1. Transactions Hook (Core Data) ---
 export function useTransactions() {
   const { selectedPortfolio } = usePortfolio()
@@ -140,5 +150,27 @@ export function useMarketHistory(tickers: string[], range: string = '1d') {
         enabled: tickers.length > 0,
         refetchInterval: 5 * 60 * 1000, 
         staleTime: 2 * 60 * 1000
+    })
+}
+
+// --- NEW: Alerts Hook ---
+export function useAlerts() {
+    const supabase = createClient()
+    
+    return useQuery({
+        queryKey: ['alerts'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data, error } = await supabase
+                .from('price_alerts')
+                .select('*')
+                .order('created_at', { ascending: false })
+            
+            if (error) throw error
+            return data as PriceAlert[]
+        },
+        staleTime: 1 * 60 * 1000 // Cache for 1 minute
     })
 }
