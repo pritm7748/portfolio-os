@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Search, X, ArrowLeft } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import MarketCard from '@/components/market-card'
 import MarketConstituents from '@/components/market-constituents'
 import { INDICES, SECTOR_CONSTITUENTS } from '@/lib/market-data'
@@ -116,7 +116,7 @@ export default function MarketPage() {
       {/* RIGHT SIDE: DETAILS PANEL */}
       {selectedSector && (
         <>
-            {/* MOBILE OVERLAY (Z-Index High, Full Screen) */}
+            {/* MOBILE OVERLAY */}
             <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 flex flex-col lg:hidden">
                 <div className="flex-1 overflow-hidden">
                     <MarketConstituents 
@@ -129,8 +129,8 @@ export default function MarketPage() {
             </div>
 
             {/* DESKTOP STICKY PANEL */}
-            {/* Fix: max-h-screen ensures it never grows taller than the viewport */}
-            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-0 flex-col border-l border-slate-200 dark:border-slate-800 pl-6 h-auto max-h-[calc(100vh-100px)]">
+            {/* FIX: Defined height and top-20 to fit perfectly in viewport */}
+            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-20 flex-col h-[calc(100vh-120px)] border-l border-slate-200 dark:border-slate-800 pl-6">
                 <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                     <MarketConstituents 
                         indexName={selectedName} 
