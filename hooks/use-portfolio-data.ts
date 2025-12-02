@@ -2,9 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
-// TYPE DEFINITIONS (Shared)
+// --- Type Definitions ---
 export type Transaction = {
-    asset_id: any
     id: number
     date: string
     transaction_type: string
@@ -13,25 +12,34 @@ export type Transaction = {
     total_value: number
     realised_pnl: number | null
     portfolio_id: number
+    asset_id: number // Added explicit type for join logic
     assets: {
-        id: any
         ticker: string
         name: string
         asset_type: string
     }
 }
 
+export type WatchlistItem = {
+    id: number
+    ticker: string
+    name: string
+    asset_type: string
+    created_at: string
+}
+
+// --- 1. Transactions Hook (Core Data) ---
 export function useTransactions() {
   const { selectedPortfolio } = usePortfolio()
   const supabase = createClient()
 
   return useQuery({
-    // Key depends on selectedPortfolio.id -> Auto-refetches on switch!
+    // Auto-refetch when portfolio ID changes
     queryKey: ['transactions', selectedPortfolio.id],
     
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('No user')
+      if (!user) throw new Error('No user found')
 
       let query = supabase
         .from('transactions')
@@ -46,13 +54,14 @@ export function useTransactions() {
       if (error) throw error
       return data as Transaction[]
     },
-    staleTime: 5 * 60 * 1000, // 5 Minutes Cache for Transactions (They don't change often)
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   })
 }
 
+// --- 2. Live Prices Hook (Auto-Refresh) ---
 export function useLivePrices(tickers: string[]) {
-    // Sort tickers to ensure the key is stable (['A', 'B'] is same as ['B', 'A'])
-    const sortedTickers = tickers.sort()
+    // Sort tickers to ensure the cache key is stable
+    const sortedTickers = tickers.slice().sort()
 
     return useQuery({
         queryKey: ['prices', sortedTickers.join(',')],
@@ -67,15 +76,15 @@ export function useLivePrices(tickers: string[]) {
             return res.json()
         },
         
-        enabled: tickers.length > 0, // Don't run if list is empty
-        refetchInterval: 60 * 1000, // Auto-refresh prices every 60 seconds
-        staleTime: 30 * 1000 // Considered fresh for 30 seconds
+        enabled: tickers.length > 0,
+        refetchInterval: 60 * 1000, // Refresh every 60s automatically
+        staleTime: 30 * 1000 
     })
 }
 
-// Helper for Dividend Fetching
+// --- 3. Dividends Hook ---
 export function useDividends(tickers: string[]) {
-    const sortedTickers = tickers.sort()
+    const sortedTickers = tickers.slice().sort()
     return useQuery({
         queryKey: ['dividends', sortedTickers.join(',')],
         queryFn: async () => {
@@ -87,6 +96,49 @@ export function useDividends(tickers: string[]) {
             return res.json()
         },
         enabled: tickers.length > 0,
-        staleTime: 24 * 60 * 60 * 1000 // Cache dividends for 24 hours (they rarely change)
+        staleTime: 24 * 60 * 60 * 1000 // Dividends rarely change, cache for 24h
+    })
+}
+
+// --- 4. Watchlist Hook (New) ---
+export function useWatchlist() {
+    const supabase = createClient()
+    
+    return useQuery({
+        queryKey: ['watchlist'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data, error } = await supabase
+                .from('watchlist')
+                .select('*')
+                .order('created_at', { ascending: false })
+            
+            if (error) throw error
+            return data as WatchlistItem[]
+        },
+        staleTime: 10 * 60 * 1000 // Cache for 10 mins
+    })
+}
+
+// --- 5. Market History Hook (For Sparkline Charts) ---
+export function useMarketHistory(tickers: string[], range: string = '1d') {
+    const sortedTickers = tickers.slice().sort()
+    
+    return useQuery({
+        queryKey: ['marketHistory', sortedTickers.join(','), range],
+        queryFn: async () => {
+            if (tickers.length === 0) return {}
+            const res = await fetch('/api/history', { 
+                method: 'POST', 
+                body: JSON.stringify({ tickers, range, detailed: true }) 
+            })
+            if (!res.ok) throw new Error('History fetch failed')
+            return res.json()
+        },
+        enabled: tickers.length > 0,
+        refetchInterval: 5 * 60 * 1000, 
+        staleTime: 2 * 60 * 1000
     })
 }

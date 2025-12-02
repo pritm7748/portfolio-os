@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, Search, Download, Loader2, RefreshCw, ChevronRight, Trash2, Scissors, X, Info, TrendingUp, TrendingDown } from 'lucide-react'
+import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
@@ -23,8 +23,6 @@ type Holding = {
   pnl: number
   pnlPercent: number
   assetIds: number[]
-  hasNSE?: boolean
-  hasBSE?: boolean
 }
 
 export default function HoldingsPage() {
@@ -38,7 +36,7 @@ export default function HoldingsPage() {
   const [filterType, setFilterType] = useState('All')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // 1. DATA HOOKS (Cached & Fast)
+  // 1. DATA HOOKS (Instant Load from Cache)
   const { data: transactions, isLoading: txnsLoading, refetch: refetchTxns } = useTransactions()
 
   // 2. Derive Tickers for Price Fetching
@@ -59,8 +57,6 @@ export default function HoldingsPage() {
       if (!transactions) return []
 
       const map: Record<string, Holding> = {}
-
-      // FIFO Logic to calculate Holdings
       const assetLots: Record<string, { price: number, quantity: number }[]> = {}
 
       transactions.forEach(txn => {
@@ -90,34 +86,29 @@ export default function HoldingsPage() {
                   pnl: 0, pnlPercent: 0, assetIds: []
               }
           }
-          // Collect IDs for the Drawer
-          if (!map[ticker].assetIds.includes(txn.assets.id as any)) { // Type cast if needed based on your DB types
-             // map[ticker].assetIds.push(txn.assets.id) 
-             // Note: In your Supabase join, 'assets' is an object. We might need the asset_id from the txn row
-             // Let's use the asset_id from the transaction row itself
-             if (!map[ticker].assetIds.includes(txn.asset_id as any)) map[ticker].assetIds.push(txn.asset_id as any) 
+          
+          // Collect asset IDs for the details drawer
+          if (!map[ticker].assetIds.includes(txn.asset_id)) {
+             map[ticker].assetIds.push(txn.asset_id)
           }
-          // Assuming transactions have asset_id. If not, use txn.asset_id
       })
 
-      // Final Aggregation
       return Object.values(map).map(h => {
-          // Sum remaining lots
           let q = 0, c = 0
           if (assetLots[h.ticker]) {
               assetLots[h.ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
           }
           
-          if (q <= 0.000001) return null // Filter sold out positions
+          if (q <= 0.000001) return null // Hide fully sold assets
 
           h.quantity = q
           h.totalInvested = c
           h.avgPrice = c / q
 
-          // Price Application
           const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
           let priceData = priceMap?.[h.ticker]
           
+          // Fuzzy match logic
           if (!priceData && priceMap) {
               const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
               if (foundKey) priceData = priceMap[foundKey]
@@ -128,9 +119,8 @@ export default function HoldingsPage() {
           
           h.currentValue = h.quantity * h.currentPrice
           h.pnl = h.currentValue - h.totalInvested
-          h.pnlPercent = (h.pnl / h.totalInvested) * 100
+          h.pnlPercent = h.totalInvested > 0 ? (h.pnl / h.totalInvested) * 100 : 0
 
-          // Day Change Value Calc
           const prevPrice = h.currentPrice / (1 + (h.dayChangePercent / 100))
           h.dayChangeValue = (h.currentPrice - prevPrice) * h.quantity
 
@@ -139,7 +129,7 @@ export default function HoldingsPage() {
 
   }, [transactions, priceMap])
 
-  // Filtering Logic
+  // Filter Logic
   const filteredHoldings = holdings.filter(h => {
       const matchesSearch = h.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             h.ticker.toLowerCase().includes(searchQuery.toLowerCase())
@@ -154,10 +144,6 @@ export default function HoldingsPage() {
 
   // Handlers
   const handleAssetClick = (h: Holding) => {
-      // Find asset_ids from transactions for this ticker
-      // We essentially just need to pass the ticker and name to the drawer
-      // The drawer fetches transactions by asset_id, so we need valid IDs.
-      // Our logic above collected them.
       setSelectedAsset({ ids: h.assetIds, name: h.name, ticker: h.ticker })
       setIsDrawerOpen(true)
   }
@@ -181,8 +167,8 @@ export default function HoldingsPage() {
   return (
     <div className="space-y-6 pb-20">
       
-      {/* HEADER ACTIONS */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      {/* ACTIONS ROW (Title Removed) */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-end">
         <div className="flex gap-2">
             <button onClick={() => setIsSplitModalOpen(true)} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
                 <Scissors className="h-4 w-4" /> <span className="hidden sm:inline">Corp Actions</span>
@@ -297,10 +283,6 @@ export default function HoldingsPage() {
         <span>Note: Commodity prices are approximations based on global spot rates + estimated duties.</span>
       </div>
 
-      {/* Modals - Refetch on success triggers React Query invalidation in future, for now it triggers the hook to re-run via key update if needed, but actually we need to tell React Query to invalidate. 
-          The 'onSuccess' in the modals currently calls a manual 'fetchHoldings'. 
-          Since we are using hooks, we should pass 'refetchTxns' to onSuccess. 
-      */}
       <TransactionModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}

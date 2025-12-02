@@ -1,70 +1,60 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { usePortfolio } from '@/context/portfolio-context'
-import { Loader2, Target, TrendingUp, Calculator, ArrowRight } from 'lucide-react'
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart } from 'recharts'
+import { useEffect, useState, useMemo } from 'react'
+import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
+import { Loader2, Target, Calculator } from 'lucide-react'
+import { ResponsiveContainer, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart } from 'recharts'
 
 export default function GoalsPage() {
-  const { selectedPortfolio } = usePortfolio()
   const [loading, setLoading] = useState(true)
   
-  // Financial State
-  const [currentNetWorth, setCurrentNetWorth] = useState(0)
-  
   // Goal Inputs
-  const [targetAmount, setTargetAmount] = useState(10000000) // 1 Crore default
+  const [targetAmount, setTargetAmount] = useState(10000000) 
   const [years, setYears] = useState(10)
-  const [expectedReturn, setExpectedReturn] = useState(12) // 12% default
+  const [expectedReturn, setExpectedReturn] = useState(12) 
   const [monthlySip, setMonthlySip] = useState(50000)
   
-  // Results
-  const [projection, setProjection] = useState<any[]>([])
-  const [projectedWealth, setProjectedWealth] = useState(0)
-  const [shortfall, setShortfall] = useState(0)
+  // 1. DATA HOOKS (Instant Load)
+  const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
-  const supabase = createClient()
+  // 2. Derive Tickers
+  const allTickers = useMemo(() => {
+      if (!transactions) return []
+      const set = new Set<string>()
+      transactions.forEach(t => set.add(t.assets.ticker))
+      return Array.from(set)
+  }, [transactions])
 
-  // 1. Fetch Current Net Worth
-  useEffect(() => {
-    const fetchWealth = async () => {
-      setLoading(true)
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+  // 3. Fetch Prices
+  const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
-        let query = supabase.from('transactions').select(`*, assets ( ticker )`)
-        if (selectedPortfolio.id !== 'all') query = query.eq('portfolio_id', selectedPortfolio.id)
-        const { data: txns } = await query
-        
-        if (txns) {
-            const holdings: Record<string, number> = {}
-            txns.forEach((t: any) => {
-                if (t.transaction_type === 'Buy') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) + Number(t.quantity)
-                else if (t.transaction_type === 'Sell') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
-            })
-            
-            const tickers = Object.keys(holdings).filter(k => holdings[k] > 0)
-            if (tickers.length > 0) {
-                const res = await fetch('/api/prices', { method: 'POST', body: JSON.stringify({ tickers }) })
-                const prices = await res.json()
-                let total = 0
-                tickers.forEach(t => {
-                     const price = prices[t] || 0
-                     total += (holdings[t] * price)
-                })
-                setCurrentNetWorth(total)
-            }
-        }
-      } catch (e) { console.error(e) } 
-      finally { setLoading(false) }
-    }
-    fetchWealth()
-  }, [selectedPortfolio])
+  // 4. CALCULATE CURRENT NET WORTH
+  const currentNetWorth = useMemo(() => {
+      if (!transactions || !priceMap) return 0
+      
+      const holdings: Record<string, number> = {}
+      transactions.forEach(t => {
+          if (t.transaction_type === 'Buy') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) + Number(t.quantity)
+          else if (t.transaction_type === 'Sell') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
+      })
 
-  // 2. Calculate Projection
-  useEffect(() => {
+      let total = 0
+      Object.keys(holdings).forEach(t => {
+          if (holdings[t] > 0) {
+              const cleanTicker = t.toUpperCase().replace(/\s/g, '')
+              let price = priceMap[t]?.price
+              if (!price) {
+                  const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+                  if (foundKey) price = priceMap[foundKey]?.price
+              }
+              total += (holdings[t] * (price || 0))
+          }
+      })
+      return total
+  }, [transactions, priceMap])
+
+  // 5. PROJECTION ENGINE
+  const { projection, projectedWealth, shortfall } = useMemo(() => {
       const monthlyRate = expectedReturn / 100 / 12
       const months = years * 12
       const data = []
@@ -85,25 +75,16 @@ export default function GoalsPage() {
               })
           }
       }
-
-      setProjection(data)
-      setProjectedWealth(wealth)
-      setShortfall(targetAmount - wealth)
-
+      return { projection: data, projectedWealth: wealth, shortfall: targetAmount - wealth }
   }, [currentNetWorth, targetAmount, years, expectedReturn, monthlySip])
 
-  // --- SMART INPUT HANDLER ---
   const handleFormattedInput = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: number) => void) => {
-      // Remove non-digits (commas)
       const rawValue = e.target.value.replace(/,/g, '').replace(/[^0-9.]/g, '')
-      if (rawValue === '') {
-          setter(0)
-          return
-      }
-      setter(Number(rawValue))
+      setter(rawValue === '' ? 0 : Number(rawValue))
   }
 
-  if (loading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
+  const isLoading = txnsLoading || pricesLoading
+  if (isLoading && currentNetWorth === 0) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   const isGoalMet = projectedWealth >= targetAmount
 
@@ -142,8 +123,7 @@ export default function GoalsPage() {
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Target Amount (₹)</label>
                   <input 
-                    type="text" 
-                    inputMode="numeric"
+                    type="text" inputMode="numeric"
                     value={targetAmount > 0 ? targetAmount.toLocaleString('en-IN') : ''} 
                     onChange={(e) => handleFormattedInput(e, setTargetAmount)} 
                     className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" 
@@ -154,8 +134,7 @@ export default function GoalsPage() {
               <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Monthly SIP (₹)</label>
                   <input 
-                    type="text" 
-                    inputMode="numeric"
+                    type="text" inputMode="numeric"
                     value={monthlySip > 0 ? monthlySip.toLocaleString('en-IN') : ''} 
                     onChange={(e) => handleFormattedInput(e, setMonthlySip)} 
                     className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none"
