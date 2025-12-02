@@ -1,4 +1,3 @@
-// components/market-card.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -8,8 +7,8 @@ import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts'
 type MarketCardProps = {
   name: string
   ticker: string
-  onClick?: () => void   // <--- New Prop
-  isSelected?: boolean   // <--- New Prop
+  onClick?: () => void
+  isSelected?: boolean
 }
 
 export default function MarketCard({ name, ticker, onClick, isSelected }: MarketCardProps) {
@@ -18,14 +17,21 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true) // Reset loading on ticker change
       try {
         const res = await fetch('/api/history', {
           method: 'POST',
-          body: JSON.stringify({ ticker, range: '1d', interval: '5m' }), 
+          // FIX 1: Send 'tickers' as an array
+          body: JSON.stringify({ tickers: [ticker], range: '1d' }), 
         })
+        
+        if (!res.ok) throw new Error('Failed to fetch')
+
         const result = await res.json()
-        if (result && !result.error) {
-            setData(result)
+        
+        // FIX 2: The API returns a map { "TICKER": data }, so we access result[ticker]
+        if (result && result[ticker]) {
+            setData(result[ticker])
         }
       } catch (e) {
         console.error(e)
@@ -36,6 +42,7 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
     fetchData()
   }, [ticker])
 
+  // Helper variables
   const isPositive = data?.change >= 0
   const color = isPositive ? '#10b981' : '#ef4444'
 
@@ -54,7 +61,7 @@ export default function MarketCard({ name, ticker, onClick, isSelected }: Market
         <div className="flex h-full w-full items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
         </div>
-      ) : !data || !data.currentPrice ? (
+      ) : !data || data.currentPrice === undefined ? (
         <div className="flex h-full w-full flex-col items-center justify-center text-sm text-slate-400">
             <Activity className="mb-2 h-6 w-6 opacity-20" />
             <span>Unavailable</span>
