@@ -129,8 +129,7 @@ export default function MarketPage() {
             </div>
 
             {/* DESKTOP STICKY PANEL */}
-            {/* FIX: Defined height and top-20 to fit perfectly in viewport */}
-            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-20 flex-col h-[calc(100vh-120px)] border-l border-slate-200 dark:border-slate-800 pl-6">
+            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-[65px] flex-col h-[calc(100vh-80px)] border-l border-slate-200 dark:border-slate-800 pl-6">
                 <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                     <MarketConstituents 
                         indexName={selectedName} 
