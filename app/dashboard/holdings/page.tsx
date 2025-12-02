@@ -183,7 +183,6 @@ export default function HoldingsPage() {
       
       {/* HEADER ACTIONS */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Holdings</h2>
         <div className="flex gap-2">
             <button onClick={() => setIsSplitModalOpen(true)} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
                 <Scissors className="h-4 w-4" /> <span className="hidden sm:inline">Corp Actions</span>
