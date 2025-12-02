@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { Search, X, ArrowLeft } from 'lucide-react'
 import MarketCard from '@/components/market-card'
 import MarketConstituents from '@/components/market-constituents'
 import { INDICES, SECTOR_CONSTITUENTS } from '@/lib/market-data'
@@ -39,14 +39,13 @@ export default function MarketPage() {
     : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
   return (
-    // Allow natural page scroll (min-h-screen), flex layout for side-by-side
-    <div className="flex flex-col lg:flex-row gap-6 relative items-start min-h-screen">
+    <div className="flex flex-col lg:flex-row gap-6 relative items-start min-h-[calc(100vh-100px)]">
       
-      {/* LEFT SIDE: INDICES LIST */}
+      {/* LEFT SIDE: Main Content */}
       <div className="flex-1 w-full min-w-0">
         
-        {/* Sticky Search Bar */}
-        <div className="mb-6 sticky top-0 z-20 bg-slate-50 dark:bg-slate-950 pt-2 pb-2">
+        {/* Search Bar */}
+        <div className="mb-6">
              <div className="relative w-full sm:max-w-md">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
@@ -67,8 +66,9 @@ export default function MarketPage() {
              </div>
         </div>
 
-        {/* List Content */}
+        {/* Content Area */}
         <div className="pb-20">
+            {/* Main Indices */}
             {highlights.length > 0 && (
                 <div className="mb-8">
                     <h2 className="mb-4 text-xl font-bold text-slate-900 dark:text-white">Market Overview</h2>
@@ -86,6 +86,7 @@ export default function MarketPage() {
                 </div>
             )}
 
+            {/* Sectoral Indices */}
             {secondary.length > 0 && (
                 <div>
                     <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Sectors & Themes</h3>
@@ -102,14 +103,21 @@ export default function MarketPage() {
                     </div>
                 </div>
             )}
+
+            {/* Empty State */}
+            {highlights.length === 0 && secondary.length === 0 && (
+                <div className="py-10 text-center text-slate-500">
+                    No indices found matching "{searchQuery}".
+                </div>
+            )}
         </div>
       </div>
 
-      {/* RIGHT SIDE: CONSTITUENTS PANEL */}
+      {/* RIGHT SIDE: DETAILS PANEL */}
       {selectedSector && (
         <>
-            {/* Mobile: Full Screen Overlay */}
-            <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 flex flex-col lg:hidden animate-in slide-in-from-bottom duration-200">
+            {/* MOBILE OVERLAY (Z-Index High, Full Screen) */}
+            <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 flex flex-col lg:hidden">
                 <div className="flex-1 overflow-hidden">
                     <MarketConstituents 
                         indexName={selectedName} 
@@ -120,10 +128,10 @@ export default function MarketPage() {
                 </div>
             </div>
 
-            {/* Desktop: Sticky Side Panel */}
-            {/* sticky top-4 keeps it pinned. h-[calc] ensures internal scrollbar. */}
-            <div className="hidden lg:block w-96 flex-shrink-0 sticky top-4 h-[calc(100vh-2rem)]">
-                <div className="h-full overflow-hidden rounded-xl shadow-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            {/* DESKTOP STICKY PANEL */}
+            {/* Fix: max-h-screen ensures it never grows taller than the viewport */}
+            <div className="hidden lg:flex w-96 flex-shrink-0 sticky top-0 flex-col border-l border-slate-200 dark:border-slate-800 pl-6 h-auto max-h-[calc(100vh-100px)]">
+                <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                     <MarketConstituents 
                         indexName={selectedName} 
                         tickers={selectedTickers} 
