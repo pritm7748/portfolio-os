@@ -18,14 +18,15 @@ export async function POST(request: Request) {
 
     let sector = 'Unknown'
     let industry = 'Unknown'
+    let marketCap = 0, peRatio = 0, high52 = 0, low52 = 0, divYield = 0
+    let currency = 'INR'
+    let symbol = cleanTicker.split('.')[0]
 
     // 2. Standardize Ticker
     const isIndian = cleanTicker.endsWith('.NS') || cleanTicker.endsWith('.BO') || (!cleanTicker.includes('.') && !cleanTicker.includes('^'))
     
     // --- STRATEGY A: SCREENER (Primary for Indian Stocks) ---
     if (isIndian) {
-        const symbol = cleanTicker.split('.')[0] 
-        
         try {
             const screenerUrl = `https://www.screener.in/company/${symbol}/`
             const res = await fetch(screenerUrl, {
@@ -37,9 +38,7 @@ export async function POST(request: Request) {
                 const html = await res.text()
                 const $ = cheerio.load(html)
                 
-                // 1. Parse Fundamentals (Existing Logic)
-                let marketCap = 0; let peRatio = 0; let high52 = 0; let low52 = 0; let divYield = 0
-
+                // 1. Parse Fundamentals
                 $('#top-ratios li').each((_, el) => {
                     const name = $(el).find('.name').text().trim().toLowerCase()
                     const valueText = $(el).find('.value').text().trim()
@@ -55,7 +54,6 @@ export async function POST(request: Request) {
                 })
 
                 // 2. NEW: Parse Sector/Industry from "Peer comparison"
-                // Look for the links inside the #peers section
                 const peerSection = $('#peers')
                 if (peerSection.length > 0) {
                     const links = peerSection.find('a')
@@ -64,19 +62,23 @@ export async function POST(request: Request) {
                     links.each((_, el) => {
                         const text = $(el).text().trim()
                         const href = $(el).attr('href') || ''
-                        // Filter out "Detailed Comparison" or unrelated links
                         if (text && !text.includes('Detailed') && !text.includes('Customize') && !href.includes('/compare/')) {
                             breadcrumbs.push(text)
                         }
                     })
 
-                    // Usually: [Sector, Industry, ...]
+                    // Custom Logic for Granular Sectors
+                    // Breadcrumbs: [Financial Services, Financial Services, Banks, Private Sector Bank]
                     if (breadcrumbs.length > 0) {
-                        sector = breadcrumbs[0] // e.g. "Information Technology"
-                        if (breadcrumbs.length > 1) {
-                            industry = breadcrumbs[breadcrumbs.length - 1] // e.g. "IT - Software"
+                        if (breadcrumbs.length >= 3) {
+                             // Prefer the 3rd item (e.g. "Banks") as the main Sector
+                             sector = breadcrumbs[2]
+                             // Use the last item as Industry (e.g. "Private Sector Bank")
+                             industry = breadcrumbs[breadcrumbs.length - 1]
                         } else {
-                            industry = sector
+                             // Fallback for simpler hierarchies
+                             sector = breadcrumbs[0]
+                             industry = breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 1] : sector
                         }
                     }
                 }
@@ -84,22 +86,20 @@ export async function POST(request: Request) {
                 if (marketCap > 0) {
                     return NextResponse.json({
                         marketCap, peRatio, high52, low52, divYield, currency: 'INR', symbol,
-                        sector, industry // <--- Sending the scraped data
+                        sector, industry 
                     })
                 }
             }
         } catch (err) { console.warn(`Screener fetch failed for ${symbol}`, err) }
     }
 
-    // --- STRATEGY B: YAHOO (Fallback for Global / Failed Screener) ---
-    // We use standard fetch here, no new libraries.
-    
-    if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
+    // --- STRATEGY B: YAHOO (Fallback) ---
+    let cleanTickerYahoo = cleanTicker
+    if (!cleanTickerYahoo.includes('.') && !cleanTickerYahoo.includes('^')) cleanTickerYahoo += '.NS'
 
-    // Parallel Fetch: Chart (Price) + QuoteSummary (Profile)
     const [chartRes, profileRes] = await Promise.all([
-        fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}?interval=1d&range=1d`, { next: { revalidate: 300 } }),
-        fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${cleanTicker}?modules=assetProfile`, { next: { revalidate: 86400 } })
+        fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanTickerYahoo)}?interval=1d&range=1d`, { next: { revalidate: 300 } }),
+        fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(cleanTickerYahoo)}?modules=assetProfile`, { next: { revalidate: 86400 } })
     ])
 
     const chartJson = await chartRes.json()
@@ -119,14 +119,17 @@ export async function POST(request: Request) {
         } catch(e) { /* Ignore fallback errors */ }
     }
 
+    // Fill Fundamentals from Yahoo if Screener failed
+    if (marketCap === 0) {
+        marketCap = meta.marketCap || 0
+        high52 = meta.fiftyTwoWeekHigh || 0
+        low52 = meta.fiftyTwoWeekLow || 0
+        currency = meta.currency || 'INR'
+        symbol = meta.symbol || symbol
+    }
+
     return NextResponse.json({
-        marketCap: meta.marketCap || 0, 
-        peRatio: 0, 
-        high52: meta.fiftyTwoWeekHigh || 0,
-        low52: meta.fiftyTwoWeekLow || 0,
-        divYield: 0,
-        currency: meta.currency || 'INR',
-        symbol: meta.symbol || cleanTicker,
+        marketCap, peRatio, high52, low52, divYield, currency, symbol,
         sector, 
         industry
     })
