@@ -8,12 +8,39 @@ export async function POST(request: Request) {
 
     let cleanTicker = ticker.toUpperCase().replace(/\s/g, '')
     
-    // 1. Skip Commodities
+    // 1. Skip Commodities (Updated to return valid sector structure)
     if (cleanTicker.startsWith('COMMODITY:')) {
-         return NextResponse.json({ error: 'Commodity fundamentals not supported' }, { status: 404 })
+         return NextResponse.json({ 
+             marketCap: 0, peRatio: 0, high52: 0, low52: 0, divYield: 0, currency: 'INR', symbol: cleanTicker,
+             sector: 'Commodities', industry: 'Commodities' 
+         })
     } 
 
-    // 2. Standardize Ticker for Indian Context
+    // --- NEW: Fetch Sector & Industry ---
+    // We do this first so it's available for both Indian (Screener) and Global (Yahoo) logic
+    let sector = 'Unknown'
+    let industry = 'Unknown'
+    
+    // Ensure ticker has extension for Yahoo lookup if it looks like an Indian stock without one
+    let yahooTicker = cleanTicker
+    if (!yahooTicker.includes('.') && !yahooTicker.includes('^')) yahooTicker += '.NS'
+
+    try {
+        // Yahoo QuoteSummary is the best source for classification
+        const profileUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${yahooTicker}?modules=assetProfile`
+        const profileRes = await fetch(profileUrl, { next: { revalidate: 86400 } }) // Cache for 24 hours
+        const profileJson = await profileRes.json()
+        const assetProfile = profileJson?.quoteSummary?.result?.[0]?.assetProfile
+        
+        if (assetProfile) {
+            if (assetProfile.sector) sector = assetProfile.sector
+            if (assetProfile.industry) industry = assetProfile.industry
+        }
+    } catch (e) {
+        console.warn(`Sector fetch failed for ${yahooTicker}`, e)
+    }
+
+    // 2. Standardize Ticker for Indian Context (Existing Logic)
     const isIndian = cleanTicker.endsWith('.NS') || cleanTicker.endsWith('.BO') || (!cleanTicker.includes('.') && !cleanTicker.includes('^'))
     
     if (isIndian) {
@@ -43,12 +70,9 @@ export async function POST(request: Request) {
                     const name = $(el).find('.name').text().trim().toLowerCase()
                     const valueText = $(el).find('.value').text().trim()
                     
-                    // CLEANER FUNCTION: Removes commas, 'Cr', '%' etc. Keeps only digits and decimals.
                     const cleanNumber = (str: string) => parseFloat(str.replace(/[^\d.]/g, '')) || 0
 
                     if (name.includes('market cap')) {
-                        // Screener: "14,50,000 Cr" -> 1450000
-                        // We convert to absolute: 1450000 * 1 Crore
                         marketCap = cleanNumber(valueText) * 10000000
                     } 
                     else if (name.includes('stock p/e')) {
@@ -58,7 +82,6 @@ export async function POST(request: Request) {
                         divYield = cleanNumber(valueText) / 100
                     } 
                     else if (name.includes('high') && name.includes('low')) {
-                        // Format: "4500 / 3200"
                         const parts = valueText.split('/')
                         if (parts.length === 2) {
                             high52 = cleanNumber(parts[0])
@@ -75,7 +98,9 @@ export async function POST(request: Request) {
                         low52,
                         divYield,
                         currency: 'INR',
-                        symbol: symbol
+                        symbol: symbol,
+                        sector,   // <--- Added
+                        industry  // <--- Added
                     })
                 }
             }
@@ -85,8 +110,6 @@ export async function POST(request: Request) {
     }
 
     // 3. FALLBACK: Yahoo Finance Chart API
-    // If Screener failed (or it's a US Stock), use Chart API as backup.
-    
     if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
 
     const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}?interval=1d&range=1d`
@@ -100,12 +123,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
         marketCap: meta.marketCap || 0, 
-        peRatio: 0, // Not available in Chart API
+        peRatio: 0, 
         high52: meta.fiftyTwoWeekHigh || 0,
         low52: meta.fiftyTwoWeekLow || 0,
         divYield: 0,
         currency: meta.currency || 'INR',
-        symbol: meta.symbol || cleanTicker
+        symbol: meta.symbol || cleanTicker,
+        sector,   // <--- Added
+        industry  // <--- Added
     })
 
   } catch (error: any) {

@@ -68,17 +68,14 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   // Handle Commodity Defaults & Action Reset
   useEffect(() => {
       if (type === 'Commodity') {
-          // Default to Gold 24K if entering commodity mode
           if (!ticker.startsWith('COMMODITY:')) {
               setTicker('COMMODITY:GOLD')
               setAssetName('Physical Gold (24K)')
           }
-          // Force 'Buy' if current action is invalid for Commodity
           if (action === 'Dividend' || action === 'Interest') {
               setAction('Buy')
           }
       } else {
-          // Clear ticker if switching away from Commodity
           if (ticker.startsWith('COMMODITY:')) {
               setTicker('')
               setAssetName('')
@@ -118,15 +115,40 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      // 1. Upsert Asset
+      // --- NEW: Fetch Sector/Industry before saving ---
+      let sector = 'Unknown'
+      let industry = 'Unknown'
+
+      // Only fetch for stocks/funds (Commodities handle themselves or return defaults from API)
+      if (ticker) {
+          try {
+              const res = await fetch('/api/quote', {
+                  method: 'POST',
+                  body: JSON.stringify({ ticker })
+              })
+              const meta = await res.json()
+              if (meta.sector) sector = meta.sector
+              if (meta.industry) industry = meta.industry
+          } catch(e) {
+              console.warn('Sector fetch failed, proceeding with Unknown', e)
+          }
+      }
+
+      // 1. Upsert Asset (Now includes sector/industry)
       const { data: assetData, error: assetError } = await supabase
         .from('assets')
-        .upsert({ ticker: ticker, name: assetName, asset_type: type }, { onConflict: 'ticker' })
+        .upsert({ 
+            ticker: ticker, 
+            name: assetName, 
+            asset_type: type,
+            sector: sector,     // <--- New Field
+            industry: industry  // <--- New Field
+        }, { onConflict: 'ticker' })
         .select().single()
 
       if (assetError) throw assetError
 
-      // 2. Logic based on Action
+      // 2. Logic based on Action (Existing Logic)
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
       let calculatedPnL = 0
@@ -202,24 +224,22 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
   const isIncome = action === 'Dividend' || action === 'Interest'
   
-  // Filter available actions
   const availableActions = (type === 'Commodity' || type === 'Currency') 
     ? ['Buy', 'Sell'] 
     : ['Buy', 'Sell', 'Dividend', 'Interest']
 
   if (!isOpen) return null
 
+  // ... (Return JSX is identical to your provided code)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl dark:bg-slate-900 dark:border dark:border-slate-800">
-        
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white">Add Transaction</h2>
           <button onClick={onClose} className="rounded-full p-1 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-6 w-6 text-slate-500" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          
           {portfolios.length > 1 && (
              <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Target Portfolio</label>
@@ -303,7 +323,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     )}
                   </div>
                   
-                  {/* --- DISCLAIMER ADDED HERE --- */}
                   <div className="mt-2 flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-900/10 p-2 rounded border border-amber-100 dark:border-amber-900/20">
                     <Info className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                     <span>
@@ -313,7 +332,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           )}
 
-          {/* Action Buttons (Filtered) */}
+          {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>

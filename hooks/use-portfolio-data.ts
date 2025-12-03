@@ -12,11 +12,14 @@ export type Transaction = {
     total_value: number
     realised_pnl: number | null
     portfolio_id: number
-    asset_id: number // Added explicit type for join logic
+    asset_id: number 
     assets: {
         ticker: string
         name: string
         asset_type: string
+        // NEW FIELDS ADDED HERE
+        sector?: string   
+        industry?: string 
     }
 }
 
@@ -44,16 +47,15 @@ export function useTransactions() {
   const supabase = createClient()
 
   return useQuery({
-    // Auto-refetch when portfolio ID changes
     queryKey: ['transactions', selectedPortfolio.id],
-    
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
       let query = supabase
         .from('transactions')
-        .select(`*, assets ( ticker, name, asset_type )`)
+        // FETCH SECTOR & INDUSTRY
+        .select(`*, assets ( ticker, name, asset_type, sector, industry )`)
         .order('date', { ascending: true })
 
       if (selectedPortfolio.id !== 'all') {
@@ -64,7 +66,7 @@ export function useTransactions() {
       if (error) throw error
       return data as Transaction[]
     },
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    staleTime: 5 * 60 * 1000, 
   })
 }
 

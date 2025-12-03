@@ -2,21 +2,21 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { User, Lock, Download, Trash2, AlertTriangle, Loader2, Save, CheckCircle } from 'lucide-react'
+import { User, Lock, Download, Trash2, AlertTriangle, Loader2, Save, CheckCircle, RefreshCw, Database } from 'lucide-react'
 import { useProfile } from '@/hooks/use-portfolio-data'
 import { useQueryClient } from '@tanstack/react-query'
 
 export default function SettingsPage() {
-  const { data, isLoading } = useProfile() // <--- Cached Hook
+  const { data, isLoading } = useProfile()
   const [fullName, setFullName] = useState('')
   const [updating, setUpdating] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [syncing, setSyncing] = useState(false) // <--- New State
   const [successMsg, setSuccessMsg] = useState('')
   
   const supabase = createClient()
   const queryClient = useQueryClient()
 
-  // Sync state when data loads
   useEffect(() => {
       if (data?.profile?.full_name) {
           setFullName(data.profile.full_name)
@@ -36,10 +36,7 @@ export default function SettingsPage() {
             .eq('id', data.user.id)
 
         if (error) throw error
-        
-        // Refresh the cache (updates Header avatar/name instantly)
         await queryClient.invalidateQueries({ queryKey: ['profile'] })
-        
         setSuccessMsg('Profile updated successfully.')
         setTimeout(() => setSuccessMsg(''), 3000)
     } catch (error) {
@@ -47,6 +44,34 @@ export default function SettingsPage() {
     } finally {
         setUpdating(false)
     }
+  }
+
+  // --- NEW: Handle Sector Sync ---
+  const handleSyncSectors = async () => {
+      setSyncing(true)
+      try {
+          let keepGoing = true
+          let count = 0
+          
+          // Loop until API says "processed: 0"
+          while (keepGoing) {
+              const res = await fetch('/api/admin/sync-sectors', { method: 'POST' })
+              const result = await res.json()
+              
+              if (result.processed > 0) {
+                  count += result.processed
+                  setSuccessMsg(`Synced ${count} assets...`)
+              } else {
+                  keepGoing = false
+              }
+          }
+          setSuccessMsg(`Complete! ${count} assets updated with sector info.`)
+      } catch (e) {
+          console.error(e)
+          alert("Sync failed.")
+      } finally {
+          setSyncing(false)
+      }
   }
 
   const handleExportData = async () => {
@@ -112,7 +137,7 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-12">
-      {/* PROFILE SECTION */}
+      {/* PROFILE */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
           <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-6">
               <User className="h-5 w-5 text-indigo-500" /> Profile Information
@@ -133,6 +158,26 @@ export default function SettingsPage() {
                   {successMsg && <span className="text-xs font-medium text-green-600 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> {successMsg}</span>}
               </div>
           </form>
+      </div>
+
+      {/* NEW: SYSTEM MAINTENANCE */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+          <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-4">
+              <Database className="h-5 w-5 text-indigo-500" /> System Maintenance
+          </h3>
+          <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-600 dark:text-slate-400">
+                  Sync Sector & Industry data for all existing assets. Run this once after updates.
+              </div>
+              <button 
+                onClick={handleSyncSectors} 
+                disabled={syncing}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 dark:text-slate-300 dark:border-slate-700 dark:hover:bg-slate-800"
+              >
+                  {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} 
+                  {syncing ? 'Syncing...' : 'Sync Asset Data'}
+              </button>
+          </div>
       </div>
 
       {/* SECURITY */}

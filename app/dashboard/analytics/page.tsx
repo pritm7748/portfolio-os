@@ -2,12 +2,15 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { calculateXIRR } from '@/lib/xirr'
-import { Loader2, TrendingUp, BarChart3, Gem } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
 import PortfolioHistoryChart from '@/components/portfolio-history-chart'
 import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
+
+// Colors for Pie Chart
+const COLORS = ['#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
 
 type ChartDataPoint = {
     date: string
@@ -45,7 +48,7 @@ export default function AnalyticsPage() {
   }
 
   // 3. CALCULATION ENGINE (Memoized)
-  const { metrics, sectorData, aiSummary } = useMemo(() => {
+  const { metrics, sectorData, conglomerateData, aiSummary } = useMemo(() => {
       // Default / Empty State
       const emptyMetrics = { 
           totalXirr: 0, equityXirr: 0, commXirr: 0,
@@ -53,7 +56,7 @@ export default function AnalyticsPage() {
           totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 
       }
 
-      if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], aiSummary: null }
+      if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null }
 
       const flowsTotal: any[] = []
       const flowsEquity: any[] = []
@@ -64,13 +67,14 @@ export default function AnalyticsPage() {
       let totalInvested = 0
       
       const currentHoldings: Record<string, number> = {}
-      const assetTypes: Record<string, string> = {}
+      const assetMeta: Record<string, any> = {} // Store name, sector, type
 
       transactions.forEach((t) => {
-        const ticker = t.assets.ticker
-        const type = t.assets.asset_type
+        const { ticker, name, asset_type, sector } = t.assets
+        const type = asset_type
         const category = getCategory(type)
-        assetTypes[ticker] = type
+        
+        assetMeta[ticker] = { name, type, sector } // Store metadata for later grouping
 
         if (t.realised_pnl) totalRealized += Number(t.realised_pnl)
         
@@ -97,9 +101,11 @@ export default function AnalyticsPage() {
         else flowsEquity.push(flow)
       })
 
-      // Valuation
+      // Valuation & Grouping
       let valTotal = 0, valEq = 0, valComm = 0
+      
       const sectorMap: Record<string, number> = {}
+      const groupMap: Record<string, number> = {} // For Conglomerates
 
       Object.keys(currentHoldings).forEach(ticker => {
           const qty = currentHoldings[ticker]
@@ -116,13 +122,41 @@ export default function AnalyticsPage() {
               const val = qty * price
               valTotal += val
               
-              const type = assetTypes[ticker]
-              const cat = getCategory(type)
+              const meta = assetMeta[ticker]
+              const cat = getCategory(meta.type)
               
               if (cat === 'commodity') valComm += val
               else valEq += val
 
-              sectorMap[type] = (sectorMap[type] || 0) + val
+              // 1. Sector Logic (From DB or Default)
+              // If sector is missing or 'Unknown', check asset type
+              let sec = meta.sector
+              if (!sec || sec === 'Unknown') {
+                  if (cat === 'commodity') sec = 'Commodities'
+                  else sec = 'Unclassified'
+              }
+              sectorMap[sec] = (sectorMap[sec] || 0) + val
+
+              // 2. Conglomerate Logic (Regex on Name)
+              const nameUpper = meta.name.toUpperCase()
+              let group = 'Others'
+              
+              if (nameUpper.match(/TATA|TITAN|TCS|VOLTAS|TRENT|INDIAN HOTELS/)) group = 'Tata Group'
+              else if (nameUpper.match(/ADANI|AMBUJA|ACC/)) group = 'Adani Group'
+              else if (nameUpper.match(/RELIANCE|JIO|NETWORK18/)) group = 'Reliance Group'
+              else if (nameUpper.match(/HDFC/)) group = 'HDFC Group'
+              else if (nameUpper.match(/BAJAJ/)) group = 'Bajaj Group'
+              else if (nameUpper.match(/MAHINDRA|M&M/)) group = 'Mahindra Group'
+              else if (nameUpper.match(/L&T|LARSEN/)) group = 'L&T Group'
+              else if (nameUpper.match(/GRASIM|HINDALCO|ULTRATECH|ADITYA BIRLA/)) group = 'Birla Group'
+              else if (nameUpper.match(/GODREJ/)) group = 'Godrej Group'
+              else if (nameUpper.match(/SBI|STATE BANK/)) group = 'SBI Group'
+              else if (nameUpper.match(/ICICI/)) group = 'ICICI Group'
+              
+              // Only track specific groups, everything else is 'Others' (which we filter out from chart usually)
+              if (group !== 'Others') {
+                  groupMap[group] = (groupMap[group] || 0) + val
+              }
           }
       })
 
@@ -141,6 +175,15 @@ export default function AnalyticsPage() {
         xirr: xirrTotal 
       }
 
+      // Format Data for Charts
+      const formattedSectors = Object.keys(sectorMap)
+        .map(k => ({ name: k, value: sectorMap[k] }))
+        .sort((a, b) => b.value - a.value)
+      
+      const formattedGroups = Object.keys(groupMap)
+        .map(k => ({ name: k, value: groupMap[k] }))
+        .sort((a, b) => b.value - a.value)
+
       // AI Data
       const topHoldings = Object.keys(currentHoldings)
         .filter(k => currentHoldings[k] > 0)
@@ -152,11 +195,11 @@ export default function AnalyticsPage() {
           totalValue: valTotal, 
           totalProfit: totalProfit, 
           xirr: xirrTotal.toFixed(2), 
-          sectors: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })), 
+          sectors: formattedSectors, 
           holdings: topHoldings 
       }
 
-      return { metrics: finalMetrics, sectorData: Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })), aiSummary: summary }
+      return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary }
 
   }, [transactions, priceMap])
 
@@ -166,7 +209,7 @@ export default function AnalyticsPage() {
       if (transactions && transactions.length > 0) {
           fetchChartData('1y', 'equity')
       }
-  }, [transactions]) // Runs when transactions load/update
+  }, [transactions]) 
 
   const fetchChartData = async (range: string, category: 'equity' | 'commodity') => {
       if (!transactions) return
@@ -197,7 +240,6 @@ export default function AnalyticsPage() {
         })
         const historyMap = await res.json()
 
-        // ... (Keep existing chart rolling logic exactly as before) ...
         const priceLookup: Record<string, Record<string, number>> = {}
         const allDatesSet = new Set<string>()
 
@@ -327,28 +369,79 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* 5. ALLOCATION */}
+      {/* 5. RISK ANALYSIS (New Section) */}
+      <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
-        <div className="h-80 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Asset Allocation</h3>
+        
+        {/* SECTOR ALLOCATION */}
+        <div className="h-96 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+            <h3 className="mb-6 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
+            </h3>
             <div className="flex-1 min-h-0">
                 <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={sectorData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" opacity={0.5} />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#64748b'}} />
-                        <YAxis hide />
+                    <PieChart>
+                        <Pie 
+                            data={sectorData} 
+                            cx="50%" cy="50%" 
+                            innerRadius={60} 
+                            outerRadius={80} 
+                            paddingAngle={5} 
+                            dataKey="value"
+                        >
+                            {sectorData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                        </Pie>
                         <Tooltip 
-                             cursor={{ fill: '#f1f5f9' }}
-                             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                             formatter={(val: number) => [`₹${val.toLocaleString('en-IN')}`, 'Value']}
+                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            formatter={(val: number) => [`₹${val.toLocaleString('en-IN', {maximumFractionDigits: 0})}`, 'Value']} 
                         />
-                        <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={40} />
-                    </BarChart>
+                        <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{fontSize: '11px'}}/>
+                    </PieChart>
                 </ResponsiveContainer>
             </div>
         </div>
 
-        <div className="h-80 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+        {/* CONGLOMERATE RADAR */}
+        <div className="h-96 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+            <h3 className="mb-6 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                <Briefcase className="h-4 w-4 text-amber-500" /> Conglomerate Radar
+            </h3>
+            <div className="flex-1 min-h-0">
+                {conglomerateData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={conglomerateData} layout="vertical" margin={{ left: 10, right: 30 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" opacity={0.5} />
+                            <XAxis type="number" hide />
+                            <YAxis 
+                                dataKey="name" 
+                                type="category" 
+                                width={100} 
+                                tick={{fontSize: 11, fill: '#64748b'}} 
+                                axisLine={false} 
+                                tickLine={false}
+                            />
+                            <Tooltip 
+                                cursor={{ fill: '#f1f5f9' }}
+                                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                formatter={(val: number) => [`₹${val.toLocaleString('en-IN')}`, 'Exposure']}
+                            />
+                            <Bar dataKey="value" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                ) : (
+                    <div className="flex h-full items-center justify-center text-slate-400 text-sm">
+                        No major conglomerate exposure detected.
+                    </div>
+                )}
+            </div>
+        </div>
+
+      </div>
+
+      {/* 6. HEALTH CHECK */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
             <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
             <ul className="space-y-6">
                 <li className="flex gap-4">
@@ -358,7 +451,7 @@ export default function AnalyticsPage() {
                     <div>
                         <span className="block font-semibold text-slate-900 dark:text-white">Diversity Score</span>
                         <p className="text-sm text-slate-500 mt-1">
-                            You are invested in <span className="font-medium text-slate-800 dark:text-slate-200">{sectorData.length} asset classes</span>.
+                            You are invested in <span className="font-medium text-slate-800 dark:text-slate-200">{sectorData.length} sectors</span>.
                             {sectorData.length < 3 ? " Consider adding Commodities or Debt for stability." : " Good diversification."}
                         </p>
                     </div>
@@ -377,7 +470,6 @@ export default function AnalyticsPage() {
                 </li>
             </ul>
         </div>
-      </div>
     </div>
   )
 }
