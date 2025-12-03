@@ -136,16 +136,7 @@ export default function NewsPage() {
         </div>
 
         {/* RIGHT: News Feed */}
-        <div className="flex-1 min-w-0 overflow-y-auto">
-            <div className="mb-6">
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Market News</h2>
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {selectedTicker === 'ALL' 
-                        ? 'Curated updates for your portfolio.' 
-                        : `Latest updates for ${holdings.find(h => h.ticker === selectedTicker)?.name}`
-                    }
-                </p>
-            </div>
+        
 
             {newsLoading ? (
                 <div className="flex h-60 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
@@ -186,6 +177,5 @@ export default function NewsPage() {
             )}
         </div>
 
-    </div>
   )
 }
