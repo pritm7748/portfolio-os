@@ -1,321 +1,193 @@
-// app/dashboard/reports/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { Loader2, Download, Filter, Calendar } from 'lucide-react'
-import { usePortfolio } from '@/context/portfolio-context'
-
-type ReportItem = { 
-    id: string 
-    ticker: string
-    name: string
-    date: string
-    type: string
-    amount: number
-    quantity?: number
-    price?: number // This is the Sell Price for P&L rows
-}
-
-type FinancialYearGroup = { 
-    year: string
-    totalAmount: number
-    items: ReportItem[] 
-}
+import { useState, useMemo } from 'react'
+import { Download, Filter, Calendar, FileText, Loader2 } from 'lucide-react'
+import { useTransactions } from '@/hooks/use-portfolio-data'
 
 export default function ReportsPage() {
-  const { selectedPortfolio } = usePortfolio()
-  const [reportData, setReportData] = useState<FinancialYearGroup[]>([])
-  const [years, setYears] = useState<string[]>([])
-  const [selectedYear, setSelectedYear] = useState<string>('All')
-  const [loading, setLoading] = useState(true)
-  const [reportType, setReportType] = useState('pnl') 
+  const { data: transactions, isLoading } = useTransactions()
   
-  const supabase = createClient()
+  // State for Filters
+  const [selectedYear, setSelectedYear] = useState('2024-2025')
+  const [reportType, setReportType] = useState('All') // 'All', 'Equity', 'Commodity'
 
-  useEffect(() => {
-    const fetchReports = async () => {
-      setLoading(true)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+  // --- ENGINE: Process Reports from Cached Data ---
+  const { reportData, yearsAvailable, totalProfit } = useMemo(() => {
+      if (!transactions) return { reportData: [], yearsAvailable: [], totalProfit: 0 }
 
-      let query = supabase
-        .from('transactions')
-        .select(`*, assets ( ticker, name, asset_type )`)
-        .order('date', { ascending: true }) 
+      // 1. Filter for Realized Transactions Only (Sold items)
+      // We also include Dividends as they are taxable income
+      const realizedTxns = transactions.filter(t => 
+          (t.transaction_type === 'Sell' && t.realised_pnl !== null) || 
+          (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest')
+      )
 
-      if (selectedPortfolio.id !== 'all') {
-          query = query.eq('portfolio_id', selectedPortfolio.id)
-      }
+      // 2. Extract Financial Years
+      const yearsSet = new Set<string>()
+      
+      const processed = realizedTxns.map(t => {
+          const date = new Date(t.date)
+          const month = date.getMonth() // 0-11
+          const year = date.getFullYear()
+          
+          // Indian FY: If Month is Jan(0), Feb(1), Mar(2) -> It belongs to Previous Year-Current Year
+          // Example: March 2025 is FY 2024-2025. April 2025 is FY 2025-2026.
+          const fyStart = month >= 3 ? year : year - 1
+          const fyLabel = `${fyStart}-${fyStart + 1}`
+          yearsSet.add(fyLabel)
 
-      const { data: transactions } = await query
-      if (!transactions) { setLoading(false); setReportData([]); return }
-
-      const processedItems: ReportItem[] = []
-      const uniqueTickers = new Set<string>()
-
-      if (reportType === 'dividend') {
-          // --- DIVIDEND LOGIC ---
-          transactions.forEach((txn: any) => {
-              uniqueTickers.add(txn.assets.ticker)
-              if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') {
-                  processedItems.push({
-                      id: `txn-${txn.id}`,
-                      ticker: txn.assets.ticker,
-                      name: txn.assets.name,
-                      date: txn.date,
-                      type: txn.transaction_type,
-                      amount: Number(txn.total_value)
-                  })
-              }
-          })
-
-          // Auto-Detect
-          const tickersArray = Array.from(uniqueTickers)
-          if (tickersArray.length > 0) {
-             try {
-                const divRes = await fetch('/api/dividends', { method: 'POST', body: JSON.stringify({ tickers: tickersArray }) })
-                const dividendMap = await divRes.json()
-
-                tickersArray.forEach(ticker => {
-                    const dividends = dividendMap[ticker]
-                    if (!dividends) return
-                    const stockTxns = transactions.filter((t: any) => t.assets.ticker === ticker)
-                    dividends.forEach((div: any) => {
-                        const divDate = new Date(div.date)
-                        let qtyOnDate = 0
-                        stockTxns.forEach((t: any) => {
-                            const txnDate = new Date(t.date)
-                            if (txnDate < divDate) {
-                                if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
-                                else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
-                            }
-                        })
-                        if (qtyOnDate > 0) {
-                            processedItems.push({
-                                id: `auto-${ticker}-${div.date}`,
-                                ticker: ticker,
-                                name: stockTxns[0].assets.name,
-                                date: div.date,
-                                type: 'Dividend (Auto)',
-                                amount: qtyOnDate * div.amount
-                            })
-                        }
-                    })
-                })
-             } catch (e) { console.error(e) }
-          }
-
-      } else {
-          // --- P&L LOGIC ---
-          transactions.forEach((txn: any) => {
-              if (txn.transaction_type === 'Sell') {
-                  const assetType = txn.assets.asset_type
-                  let include = false
-                  if (reportType === 'pnl') include = true
-                  else if (reportType === 'equity' && (assetType === 'Stock' || assetType === 'Mutual Fund')) include = true
-                  else if (reportType === 'other' && (assetType === 'Commodity' || assetType === 'Currency' || assetType === 'Debt')) include = true
-
-                  if (include) {
-                      processedItems.push({
-                          id: `txn-${txn.id}`,
-                          ticker: txn.assets.ticker,
-                          name: txn.assets.name,
-                          date: txn.date,
-                          type: 'Realized P&L',
-                          quantity: Number(txn.quantity),
-                          price: Number(txn.price), // Sell Price
-                          amount: Number(txn.realised_pnl)
-                      })
-                  }
-              }
-          })
-      }
-
-      const groups: Record<string, FinancialYearGroup> = {}
-      const yearSet = new Set<string>()
-
-      processedItems.forEach(item => {
-        const date = new Date(item.date)
-        const month = date.getMonth()
-        const year = date.getFullYear()
-        const fyStart = month >= 3 ? year : year - 1
-        const fyLabel = `FY ${fyStart}-${fyStart + 1}`
-        
-        yearSet.add(fyLabel)
-
-        if (!groups[fyLabel]) {
-            groups[fyLabel] = { year: fyLabel, totalAmount: 0, items: [] }
-        }
-        groups[fyLabel].totalAmount += item.amount
-        groups[fyLabel].items.push(item)
-        groups[fyLabel].items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          return { ...t, fy: fyLabel }
       })
 
-      const sortedYears = Array.from(yearSet).sort().reverse()
-      setYears(sortedYears)
-      
-      let finalData = Object.values(groups).sort((a, b) => b.year.localeCompare(a.year))
-      if (selectedYear !== 'All') {
-          finalData = finalData.filter(g => g.year === selectedYear)
+      // 3. Filter by Selection
+      const filtered = processed.filter(t => {
+          if (t.fy !== selectedYear) return false
+          
+          if (reportType === 'Equity') return t.assets.asset_type === 'Stock' || t.assets.asset_type === 'Mutual Fund'
+          if (reportType === 'Commodity') return t.assets.asset_type.includes('Commodity') || t.assets.asset_type.includes('Gold')
+          
+          return true
+      })
+
+      // 4. Calculate Totals
+      const total = filtered.reduce((sum, t) => {
+          if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
+              return sum + Number(t.total_value)
+          }
+          return sum + Number(t.realised_pnl || 0)
+      }, 0)
+
+      // Sort recent first
+      filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+      const sortedYears = Array.from(yearsSet).sort().reverse()
+      // Default to latest year if current selection is invalid
+      if (sortedYears.length > 0 && !yearsSet.has(selectedYear)) {
+          // Ideally we set state here, but in render we just fallback visually
       }
 
-      setReportData(finalData)
-      setLoading(false)
-    }
+      return { reportData: filtered, yearsAvailable: sortedYears, totalProfit: total }
 
-    fetchReports()
-  }, [selectedPortfolio, reportType, selectedYear])
+  }, [transactions, selectedYear, reportType])
 
-  // Updated CSV Export to include Buy Price
-  const downloadCSV = () => {
-    const headers = ['Date,Financial Year,Ticker,Name,Type,Quantity,Buy Price,Sell Price,Realized P&L']
-    const rows = reportData.flatMap(group => 
-        group.items.map(item => {
-            // Calculate Buy Price for CSV
-            let buyPrice = 0
-            if (reportType !== 'dividend' && item.quantity && item.price) {
-                buyPrice = item.price - (item.amount / item.quantity)
-            }
-            const buyPriceStr = buyPrice > 0 ? buyPrice.toFixed(2) : ''
-            const sellPriceStr = item.price ? item.price.toFixed(2) : ''
-            
-            return `${item.date.split('T')[0]},${group.year},${item.ticker},"${item.name}",${item.type},${item.quantity || ''},${buyPriceStr},${sellPriceStr},${item.amount}`
-        })
-    )
-    const csvContent = "data:text/csv;charset=utf-8," + headers.concat(rows).join("\n")
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement("a")
-    link.setAttribute("href", encodedUri)
-    link.setAttribute("download", `portfolio_report_${reportType}.csv`)
-    document.body.appendChild(link)
-    link.click()
+  const handleDownload = () => {
+      const csv = "Date,Asset,Type,Action,Qty,Price,Realized P&L\n" +
+          reportData.map(t => {
+              const pnl = t.transaction_type === 'Sell' ? t.realised_pnl : t.total_value
+              return `${t.date},${t.assets.name},${t.assets.asset_type},${t.transaction_type},${t.quantity},${t.price},${pnl}`
+          }).join("\n")
+      
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Tax_Report_${selectedYear}.csv`
+      a.click()
   }
 
+  if (isLoading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
+
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-         
-         <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-            <div className="relative w-full sm:w-48">
-                <select 
-                    value={reportType}
-                    onChange={(e) => { setReportType(e.target.value); setSelectedYear('All'); }}
-                    className="w-full appearance-none rounded-lg border border-slate-300 bg-white pl-4 pr-10 py-2.5 text-sm font-medium text-slate-700 hover:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-slate-300"
-                >
-                    <option value="pnl">All Realized P&L</option>
-                    <option value="dividend">Dividends & Income</option>
-                    <option value="equity">Capital Gains (Equity)</option>
-                    <option value="other">Capital Gains (Commodity/Other)</option>
-                </select>
-                <Filter className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-slate-400" />
-            </div>
-
-            <div className="relative w-full sm:w-40">
-                <select 
-                    value={selectedYear}
-                    onChange={(e) => setSelectedYear(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-slate-300 bg-white pl-4 pr-10 py-2.5 text-sm font-medium text-slate-700 hover:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-slate-300"
-                >
-                    <option value="All">All Years</option>
-                    {years.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <Calendar className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-slate-400" />
-            </div>
-         </div>
-
-         <button 
-            onClick={downloadCSV}
+    <div className="space-y-6">
+      
+      <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Reports</h2>
+          <button 
+            onClick={handleDownload}
             disabled={reportData.length === 0}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 w-full md:w-auto justify-center"
-        >
-            <Download className="h-4 w-4" />
-            Download Report
-        </button>
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+              <Download className="h-4 w-4" /> Download Report
+          </button>
       </div>
 
-      {loading ? (
-        <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
-      ) : reportData.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center dark:bg-slate-900 dark:border-slate-800">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
-                <Filter className="h-6 w-6 text-slate-400" />
-            </div>
-            <h3 className="text-lg font-medium text-slate-900 dark:text-white">No records found</h3>
-            <p className="text-slate-500 dark:text-slate-400">No data matches your selected filters.</p>
-        </div>
-      ) : (
-        reportData.map((group) => (
-            <div key={group.year} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-6 py-4 dark:bg-slate-800 dark:border-slate-700">
-                    <h3 className="font-bold text-slate-800 dark:text-white">{group.year}</h3>
-                    <div className="text-right">
-                        <span className="text-xs text-slate-500 dark:text-slate-400 block">Total {reportType === 'dividend' ? 'Income' : 'Profit'}</span>
-                        <span className={`text-lg font-bold ${group.totalAmount >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                            {group.totalAmount >= 0 ? '+' : ''}₹{group.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                        </span>
-                    </div>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400">
-                            <tr>
-                                <th className="px-6 py-3 font-medium whitespace-nowrap">Date</th>
-                                <th className="px-6 py-3 font-medium">Asset</th>
-                                
-                                {/* CONDITIONAL COLUMNS */}
-                                {reportType !== 'dividend' && <th className="px-6 py-3 font-medium text-right whitespace-nowrap">Qty</th>}
-                                {reportType !== 'dividend' && <th className="px-6 py-3 font-medium text-right whitespace-nowrap">Buy Price</th>}
-                                {reportType !== 'dividend' && <th className="px-6 py-3 font-medium text-right whitespace-nowrap">Sell Price</th>}
-                                
-                                <th className="px-6 py-3 font-medium text-right whitespace-nowrap">
-                                    {reportType === 'dividend' ? 'Amount' : 'Realized P&L'}
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {group.items.map((item) => {
-                                // Calculate Buy Price dynamically
-                                let buyPrice = 0
-                                if (reportType !== 'dividend' && item.quantity && item.price) {
-                                    buyPrice = item.price - (item.amount / item.quantity)
-                                }
+      {/* FILTERS */}
+      <div className="flex gap-4">
+          <div className="relative">
+              <Filter className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+              <select 
+                value={reportType} 
+                onChange={(e) => setReportType(e.target.value)}
+                className="h-10 rounded-lg border border-slate-300 bg-white pl-9 pr-4 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"
+              >
+                  <option value="All">All Realized P&L</option>
+                  <option value="Equity">Capital Gains (Equity)</option>
+                  <option value="Commodity">Capital Gains (Commodity)</option>
+              </select>
+          </div>
 
-                                return (
-                                    <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                        <td className="px-6 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">{item.date.split('T')[0]}</td>
-                                        <td className="px-6 py-3 font-medium text-slate-900 dark:text-white">
-                                            {item.name} <span className="text-slate-400 text-xs ml-1">({item.ticker})</span>
-                                        </td>
-                                        
-                                        {reportType !== 'dividend' && (
-                                            <>
-                                                <td className="px-6 py-3 text-right text-slate-600 dark:text-slate-300">{item.quantity}</td>
-                                                <td className="px-6 py-3 text-right text-slate-600 dark:text-slate-300">
-                                                    ₹{buyPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                                </td>
-                                                <td className="px-6 py-3 text-right text-slate-600 dark:text-slate-300">
-                                                    ₹{item.price?.toLocaleString('en-IN')}
-                                                </td>
-                                            </>
-                                        )}
+          <div className="relative">
+              <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+              <select 
+                value={selectedYear} 
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="h-10 rounded-lg border border-slate-300 bg-white pl-9 pr-4 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"
+              >
+                  {yearsAvailable.length > 0 ? (
+                      yearsAvailable.map(y => <option key={y} value={y}>FY {y}</option>)
+                  ) : (
+                      <option>No Data</option>
+                  )}
+              </select>
+          </div>
+      </div>
 
-                                        <td className={`px-6 py-3 text-right font-bold whitespace-nowrap ${
-                                            reportType === 'dividend' 
-                                                ? 'text-emerald-600 dark:text-emerald-400' 
-                                                : item.amount >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-                                        }`}>
-                                            {item.amount >= 0 ? '+' : ''}₹{item.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                        </td>
-                                    </tr>
-                                )
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        ))
-      )}
+      {/* SUMMARY CARD */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+          <div className="flex items-center justify-between">
+              <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white">FY {selectedYear}</h3>
+                  <p className="text-sm text-slate-500">Realized Profit & Loss Statement</p>
+              </div>
+              <div className="text-right">
+                  <div className="text-xs text-slate-500 uppercase tracking-wider">Total Profit</div>
+                  <div className={`text-2xl font-bold ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {totalProfit >= 0 ? '+' : ''}₹{totalProfit.toLocaleString('en-IN')}
+                  </div>
+              </div>
+          </div>
+
+          {/* TABLE */}
+          <div className="mt-6 overflow-hidden rounded-lg border border-slate-100 dark:border-slate-800">
+              {reportData.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500">No realized transactions found for this period.</div>
+              ) : (
+                  <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          <tr>
+                              <th className="px-4 py-3">Date</th>
+                              <th className="px-4 py-3">Asset</th>
+                              <th className="px-4 py-3 text-right">Qty</th>
+                              <th className="px-4 py-3 text-right">Price</th>
+                              <th className="px-4 py-3 text-right">Realized P&L</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {reportData.map((t) => {
+                              // Determine PnL display
+                              const isSell = t.transaction_type === 'Sell'
+                              const pnl = isSell ? Number(t.realised_pnl) : Number(t.total_value)
+                              
+                              return (
+                                <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                    <td className="px-4 py-3 text-slate-500">{t.date}</td>
+                                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">
+                                        {t.assets.name} 
+                                        <span className="ml-2 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 dark:bg-slate-800">{t.assets.ticker}</span>
+                                    </td>
+                                    <td className="px-4 py-3 text-right">{t.transaction_type === 'Sell' ? t.quantity : '-'}</td>
+                                    <td className="px-4 py-3 text-right text-slate-500">₹{t.price}</td>
+                                    <td className={`px-4 py-3 text-right font-bold ${pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {pnl >= 0 ? '+' : ''}₹{pnl.toLocaleString('en-IN')}
+                                    </td>
+                                </tr>
+                              )
+                          })}
+                      </tbody>
+                  </table>
+              )}
+          </div>
+      </div>
     </div>
   )
 }

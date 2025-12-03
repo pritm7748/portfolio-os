@@ -174,3 +174,24 @@ export function useAlerts() {
         staleTime: 1 * 60 * 1000 // Cache for 1 minute
     })
 }
+
+export function useProfile() {
+    const supabase = createClient()
+    return useQuery({
+        queryKey: ['profile'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data: profile, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .single()
+            
+            if (error) throw error
+            return { user, profile }
+        },
+        staleTime: Infinity, // User profile rarely changes, cache until reload
+    })
+}
