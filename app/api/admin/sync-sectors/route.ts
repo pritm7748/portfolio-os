@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Admin Client (Bypass RLS to update public assets table)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
@@ -9,7 +8,6 @@ const supabase = createClient(
 
 export async function POST() {
   try {
-    // 1. Find assets with missing sector info (Limit 5 to prevent timeout)
     const { data: assets } = await supabase
       .from('assets')
       .select('id, ticker')
@@ -22,11 +20,9 @@ export async function POST() {
 
     const updates = []
 
-    // 2. Loop and Fetch from Yahoo
     for (const asset of assets) {
       let cleanTicker = asset.ticker.toUpperCase().replace(/\s/g, '')
       
-      // Skip Commodities (Manual update or set default)
       if (cleanTicker.startsWith('COMMODITY:')) {
           updates.push({ id: asset.id, sector: 'Commodities', industry: 'Commodities' })
           continue
@@ -35,8 +31,13 @@ export async function POST() {
       if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
 
       try {
-        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${cleanTicker}?modules=assetProfile`
-        const res = await fetch(url, { next: { revalidate: 0 } })
+        // FIX: Added encodeURIComponent and User-Agent Header
+        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(cleanTicker)}?modules=assetProfile`
+        
+        const res = await fetch(url, { 
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
+            next: { revalidate: 0 } 
+        })
         const json = await res.json()
         const profile = json?.quoteSummary?.result?.[0]?.assetProfile
 
@@ -47,15 +48,15 @@ export async function POST() {
                 industry: profile.industry || 'Others'
             })
         } else {
-            // Mark as 'Others' so we don't keep retrying failed ones infinitely
             updates.push({ id: asset.id, sector: 'Others', industry: 'Others' })
         }
       } catch (e) {
         console.error(`Failed to fetch ${cleanTicker}`)
+        // Mark as Others so we don't get stuck in a loop
+        updates.push({ id: asset.id, sector: 'Others', industry: 'Others' })
       }
     }
 
-    // 3. Write updates back to DB
     for (const update of updates) {
         await supabase
             .from('assets')
@@ -66,7 +67,7 @@ export async function POST() {
     return NextResponse.json({ 
         message: `Synced ${updates.length} assets`, 
         processed: updates.length,
-        remaining: true // Hint to frontend to call again
+        remaining: true 
     })
 
   } catch (error: any) {
