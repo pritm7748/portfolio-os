@@ -1,11 +1,10 @@
-// components/sidebar.tsx
 'use client'
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, PieChart, Wallet, TrendingUp, FileText, Settings, List, LogOut, 
-  ChevronDown, Plus, Briefcase, X, Edit2, Trash2, Target, // <--- Added Target Icon
+  ChevronDown, Plus, Briefcase, X, Edit2, Trash2, Target,
   Newspaper,
   Megaphone
 } from 'lucide-react'
@@ -13,21 +12,17 @@ import { usePortfolio } from '@/context/portfolio-context'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const sidebarLinks = [
-  {
-    heading: 'User Panel',
-    links: [
-      { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      { href: '/dashboard/holdings', icon: Wallet, label: 'Holdings' },
-      { href: '/dashboard/analytics', icon: PieChart, label: 'Analytics' },
-      { href: '/dashboard/goals', icon: Target, label: 'Goals & Planning' }, 
-      { href: '/dashboard/market', icon: TrendingUp, label: 'Market' },
-      { href: '/dashboard/watchlist', icon: List, label: 'Watchlist' },
-      { href: '/dashboard/reports', icon: FileText, label: 'Reports' },
-      { href: '/dashboard/news', icon: Newspaper, label: 'News Center' },
-      { href: '/dashboard/pulse', icon: Megaphone, label: 'Market Pulse' },
-    ],
-  },
+// Flattened list - removed "User Panel" heading
+const mainLinks = [
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/dashboard/holdings', icon: Wallet, label: 'Holdings' },
+  { href: '/dashboard/analytics', icon: PieChart, label: 'Analytics' },
+  { href: '/dashboard/goals', icon: Target, label: 'Goals & Planning' }, 
+  { href: '/dashboard/market', icon: TrendingUp, label: 'Market' },
+  { href: '/dashboard/watchlist', icon: List, label: 'Watchlist' },
+  { href: '/dashboard/reports', icon: FileText, label: 'Reports' },
+  { href: '/dashboard/news', icon: Newspaper, label: 'News Center' },
+  { href: '/dashboard/pulse', icon: Megaphone, label: 'Market Pulse' },
 ]
 
 export default function Sidebar({ 
@@ -63,25 +58,20 @@ export default function Sidebar({
     if (error) alert(error.message)
     else {
         refreshPortfolios()
-        // Don't close dropdown so user sees the new one
     }
   }
 
   // --- RENAME ---
   const handleRenamePortfolio = async (e: React.MouseEvent, id: number, currentName: string) => {
-    e.stopPropagation() // Prevent clicking the parent button
+    e.stopPropagation()
     const newName = prompt("Rename portfolio:", currentName)
     if (!newName || newName === currentName) return
 
-    const { error } = await supabase
-        .from('portfolios')
-        .update({ name: newName })
-        .eq('id', id)
+    const { error } = await supabase.from('portfolios').update({ name: newName }).eq('id', id)
 
     if (error) alert(error.message)
     else {
         refreshPortfolios()
-        // Update local state if the renamed one is currently selected
         if (selectedPortfolio.id === id) {
             selectPortfolio({ id, name: newName })
         }
@@ -90,7 +80,7 @@ export default function Sidebar({
 
   // --- DELETE ---
   const handleDeletePortfolio = async (e: React.MouseEvent, id: number) => {
-    e.stopPropagation() // Prevent clicking the parent button
+    e.stopPropagation()
     
     if (portfolios.length <= 1) {
         alert("You must have at least one portfolio. Create another before deleting this one.")
@@ -104,7 +94,6 @@ export default function Sidebar({
     if (error) {
         alert(error.message)
     } else {
-        // If we deleted the currently selected portfolio, switch to 'All' or the first available
         if (selectedPortfolio.id === id) {
             selectPortfolio({ id: 'all', name: 'All Portfolios' })
         }
@@ -148,29 +137,31 @@ export default function Sidebar({
         </div>
 
         {/* PORTFOLIO SWITCHER */}
-        {portfolios.length > 0 ? (
-            <div className="p-4 pb-0">
+        <div className="p-4 pb-0">
+            {portfolios.length > 0 ? (
                 <div className="relative">
                     <button 
                         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 transition-all"
                     >
-                        <div className="flex items-center gap-2">
-                            <Briefcase className="h-4 w-4 text-indigo-500" />
-                            <span className="truncate max-w-[120px]">{selectedPortfolio.name}</span>
+                        <div className="flex items-center gap-3">
+                            <div className="p-1.5 bg-white rounded-md shadow-sm dark:bg-slate-700">
+                                <Briefcase className="h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+                            </div>
+                            <span className="truncate max-w-[100px]">{selectedPortfolio.name}</span>
                         </div>
                         <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {isDropdownOpen && (
-                        <div className="absolute left-0 top-full z-10 mt-2 w-full rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                        <div className="absolute left-0 top-full z-10 mt-2 w-full rounded-xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900 animate-in fade-in zoom-in-95 duration-100">
                             
                             {/* Option: All Portfolios */}
                             <button
                                 onClick={() => { selectPortfolio({ id: 'all', name: 'All Portfolios' }); setIsDropdownOpen(false) }}
-                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-indigo-900/30"
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-indigo-900/30 transition-colors"
                             >
-                                <span className="flex-1 text-left">All Portfolios</span>
+                                <span className="flex-1 text-left font-medium">All Portfolios</span>
                             </button>
 
                             <div className="my-1 h-px bg-slate-100 dark:bg-slate-800"></div>
@@ -181,22 +172,22 @@ export default function Sidebar({
                                     <div 
                                         key={p.id}
                                         onClick={() => { selectPortfolio(p); setIsDropdownOpen(false) }}
-                                        className="group flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 cursor-pointer dark:text-slate-300 dark:hover:bg-indigo-900/30"
+                                        className="group flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 cursor-pointer dark:text-slate-300 dark:hover:bg-indigo-900/30 transition-colors"
                                     >
-                                        <span className="truncate max-w-[120px]">{p.name}</span>
+                                        <span className="truncate max-w-[110px]">{p.name}</span>
                                         
                                         {/* Action Buttons (Visible on Hover) */}
-                                        <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button 
                                                 onClick={(e) => handleRenamePortfolio(e, p.id as number, p.name)}
-                                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded dark:hover:bg-blue-900/50"
+                                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100 rounded dark:hover:bg-blue-900/50"
                                                 title="Rename"
                                             >
                                                 <Edit2 className="h-3 w-3" />
                                             </button>
                                             <button 
                                                 onClick={(e) => handleDeletePortfolio(e, p.id as number)}
-                                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded dark:hover:bg-red-900/50"
+                                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded dark:hover:bg-red-900/50"
                                                 title="Delete"
                                             >
                                                 <Trash2 className="h-3 w-3" />
@@ -210,7 +201,7 @@ export default function Sidebar({
                             
                             <button
                                 onClick={handleCreatePortfolio}
-                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30"
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/30 transition-colors"
                             >
                                 <Plus className="h-4 w-4" />
                                 New Portfolio
@@ -218,49 +209,39 @@ export default function Sidebar({
                         </div>
                     )}
                 </div>
-            </div>
-        ) : (
-            <div className="p-4 pb-0">
+            ) : (
                 <button
                     onClick={handleCreatePortfolio}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 p-2 text-xs font-medium text-slate-500 hover:border-indigo-300 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-400 dark:hover:text-indigo-400"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 p-3 text-sm font-medium text-slate-500 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-400 dark:hover:text-indigo-400 transition-all"
                 >
-                    <Plus className="h-3 w-3" /> Create Portfolio
+                    <Plus className="h-4 w-4" /> Create Portfolio
                 </button>
-            </div>
-        )}
+            )}
+        </div>
 
         {/* Navigation Links */}
-        <nav className="flex-1 overflow-y-auto py-4">
-            {sidebarLinks.map((section, index) => (
-            <div key={index} className="mb-6">
-                <h3 className="px-6 mb-3 text-xs font-semibold text-slate-500 uppercase tracking-wider dark:text-slate-400">
-                {section.heading}
-                </h3>
-                <ul className="space-y-1">
-                {section.links.map((link) => {
+        <nav className="flex-1 overflow-y-auto py-6 px-4">
+            <ul className="space-y-1.5">
+                {mainLinks.map((link) => {
                     const isActive = pathname === link.href
                     return (
                     <li key={link.href}>
                         <Link
                         href={link.href}
-                        className={`flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors relative
+                        className={`flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all relative
                             ${isActive
-                            ? 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/20'
-                            : 'text-slate-600 hover:bg-slate-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
+                            ? 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/20 shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-slate-800/50 dark:hover:text-white'
                             }
                         `}
                         >
-                        {isActive && <span className="absolute left-0 top-0 h-full w-1 bg-indigo-600 dark:bg-indigo-400" />}
-                        <link.icon className="h-5 w-5" />
+                        <link.icon className={`h-5 w-5 ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 group-hover:text-indigo-500'}`} />
                         {link.label}
                         </Link>
                     </li>
                     )
                 })}
-                </ul>
-            </div>
-            ))}
+            </ul>
         </nav>
 
         {/* Footer */}
@@ -269,16 +250,16 @@ export default function Sidebar({
             <li>
                 <Link
                 href="/dashboard/settings"
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-slate-800/50 dark:hover:text-white"
                 >
-                <Settings className="h-5 w-5" />
+                <Settings className="h-5 w-5 text-slate-400" />
                 Settings
                 </Link>
             </li>
             <li>
                 <button 
                     onClick={handleSignOut}
-                    className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                    className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/10 dark:hover:text-red-400"
                 >
                 <LogOut className="h-5 w-5" />
                 Sign Out
