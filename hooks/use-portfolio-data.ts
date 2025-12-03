@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -193,5 +193,48 @@ export function useProfile() {
             return { user, profile }
         },
         staleTime: Infinity, // User profile rarely changes, cache until reload
+    })
+}
+
+// --- 8. News Preferences Hook ---
+export function useNewsPreferences() {
+    const supabase = createClient()
+    return useQuery({
+        queryKey: ['newsPreferences'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data } = await supabase
+                .from('news_settings')
+                .select('*')
+                .eq('user_id', user.id)
+            
+            const map: Record<string, { is_muted: boolean, is_favorite: boolean }> = {}
+            data?.forEach((row: any) => {
+                map[row.ticker] = { is_muted: row.is_muted, is_favorite: row.is_favorite }
+            })
+            return map
+        },
+        staleTime: Infinity 
+    })
+}
+
+// --- 9. News Fetcher Hook ---
+export function useNews(names: string[]) {
+    const queryKey = names.slice().sort().join(',')
+    return useQuery({
+        queryKey: ['news', queryKey],
+        queryFn: async () => {
+            if (names.length === 0) return { items: [] }
+            const res = await fetch('/api/news', {
+                method: 'POST',
+                body: JSON.stringify({ queries: names })
+            })
+            return res.json()
+        },
+        enabled: names.length > 0,
+        staleTime: 15 * 60 * 1000, // 15 minutes
+        refetchOnWindowFocus: false
     })
 }

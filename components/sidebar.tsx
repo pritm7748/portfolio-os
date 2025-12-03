@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, PieChart, Wallet, TrendingUp, FileText, Settings, List, LogOut, 
-  ChevronDown, Plus, Briefcase, X, Edit2, Trash2, Target // <--- Added Target Icon
+  ChevronDown, Plus, Briefcase, X, Edit2, Trash2, Target, // <--- Added Target Icon
+  Newspaper
 } from 'lucide-react'
 import { usePortfolio } from '@/context/portfolio-context' 
 import { useState, useEffect } from 'react'
@@ -22,6 +23,7 @@ const sidebarLinks = [
       { href: '/dashboard/market', icon: TrendingUp, label: 'Market' },
       { href: '/dashboard/watchlist', icon: List, label: 'Watchlist' },
       { href: '/dashboard/reports', icon: FileText, label: 'Reports' },
+      { href: '/dashboard/news', icon: Newspaper, label: 'News Center' },
     ],
   },
 ]
