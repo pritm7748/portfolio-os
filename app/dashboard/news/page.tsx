@@ -15,23 +15,39 @@ export default function NewsPage() {
   const { data: transactions } = useTransactions()
   const { data: prefs } = useNewsPreferences()
 
-  // 2. Process Holdings List (Unique & Sorted by Value)
+  // 2. Process Holdings List (Unique & Sorted by Preference + Value)
   const holdings = useMemo(() => {
       if (!transactions) return []
       
       const map: Record<string, { name: string, value: number }> = {}
       transactions.forEach(t => {
           const val = t.transaction_type === 'Buy' ? (t.price * t.quantity) : -(t.price * t.quantity)
-          // Use asset name for news search, ticker for ID
           if (!map[t.assets.ticker]) map[t.assets.ticker] = { name: t.assets.name, value: 0 }
           map[t.assets.ticker].value += val
       })
 
-      // Sort by Value (High to Low)
-      return Object.entries(map)
-        .map(([ticker, data]) => ({ ticker, ...data }))
-        .sort((a, b) => b.value - a.value)
-  }, [transactions])
+      const list = Object.entries(map).map(([ticker, data]) => ({ ticker, ...data }))
+
+      // --- SORTING LOGIC ---
+      // 1. Favorites (Top)
+      // 2. Normal (Middle - Sorted by Value)
+      // 3. Muted (Bottom)
+      return list.sort((a, b) => {
+          const aPref = prefs?.[a.ticker] || { is_favorite: false, is_muted: false }
+          const bPref = prefs?.[b.ticker] || { is_favorite: false, is_muted: false }
+
+          // Priority 1: Favorites
+          if (aPref.is_favorite && !bPref.is_favorite) return -1
+          if (!aPref.is_favorite && bPref.is_favorite) return 1
+
+          // Priority 3: Muted (Push to bottom)
+          if (aPref.is_muted && !bPref.is_muted) return 1
+          if (!aPref.is_muted && bPref.is_muted) return -1
+
+          // Priority 2: Value (High to Low)
+          return b.value - a.value
+      })
+  }, [transactions, prefs])
 
   // 3. Build Query List for API
   const searchQueries = useMemo(() => {
@@ -41,8 +57,7 @@ export default function NewsPage() {
       }
 
       // "ALL" Mode: Smart Feed
-      // Include: Favorites + Top 10 Holdings
-      // Exclude: Muted
+      // Include: Favorites + Top Holdings (excluding muted)
       return holdings
         .filter(h => {
             const p = prefs?.[h.ticker]
@@ -50,7 +65,7 @@ export default function NewsPage() {
             if (p?.is_favorite) return true // Always include favorites
             return true 
         })
-        .slice(0, 10) // Limit to top 10 to avoid API overflow
+        .slice(0, 10) // Limit to top 10 relevant
         .map(h => h.name)
   }, [holdings, selectedTicker, prefs])
 
@@ -65,7 +80,6 @@ export default function NewsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Create defaults to prevent null errors during upsert
       const existing = prefs?.[ticker] || { is_muted: false, is_favorite: false }
 
       await supabase.from('news_settings').upsert({
@@ -73,7 +87,7 @@ export default function NewsPage() {
           ticker,
           is_muted: existing.is_muted,
           is_favorite: existing.is_favorite,
-          [field]: newValue, // Overwrite target field
+          [field]: newValue,
       })
 
       queryClient.invalidateQueries({ queryKey: ['newsPreferences'] })
@@ -101,29 +115,29 @@ export default function NewsPage() {
                 <div className="my-2 h-px bg-slate-100 dark:bg-slate-800 mx-2"></div>
 
                 {holdings.map(h => {
-                    // FIX: Fallback to default object instead of {}
                     const p = prefs?.[h.ticker] || { is_muted: false, is_favorite: false }
                     
                     return (
                         <div key={h.ticker} className={`group flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${selectedTicker === h.ticker ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
                             <button 
                                 onClick={() => setSelectedTicker(h.ticker)}
-                                className="flex-1 text-left truncate text-sm text-slate-700 dark:text-slate-300"
+                                className={`flex-1 text-left truncate text-sm ${p.is_muted ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-700 dark:text-slate-300'}`}
                             >
                                 {h.name}
                             </button>
                             
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {/* Icons always visible now */}
+                            <div className="flex items-center gap-1">
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); togglePreference(h.ticker, 'is_favorite'); }}
-                                    className={`p-1.5 rounded-md hover:bg-white dark:hover:bg-slate-700 ${p.is_favorite ? 'text-amber-400' : 'text-slate-300'}`}
+                                    className={`p-1.5 rounded-md transition-colors ${p.is_favorite ? 'text-amber-400 bg-amber-50 dark:bg-amber-900/20' : 'text-slate-300 hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
                                     title="Favorite"
                                 >
-                                    <Star className="h-3.5 w-3.5 fill-current" />
+                                    <Star className={`h-3.5 w-3.5 ${p.is_favorite ? 'fill-current' : ''}`} />
                                 </button>
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); togglePreference(h.ticker, 'is_muted'); }}
-                                    className={`p-1.5 rounded-md hover:bg-white dark:hover:bg-slate-700 ${p.is_muted ? 'text-red-500' : 'text-slate-300'}`}
+                                    className={`p-1.5 rounded-md transition-colors ${p.is_muted ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : 'text-slate-300 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
                                     title={p.is_muted ? "Unmute" : "Mute"}
                                 >
                                     <BellOff className="h-3.5 w-3.5" />
@@ -136,7 +150,8 @@ export default function NewsPage() {
         </div>
 
         {/* RIGHT: News Feed */}
-        
+        <div className="flex-1 min-w-0 overflow-y-auto">
+            {/* Page Header Removed as requested */}
 
             {newsLoading ? (
                 <div className="flex h-60 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
@@ -177,5 +192,6 @@ export default function NewsPage() {
             )}
         </div>
 
+    </div>
   )
 }
