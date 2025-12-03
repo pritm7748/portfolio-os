@@ -240,3 +240,23 @@ export function useNews(names: string[]) {
         refetchOnWindowFocus: false
     })
 }
+
+export function usePulse(tickers: string[]) {
+    const sortedTickers = tickers.slice().sort().join(',')
+    
+    return useQuery({
+        queryKey: ['pulse', sortedTickers],
+        queryFn: async () => {
+            if (tickers.length === 0) return { events: [], insiders: [] }
+            const res = await fetch('/api/pulse', {
+                method: 'POST',
+                body: JSON.stringify({ tickers })
+            })
+            if (!res.ok) throw new Error('Pulse fetch failed')
+            return res.json()
+        },
+        enabled: tickers.length > 0,
+        staleTime: 6 * 60 * 60 * 1000, // Cache for 6 hours
+        refetchOnWindowFocus: false
+    })
+}
