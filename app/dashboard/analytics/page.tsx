@@ -390,12 +390,37 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Portfolio Health (Kept as is) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
-         {/* ... (Health content unchanged) ... */}
-      </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+            <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
+            <ul className="space-y-6">
+                <li className="flex gap-4">
+                    <div className="mt-1 h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                        <Gem size={16} />
+                    </div>
+                    <div>
+                       <span className="block font-semibold text-slate-900 dark:text-white">Diversity Score</span>
+                        <p className="text-sm text-slate-500 mt-1">
+                            You are invested in <span className="font-medium text-slate-800 dark:text-slate-200">{sectorData.length} sectors</span>.
+                            {sectorData.length < 3 ? " Consider adding Commodities or Debt for stability." : " Good diversification."}
+                        </p>
+                    </div>
+                </li>
+                <li className="flex gap-4">
+                    <div className="mt-1 h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
+                        <TrendingUp size={16} />
+                    </div>
+                    <div>
+                        <span className="block font-semibold text-slate-900 dark:text-white">Performance</span>
+                        <p className="text-sm text-slate-500 mt-1">
+                            Your Total XIRR is <span className={`font-medium ${metrics.xirr >= 12 ? 'text-green-600' : 'text-slate-800 dark:text-slate-200'}`}>{metrics.xirr.toFixed(2)}%</span>. 
+                            {metrics.xirr > 12 ? " You are beating most mutual funds!" : " Review underperforming assets."}
+                        </p>
+                    </div>
+                </li>
+            </ul>
+        </div>
     </div>
   )
-}
 
 function PieChartIcon({className}: {className?: string}) {
     return (
@@ -404,4 +429,5 @@ function PieChartIcon({className}: {className?: string}) {
             <path d="M22 12A10 10 0 0 0 12 2v10z" />
         </svg>
     )
+}
 }
