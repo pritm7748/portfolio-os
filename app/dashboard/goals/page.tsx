@@ -14,7 +14,7 @@ export default function GoalsPage() {
   const [expectedReturn, setExpectedReturn] = useState(12) 
   const [monthlySip, setMonthlySip] = useState(50000)
   
-  // 1. DATA HOOKS (Instant Load)
+  // 1. DATA HOOKS
   const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
   // 2. Derive Tickers
@@ -89,7 +89,7 @@ export default function GoalsPage() {
   const isGoalMet = projectedWealth >= targetAmount
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto pb-10">
       
       {/* STATUS BAR */}
       <div className={`w-full px-6 py-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 ${isGoalMet ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
@@ -165,10 +165,12 @@ export default function GoalsPage() {
               </div>
           </div>
 
-          {/* CHART PANEL */}
+          {/* CHART PANEL (FIXED FOR MOBILE) */}
           <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col">
               <h3 className="font-semibold text-slate-800 dark:text-white mb-6">Wealth Projection Curve</h3>
-              <div className="flex-1 h-[400px] w-full">
+              
+              {/* FIX: Forced explicit height instead of flex-1, ensures visibility on mobile stack */}
+              <div className="w-full h-[350px] md:h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={projection} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                         <defs>
