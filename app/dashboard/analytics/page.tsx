@@ -2,17 +2,50 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { calculateXIRR } from '@/lib/xirr'
-import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, PieChart as PieIcon } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area } from 'recharts'
+import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info } from 'lucide-react'
+import { 
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+    PieChart, Pie, Cell, Legend 
+} from 'recharts' // Removed 'Sector'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
 import PortfolioHistoryChart from '@/components/portfolio-history-chart'
 import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 
-// Professional Color Palette
+// --- CONFIGURATION ---
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
 
 type ChartDataPoint = { date: string; invested: number; value: number }
+
+// --- HELPER COMPONENTS ---
+
+// 1. Custom Tooltip for Pie/Bar Charts (The Pro Styling)
+const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+        const data = payload[0].payload
+        return (
+            <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl text-sm min-w-[180px] z-50">
+                <p className="font-bold text-slate-800 dark:text-white mb-1">{data.name}</p>
+                <div className="flex items-center justify-between gap-4 text-xs">
+                    <span className="text-slate-500 dark:text-slate-400">Value:</span>
+                    <span className="font-mono font-medium text-indigo-600 dark:text-indigo-400">
+                        ₹{data.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    </span>
+                </div>
+                {/* Show Percentage if available (Pie Chart) */}
+                {payload[0].percent !== undefined && (
+                    <div className="flex items-center justify-between gap-4 text-xs mt-1">
+                        <span className="text-slate-500 dark:text-slate-400">Allocation:</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-200">
+                            {(payload[0].percent * 100).toFixed(1)}%
+                        </span>
+                    </div>
+                )}
+            </div>
+        )
+    }
+    return null
+}
 
 export default function AnalyticsPage() {
   const { selectedPortfolio } = usePortfolio()
@@ -33,42 +66,39 @@ export default function AnalyticsPage() {
   const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity')
   const [currentRange, setCurrentRange] = useState('1y')
 
+  // Helper
   const getCategory = (type: string) => {
       const t = type.toLowerCase()
       if (t.includes('commodity') || t.includes('gold') || t.includes('silver') || t.includes('currency')) return 'commodity'
       return 'equity'
   }
 
-  // 3. CALCULATION ENGINE (Corrected P&L Logic)
+  // 3. CALCULATION ENGINE (Memoized)
   const { metrics, sectorData, conglomerateData, aiSummary } = useMemo(() => {
       const emptyMetrics = { totalXirr: 0, equityXirr: 0, commXirr: 0, netWorth: 0, unrealized: 0, realized: 0, totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 }
       
       if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null }
 
-      // A. Metrics for XIRR (Flows)
+      // A. Metrics
       const flowsTotal: any[] = []; const flowsEquity: any[] = []; const flowsComm: any[] = []
-      let totalDividends = 0
+      let totalRealizedPnL = 0; let totalDividends = 0
       
-      // B. Metrics for P&L (FIFO Lots)
       const assetLots: Record<string, { price: number, quantity: number }[]> = {}
-      const portfolio: Record<string, any> = {} // To track Cost Basis
-      let totalRealizedPnL = 0
+      const portfolio: Record<string, any> = {} 
 
-      // Process Transactions
       transactions.forEach((t) => {
         const { ticker, name, asset_type, sector } = t.assets
         const category = getCategory(asset_type)
         
-        // 1. XIRR Flows
+        if (t.realised_pnl) totalRealizedPnL += Number(t.realised_pnl)
+        
         const flowDate = new Date(t.date)
         const totalVal = Math.abs(Number(t.price) * Number(t.quantity))
         let flowAmount = 0
 
-        if (t.transaction_type === 'Buy') {
-            flowAmount = -totalVal
-        } else if (t.transaction_type === 'Sell') {
-            flowAmount = totalVal
-        } else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
+        if (t.transaction_type === 'Buy') flowAmount = -totalVal
+        else if (t.transaction_type === 'Sell') flowAmount = totalVal
+        else if (t.transaction_type === 'Dividend' || t.transaction_type === 'Interest') {
             flowAmount = Math.abs(Number(t.total_value))
             totalDividends += flowAmount
         }
@@ -77,9 +107,6 @@ export default function AnalyticsPage() {
         flowsTotal.push(flow)
         if (category === 'commodity') flowsComm.push(flow)
         else flowsEquity.push(flow)
-
-        // 2. P&L Logic (FIFO)
-        if (t.realised_pnl) totalRealizedPnL += Number(t.realised_pnl)
 
         if (!assetLots[ticker]) {
             assetLots[ticker] = []
@@ -100,14 +127,11 @@ export default function AnalyticsPage() {
         }
       })
 
-      // C. Calculate Current State (Valuation & Cost Basis)
-      let valTotal = 0, valEq = 0, valComm = 0
-      let costTotal = 0 // Cost basis of currently held assets
-
+      // B. Valuation & Grouping
+      let valTotal = 0; let valEq = 0; let valComm = 0; let costTotal = 0
       const sectorMap: Record<string, number> = {}
-      const groupMap: Record<string, number> = {} 
+      const groupMap: Record<string, number> = {}
 
-      // Summarize Lots
       Object.keys(assetLots).forEach(ticker => {
           let q = 0, c = 0
           assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
@@ -130,7 +154,7 @@ export default function AnalyticsPage() {
               const cat = getCategory(portfolio[ticker].type)
               if (cat === 'commodity') valComm += val; else valEq += val
 
-              // Sector & Group Logic
+              // Sector
               let sec = portfolio[ticker].sector
               if (!sec || sec === 'Unknown') {
                   if (cat === 'commodity') sec = 'Commodities'
@@ -138,6 +162,7 @@ export default function AnalyticsPage() {
               }
               sectorMap[sec] = (sectorMap[sec] || 0) + val
 
+              // Conglomerate Radar
               const nameUpper = portfolio[ticker].name.toUpperCase()
               let group = 'Others'
               if (nameUpper.match(/TATA|TITAN|TCS|VOLTAS|TRENT|INDIAN HOTELS/)) group = 'Tata Group'
@@ -151,18 +176,15 @@ export default function AnalyticsPage() {
               else if (nameUpper.match(/GODREJ/)) group = 'Godrej Group'
               else if (nameUpper.match(/SBI|STATE BANK/)) group = 'SBI Group'
               else if (nameUpper.match(/ICICI/)) group = 'ICICI Group'
+              else if (nameUpper.match(/KOTAK/)) group = 'Kotak Group'
               
               if (group !== 'Others') groupMap[group] = (groupMap[group] || 0) + val
           }
       })
 
-      // D. Final Metrics
-      // Unrealized = Current Value - Cost Basis of Current Holdings
+      // Metrics
       const unrealized = valTotal - costTotal 
-      
-      // Total Profit = Unrealized + Realized + Dividends
       const totalProfit = unrealized + totalRealizedPnL + totalDividends
-
       const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
       const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
       const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
@@ -173,9 +195,14 @@ export default function AnalyticsPage() {
         totalProfit: totalProfit, investment: costTotal, currentVal: valTotal, xirr: xirrTotal 
       }
 
-      // Format Charts
-      const formattedSectors = Object.keys(sectorMap).map(k => ({ name: k, value: sectorMap[k] })).sort((a, b) => b.value - a.value)
-      const formattedGroups = Object.keys(groupMap).map(k => ({ name: k, value: groupMap[k] })).sort((a, b) => b.value - a.value)
+      // Formatted Data
+      const formattedSectors = Object.keys(sectorMap)
+        .map(k => ({ name: k, value: sectorMap[k] }))
+        .sort((a, b) => b.value - a.value)
+      
+      const formattedGroups = Object.keys(groupMap)
+        .map(k => ({ name: k, value: groupMap[k] }))
+        .sort((a, b) => b.value - a.value)
 
       const topHoldings = Object.values(portfolio).filter((h:any) => h.quantity > 0)
           .map((h:any) => ({ ticker: h.ticker, value: h.quantity * (priceMap[h.ticker]?.price || 0) }))
@@ -254,12 +281,14 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6 pb-10">
       
+      {/* 1. CHART */}
       <PortfolioHistoryChart 
          data={chartData} isLoading={chartLoading} category={chartCategory}
          onRangeChange={(r) => fetchChartData(r, chartCategory)} 
          onCategoryChange={(c) => fetchChartData(currentRange, c)}
       />
 
+      {/* 2. METRICS */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
@@ -271,6 +300,7 @@ export default function AnalyticsPage() {
                 <div className="text-4xl font-bold relative z-10">{metrics.totalXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 opacity-70 relative z-10">Annualized Return</p>
             </div>
+
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-indigo-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Equity XIRR</span>
@@ -279,6 +309,7 @@ export default function AnalyticsPage() {
                 <div className="text-3xl font-bold text-slate-900 dark:text-white">{metrics.equityXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 text-slate-400">Stocks & Mutual Funds</p>
             </div>
+
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-amber-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Commodity XIRR</span>
@@ -290,8 +321,10 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {/* 3. AI ANALYST */}
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
+      {/* 4. FINANCIAL SUMMARY */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -313,75 +346,93 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* RISK ANALYSIS */}
+      {/* 5. RISK ANALYSIS (Fixed) */}
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR (Donut) */}
-        <div className="h-96 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+        {/* 1. SECTOR EXPOSURE (Simple Pie) */}
+        <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                <PieChartIcon className="h-4 w-4 text-indigo-500" /> Sector Allocation
+                <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 relative">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
-                            innerRadius={60} 
-                            outerRadius={100} 
-                            paddingAngle={2} 
+                            innerRadius={80} 
+                            outerRadius={110} 
+                            paddingAngle={3} 
                             dataKey="value"
                         >
                             {sectorData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={0} />
                             ))}
                         </Pie>
-                        <Tooltip 
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                            formatter={(val: number) => [`₹${val.toLocaleString('en-IN', {maximumFractionDigits: 0})}`, 'Value']}
-                        />
-                        <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{fontSize: '11px', lineHeight: '18px'}} iconSize={8} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend layout="horizontal" verticalAlign="bottom" align="center" wrapperStyle={{fontSize: '11px', paddingTop: '20px'}} iconSize={8} iconType="circle" />
                     </PieChart>
                 </ResponsiveContainer>
+                
+                {/* Center Label */}
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
+                    <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Total</p>
+                    <p className="text-lg font-bold text-slate-800 dark:text-white">
+                        ₹{(metrics.netWorth / 100000).toFixed(2)}L
+                    </p>
+                </div>
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE (Enhanced Bar) */}
-        <div className="h-96 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                <Briefcase className="h-4 w-4 text-amber-500" /> Conglomerate Radar
-            </h3>
+        {/* 2. CONGLOMERATE RADAR (Horizontal Bar) */}
+        <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Briefcase className="h-4 w-4 text-amber-500" /> Conglomerate Radar
+                </h3>
+                <Info className="h-4 w-4 text-slate-400" />
+            </div>
+            
             <div className="flex-1 min-h-0">
                 {conglomerateData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={conglomerateData} layout="vertical" margin={{ left: 0, right: 20, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                        <BarChart 
+                            data={conglomerateData} 
+                            layout="vertical" 
+                            margin={{ left: 10, right: 30, top: 10, bottom: 10 }}
+                            barCategoryGap="20%"
+                        >
+                            <defs>
+                                <linearGradient id="barGradient" x1="0" y1="0" x2="1" y2="0">
+                                    <stop offset="0%" stopColor="#8b5cf6" />
+                                    <stop offset="100%" stopColor="#6366f1" />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} stroke="#f1f5f9" opacity={0.4} />
                             <XAxis type="number" hide />
                             <YAxis 
                                 dataKey="name" 
                                 type="category" 
                                 width={100} 
-                                tick={{fontSize: 12, fill: '#64748b', fontWeight: 500}} 
+                                tick={{fontSize: 12, fill: '#64748b', fontWeight: 600}} 
                                 axisLine={false} 
                                 tickLine={false}
                             />
-                            <Tooltip 
-                                cursor={{ fill: '#f8fafc' }}
-                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                                formatter={(val: number) => [`₹${val.toLocaleString('en-IN')}`, 'Exposure']}
+                            <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}} />
+                            <Bar 
+                                dataKey="value" 
+                                fill="url(#barGradient)" 
+                                radius={[0, 6, 6, 0]} 
+                                barSize={20} 
+                                animationDuration={1500}
                             />
-                            <Bar dataKey="value" fill="url(#colorGradient)" radius={[0, 6, 6, 0]} barSize={24}>
-                                {conglomerateData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Bar>
                         </BarChart>
                     </ResponsiveContainer>
                 ) : (
                     <div className="flex h-full flex-col items-center justify-center text-slate-400 text-sm bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                        <Briefcase className="h-8 w-8 mb-2 opacity-20" />
-                        No major conglomerate exposure found.
+                        <Briefcase className="h-12 w-12 mb-3 opacity-20" />
+                        <p>No major conglomerate exposure found.</p>
                     </div>
                 )}
             </div>
@@ -389,8 +440,8 @@ export default function AnalyticsPage() {
 
       </div>
 
-      {/* Portfolio Health (Kept as is) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+      {/* Portfolio Health */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
             <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
             <ul className="space-y-6">
                 <li className="flex gap-4">
@@ -398,7 +449,7 @@ export default function AnalyticsPage() {
                         <Gem size={16} />
                     </div>
                     <div>
-                       <span className="block font-semibold text-slate-900 dark:text-white">Diversity Score</span>
+                        <span className="block font-semibold text-slate-900 dark:text-white">Diversity Score</span>
                         <p className="text-sm text-slate-500 mt-1">
                             You are invested in <span className="font-medium text-slate-800 dark:text-slate-200">{sectorData.length} sectors</span>.
                             {sectorData.length < 3 ? " Consider adding Commodities or Debt for stability." : " Good diversification."}
@@ -421,13 +472,4 @@ export default function AnalyticsPage() {
         </div>
     </div>
   )
-
-function PieChartIcon({className}: {className?: string}) {
-    return (
-        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-            <path d="M22 12A10 10 0 0 0 12 2v10z" />
-        </svg>
-    )
-}
 }
