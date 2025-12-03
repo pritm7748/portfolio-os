@@ -8,7 +8,7 @@ export async function POST(request: Request) {
 
     let cleanTicker = ticker.toUpperCase().replace(/\s/g, '')
     
-    // 1. Skip Commodities
+    // 1. Commodity Check
     if (cleanTicker.startsWith('COMMODITY:')) {
          return NextResponse.json({ 
              marketCap: 0, peRatio: 0, high52: 0, low52: 0, divYield: 0, currency: 'INR', symbol: cleanTicker,
@@ -16,61 +16,29 @@ export async function POST(request: Request) {
          })
     } 
 
-    // --- SECTOR FETCHING (Yahoo) ---
     let sector = 'Unknown'
     let industry = 'Unknown'
-    
-    // Prepare ticker: Add .NS if missing and not an index
-    let yahooTicker = cleanTicker
-    if (!yahooTicker.includes('.') && !yahooTicker.includes('^')) yahooTicker += '.NS'
 
-    try {
-        // FIX: encodeURIComponent handles symbols like "M&M.NS" correctly
-        const encodedTicker = encodeURIComponent(yahooTicker)
-        const profileUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodedTicker}?modules=assetProfile`
-        
-        const profileRes = await fetch(profileUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' },
-            next: { revalidate: 86400 } 
-        })
-        
-        if (profileRes.ok) {
-            const profileJson = await profileRes.json()
-            const assetProfile = profileJson?.quoteSummary?.result?.[0]?.assetProfile
-            
-            if (assetProfile) {
-                if (assetProfile.sector) sector = assetProfile.sector
-                if (assetProfile.industry) industry = assetProfile.industry
-            }
-        }
-    } catch (e) {
-        console.warn(`Sector fetch failed for ${yahooTicker}`, e)
-    }
-
-    // 2. Standardize Ticker for Indian Context (Screener Logic)
+    // 2. Standardize Ticker
     const isIndian = cleanTicker.endsWith('.NS') || cleanTicker.endsWith('.BO') || (!cleanTicker.includes('.') && !cleanTicker.includes('^'))
     
+    // --- STRATEGY A: SCREENER (Primary for Indian Stocks) ---
     if (isIndian) {
-        const symbol = cleanTicker.split('.')[0] // e.g. TCS
+        const symbol = cleanTicker.split('.')[0] 
         
         try {
             const screenerUrl = `https://www.screener.in/company/${symbol}/`
             const res = await fetch(screenerUrl, {
-                headers: { 
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                },
-                next: { revalidate: 300 }
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                next: { revalidate: 300 } 
             })
             
             if (res.ok) {
                 const html = await res.text()
                 const $ = cheerio.load(html)
                 
-                let marketCap = 0
-                let peRatio = 0
-                let high52 = 0
-                let low52 = 0
-                let divYield = 0
+                // 1. Parse Fundamentals (Existing Logic)
+                let marketCap = 0; let peRatio = 0; let high52 = 0; let low52 = 0; let divYield = 0
 
                 $('#top-ratios li').each((_, el) => {
                     const name = $(el).find('.name').text().trim().toLowerCase()
@@ -82,35 +50,74 @@ export async function POST(request: Request) {
                     else if (name.includes('dividend yield')) divYield = cleanNumber(valueText) / 100
                     else if (name.includes('high') && name.includes('low')) {
                         const parts = valueText.split('/')
-                        if (parts.length === 2) {
-                            high52 = cleanNumber(parts[0]); low52 = cleanNumber(parts[1])
-                        }
+                        if (parts.length === 2) { high52 = cleanNumber(parts[0]); low52 = cleanNumber(parts[1]) }
                     }
                 })
 
+                // 2. NEW: Parse Sector/Industry from "Peer comparison"
+                // Look for the links inside the #peers section
+                const peerSection = $('#peers')
+                if (peerSection.length > 0) {
+                    const links = peerSection.find('a')
+                    const breadcrumbs: string[] = []
+                    
+                    links.each((_, el) => {
+                        const text = $(el).text().trim()
+                        const href = $(el).attr('href') || ''
+                        // Filter out "Detailed Comparison" or unrelated links
+                        if (text && !text.includes('Detailed') && !text.includes('Customize') && !href.includes('/compare/')) {
+                            breadcrumbs.push(text)
+                        }
+                    })
+
+                    // Usually: [Sector, Industry, ...]
+                    if (breadcrumbs.length > 0) {
+                        sector = breadcrumbs[0] // e.g. "Information Technology"
+                        if (breadcrumbs.length > 1) {
+                            industry = breadcrumbs[breadcrumbs.length - 1] // e.g. "IT - Software"
+                        } else {
+                            industry = sector
+                        }
+                    }
+                }
+
                 if (marketCap > 0) {
                     return NextResponse.json({
-                        marketCap, peRatio, high52, low52, divYield,
-                        currency: 'INR', symbol: symbol,
-                        sector, industry // Return fetched sector
+                        marketCap, peRatio, high52, low52, divYield, currency: 'INR', symbol,
+                        sector, industry // <--- Sending the scraped data
                     })
                 }
             }
-        } catch (err) {
-            console.warn(`Screener fetch failed for ${symbol}`, err)
-        }
+        } catch (err) { console.warn(`Screener fetch failed for ${symbol}`, err) }
     }
 
-    // 3. FALLBACK: Yahoo Finance Chart API
+    // --- STRATEGY B: YAHOO (Fallback for Global / Failed Screener) ---
+    // We use standard fetch here, no new libraries.
+    
     if (!cleanTicker.includes('.') && !cleanTicker.includes('^')) cleanTicker += '.NS'
 
-    // FIX: encode ticker here too
-    const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanTicker)}?interval=1d&range=1d`
-    const res = await fetch(chartUrl, { next: { revalidate: 300 } })
-    const data = await res.json()
-    const meta = data?.chart?.result?.[0]?.meta
+    // Parallel Fetch: Chart (Price) + QuoteSummary (Profile)
+    const [chartRes, profileRes] = await Promise.all([
+        fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}?interval=1d&range=1d`, { next: { revalidate: 300 } }),
+        fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${cleanTicker}?modules=assetProfile`, { next: { revalidate: 86400 } })
+    ])
+
+    const chartJson = await chartRes.json()
+    const meta = chartJson?.chart?.result?.[0]?.meta
 
     if (!meta) return NextResponse.json({ error: 'Data not found' }, { status: 404 })
+
+    // Extract Sector from Yahoo if we didn't get it from Screener
+    if (sector === 'Unknown') {
+        try {
+            const profileJson = await profileRes.json()
+            const profile = profileJson?.quoteSummary?.result?.[0]?.assetProfile
+            if (profile) {
+                if (profile.sector) sector = profile.sector
+                if (profile.industry) industry = profile.industry
+            }
+        } catch(e) { /* Ignore fallback errors */ }
+    }
 
     return NextResponse.json({
         marketCap: meta.marketCap || 0, 
