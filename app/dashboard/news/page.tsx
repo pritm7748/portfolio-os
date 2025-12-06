@@ -4,11 +4,54 @@ import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTransactions, useNewsPreferences, useNews } from '@/hooks/use-portfolio-data'
-import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, X } from 'lucide-react'
+import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe } from 'lucide-react'
+
+// --- MACRO TOPICS LIST ---
+const GENERAL_TOPICS = [
+    // --- 1. INDIAN MACRO ---
+    "Indian Economy GDP",
+    "RBI Monetary Policy Repo Rate",
+    "India Inflation CPI WPI",
+    "Indian Rupee vs Dollar",
+    "India GST Collections",
+    "India Manufacturing PMI",
+    "FII DII Activity India",
+
+    // --- 2. US & GLOBAL ECONOMY ---
+    "US Federal Reserve Powell",
+    "US Inflation CPI PCE Data",
+    "US GDP Growth",
+    "US Non-Farm Payrolls Jobs",
+    "Global Recession Risks",
+    "China Economic Stimulus",
+    "Eurozone ECB Policy",
+    "Bank of Japan Monetary Policy",
+    "Bank of England Interest Rates",
+
+    // --- 3. COMMODITIES (The Supercycle) ---
+    "Brent Crude Oil Price",
+    "Gold Price Movement",
+    "Silver Price Trends",
+    "Copper Prices LME",
+    "Natural Gas Prices",
+    "Steel Prices India",
+    "Lithium Battery Metal Prices",
+
+    // --- 4. BONDS & YIELDS (The Smart Money) ---
+    "US 10 Year Treasury Yield",
+    "India 10 Year Bond Yield",
+    "Global Bond Market Selloff",
+    "Yield Curve Inversion",
+
+    // --- 5. GEOPOLITICS & EVENTS ---
+    "Geopolitical Tensions Trade War",
+    "OPEC Oil Production",
+    "Global Supply Chain Crisis"
+]
 
 export default function NewsPage() {
-  const [selectedTicker, setSelectedTicker] = useState<string | 'ALL'>('ALL')
-  const [showMobileFilters, setShowMobileFilters] = useState(false) // State for Mobile Drawer
+  // 'ALL' = Smart Feed (Holdings), 'GENERAL' = Macro News, Ticker = Specific Stock
+  const [selectedTicker, setSelectedTicker] = useState<string | 'ALL' | 'GENERAL'>('ALL')
   const supabase = createClient()
   const queryClient = useQueryClient()
 
@@ -43,10 +86,18 @@ export default function NewsPage() {
 
   // 3. Build Query List
   const searchQueries = useMemo(() => {
-      if (selectedTicker !== 'ALL') {
+      // CASE A: Single Holding
+      if (selectedTicker !== 'ALL' && selectedTicker !== 'GENERAL') {
           const asset = holdings.find(h => h.ticker === selectedTicker)
           return asset ? [asset.name] : []
       }
+
+      // CASE B: General Markets (Macro)
+      if (selectedTicker === 'GENERAL') {
+          return GENERAL_TOPICS
+      }
+
+      // CASE C: Smart Feed (Top Holdings + Favorites)
       return holdings
         .filter(h => {
             const p = prefs?.[h.ticker]
@@ -67,7 +118,7 @@ export default function NewsPage() {
       if (!user) return
 
       const existing = prefs?.[ticker] || { is_muted: false, is_favorite: false }
-      const newValue = !existing[field]
+      const newValue = !existing[field] // Toggle value
 
       await supabase.from('news_settings').upsert({
           user_id: user.id,
@@ -80,51 +131,50 @@ export default function NewsPage() {
       queryClient.invalidateQueries({ queryKey: ['newsPreferences'] })
   }
 
-  // Wrapper for selecting ticker on mobile to close drawer
-  const handleSelectTicker = (ticker: string) => {
+  const handleSelectTicker = (ticker: string | 'ALL' | 'GENERAL') => {
       setSelectedTicker(ticker)
-      setShowMobileFilters(false)
+  }
+
+  // Helper for Header Text
+  const getHeaderText = () => {
+      if (selectedTicker === 'ALL') return 'Curated updates for your portfolio.'
+      if (selectedTicker === 'GENERAL') return 'Global markets, Economy, and Policy updates.'
+      return `Latest updates for ${holdings.find(h => h.ticker === selectedTicker)?.name}`
   }
 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-100px)] gap-6 relative">
         
-        {/* MOBILE FILTER BUTTON (Only visible on mobile) */}
-        <div className="lg:hidden mb-2">
-            <button 
-                onClick={() => setShowMobileFilters(true)}
-                className="w-full flex items-center justify-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded-xl shadow-sm text-slate-700 dark:text-slate-200 font-medium"
-            >
-                <Filter className="h-4 w-4" /> Filter Sources
-            </button>
-        </div>
-
-        {/* SIDEBAR / FILTERS (Responsive) */}
-        <div className={`
-            fixed inset-0 z-50 flex flex-col bg-white dark:bg-slate-900 lg:static lg:z-auto lg:w-80 lg:flex-shrink-0 lg:border lg:border-slate-200 lg:dark:border-slate-800 lg:rounded-xl lg:shadow-sm transition-transform duration-300
-            ${showMobileFilters ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-        `}>
-            {/* Mobile Header for Sidebar */}
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex justify-between items-center">
+        {/* SIDEBAR / FILTERS */}
+        <div className="w-full lg:w-80 flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Filter className="h-4 w-4" /> Filter Sources
                 </h3>
-                {/* Close Button only for Mobile */}
-                <button onClick={() => setShowMobileFilters(false)} className="lg:hidden p-2 text-slate-500">
-                    <X className="h-5 w-5" />
-                </button>
             </div>
             
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {/* 1. GENERAL MARKETS BUTTON */}
+                <button
+                    onClick={() => handleSelectTicker('GENERAL')}
+                    className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${selectedTicker === 'GENERAL' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'}`}
+                >
+                    <Globe className="h-4 w-4" />
+                    General Markets
+                </button>
+
+                {/* 2. SMART FEED BUTTON */}
                 <button
                     onClick={() => handleSelectTicker('ALL')}
-                    className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${selectedTicker === 'ALL' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'}`}
+                    className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${selectedTicker === 'ALL' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'}`}
                 >
-                    Smart Feed (Top & Favorites)
+                    <Newspaper className="h-4 w-4" />
+                    My Portfolio Feed
                 </button>
                 
                 <div className="my-2 h-px bg-slate-100 dark:bg-slate-800 mx-2"></div>
 
+                {/* 3. HOLDINGS LIST */}
                 {holdings.map(h => {
                     const p = prefs?.[h.ticker] || { is_muted: false, is_favorite: false }
                     return (
@@ -159,12 +209,11 @@ export default function NewsPage() {
         {/* RIGHT: News Feed */}
         <div className="flex-1 min-w-0 overflow-y-auto">
             <div className="mb-6">
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Market News</h2>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+                    {selectedTicker === 'GENERAL' ? 'General Markets' : 'Market News'}
+                </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {selectedTicker === 'ALL' 
-                        ? 'Curated updates for your portfolio.' 
-                        : `Latest updates for ${holdings.find(h => h.ticker === selectedTicker)?.name}`
-                    }
+                    {getHeaderText()}
                 </p>
             </div>
 
@@ -173,7 +222,7 @@ export default function NewsPage() {
             ) : !newsData?.items || newsData.items.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-300 p-12 text-center text-slate-500 dark:border-slate-700">
                     <Newspaper className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                    <p>No recent news found for these assets.</p>
+                    <p>No recent news found.</p>
                 </div>
             ) : (
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
