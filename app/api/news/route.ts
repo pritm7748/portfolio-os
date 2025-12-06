@@ -12,13 +12,12 @@ export async function POST(request: Request) {
     }
 
     // 1. Construct Smart Query
-    // Increased limit to 30 to cover both Indian & Global topics
-    const safeQueries = queries.slice(0, 30).map(q => `"${q}"`)
+    // INCREASED LIMIT: 30 -> 50 to capture more global topics
+    const safeQueries = queries.slice(0, 150).map(q => `"${q}"`)
     const queryString = safeQueries.join(' OR ')
     
     // 2. Fetch from Google News (Global/US Edition)
-    // We use US edition to ensure we get Fed/Global Commodities/Geopolitics
-    // Indian topics will still work because "RBI" or "Sensex" are unique keywords
+    // 'ceid=US:en' ensures we get global perspectives, not just local coverage
     const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(queryString)} when:2d&hl=en-US&gl=US&ceid=US:en`
     
     const feed = await parser.parseURL(feedUrl)

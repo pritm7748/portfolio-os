@@ -4,45 +4,44 @@ import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTransactions, useNewsPreferences, useNews } from '@/hooks/use-portfolio-data'
-import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe } from 'lucide-react'
+import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search, X } from 'lucide-react'
 
-// --- MACRO TOPICS LIST ---
+// --- COMPREHENSIVE GLOBAL & INDIAN MACRO LIST ---
 const GENERAL_TOPICS = [
+    // Global Market Movers
+    "US Federal Reserve Powell",
+    "US Inflation CPI Data",
+    "Global Recession Risks",
+    "China Economic Stimulus",
+    "Brent Crude Oil Price",
+    "Gold Price USD",
+    "Silver Price Trends",
+    "Copper Prices LME",
+    "US 10 Year Treasury Yield",
+    "Dollar Index DXY",
+    
+    // Indian Macro
     "Indian Economy GDP",
     "RBI Monetary Policy Repo Rate",
     "India Inflation CPI WPI",
+    "Nifty 50 Sensex",
     "Indian Rupee vs Dollar",
-    "India GST Collections",
-    "India Manufacturing PMI",
     "FII DII Activity India",
-    "US Federal Reserve Powell",
-    "US Inflation CPI PCE Data",
-    "US GDP Growth",
-    "US Non-Farm Payrolls Jobs",
-    "Global Recession Risks",
-    "China Economic Stimulus",
-    "Eurozone ECB Policy",
-    "Bank of Japan Monetary Policy",
-    "Bank of England Interest Rates",
-    "Brent Crude Oil Price",
-    "Gold Price Movement",
-    "Silver Price Trends",
-    "Copper Prices LME",
-    "Natural Gas Prices",
-    "Steel Prices India",
-    "Lithium Battery Metal Prices",
-    "US 10 Year Treasury Yield",
-    "India 10 Year Bond Yield",
-    "Global Bond Market Selloff",
-    "Yield Curve Inversion",
+    "India GST Collections",
+    
+    // Geopolitics
     "Geopolitical Tensions Trade War",
     "OPEC Oil Production",
-    "Global Supply Chain Crisis"
+    "Global Supply Chain Crisis",
+    "Eurozone ECB Policy",
+    "Bank of Japan Monetary Policy"
 ]
 
 export default function NewsPage() {
-  // 'ALL' = Smart Feed (Holdings), 'GENERAL' = Macro News, Ticker = Specific Stock
-  const [selectedTicker, setSelectedTicker] = useState<string | 'ALL' | 'GENERAL'>('ALL')
+  // State handles: 'ALL', 'GENERAL', 'SEARCH:term', or Ticker
+  const [selectedTicker, setSelectedTicker] = useState<string>('ALL')
+  const [customSearch, setCustomSearch] = useState('')
+  
   const supabase = createClient()
   const queryClient = useQueryClient()
 
@@ -64,6 +63,7 @@ export default function NewsPage() {
       const list = Object.entries(map).map(([ticker, data]) => ({ ticker, ...data }))
 
       return list.sort((a, b) => {
+          // Provide default objects to avoid TS errors
           const aPref = prefs?.[a.ticker] || { is_favorite: false, is_muted: false }
           const bPref = prefs?.[b.ticker] || { is_favorite: false, is_muted: false }
 
@@ -77,18 +77,23 @@ export default function NewsPage() {
 
   // 3. Build Query List
   const searchQueries = useMemo(() => {
-      // CASE A: Single Holding
+      // CASE A: Custom Search
+      if (selectedTicker.startsWith('SEARCH:')) {
+          return [selectedTicker.replace('SEARCH:', '')]
+      }
+
+      // CASE B: Single Holding
       if (selectedTicker !== 'ALL' && selectedTicker !== 'GENERAL') {
           const asset = holdings.find(h => h.ticker === selectedTicker)
           return asset ? [asset.name] : []
       }
 
-      // CASE B: General Markets (Macro)
+      // CASE C: General Markets (Macro)
       if (selectedTicker === 'GENERAL') {
           return GENERAL_TOPICS
       }
 
-      // CASE C: Smart Feed (Top Holdings + Favorites)
+      // CASE D: Smart Feed (Top Holdings + Favorites)
       return holdings
         .filter(h => {
             const p = prefs?.[h.ticker]
@@ -96,7 +101,7 @@ export default function NewsPage() {
             if (p?.is_favorite) return true 
             return true 
         })
-        .slice(0, 10) 
+        .slice(0, 15) // Increased limit
         .map(h => h.name)
   }, [holdings, selectedTicker, prefs])
 
@@ -104,12 +109,19 @@ export default function NewsPage() {
   const { data: newsData, isLoading: newsLoading } = useNews(searchQueries)
 
   // Handlers
+  const handleSearch = (e: React.FormEvent) => {
+      e.preventDefault()
+      if (customSearch.trim()) {
+          setSelectedTicker(`SEARCH:${customSearch}`)
+      }
+  }
+
   const togglePreference = async (ticker: string, field: 'is_muted' | 'is_favorite') => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
       const existing = prefs?.[ticker] || { is_muted: false, is_favorite: false }
-      const newValue = !existing[field] // Toggle value
+      const newValue = !existing[field]
 
       await supabase.from('news_settings').upsert({
           user_id: user.id,
@@ -122,25 +134,44 @@ export default function NewsPage() {
       queryClient.invalidateQueries({ queryKey: ['newsPreferences'] })
   }
 
-  const handleSelectTicker = (ticker: string | 'ALL' | 'GENERAL') => {
+  const handleSelectTicker = (ticker: string) => {
       setSelectedTicker(ticker)
   }
 
   // Helper for Header Text
-  const getHeaderText = () => {
-      if (selectedTicker === 'ALL') return 'Curated updates for your portfolio.'
-      if (selectedTicker === 'GENERAL') return 'Global markets, Economy, and Policy updates.'
-      return `Latest updates for ${holdings.find(h => h.ticker === selectedTicker)?.name}`
+  const getHeader = () => {
+      if (selectedTicker === 'ALL') return { title: 'Market News', subtitle: 'Curated updates for your portfolio.' }
+      if (selectedTicker === 'GENERAL') return { title: 'General Markets', subtitle: 'Global Economy, Commodities & Policy.' }
+      if (selectedTicker.startsWith('SEARCH:')) return { title: `Search: "${selectedTicker.replace('SEARCH:', '')}"`, subtitle: 'Custom news feed.' }
+      return { 
+          title: holdings.find(h => h.ticker === selectedTicker)?.name || 'Asset News', 
+          subtitle: 'Latest updates for this asset.' 
+      }
   }
+
+  const headerInfo = getHeader()
 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-100px)] gap-6 relative">
         
         {/* SIDEBAR / FILTERS */}
         <div className="w-full lg:w-80 flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            
+            {/* NEW: SEARCH BAR */}
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                    <Filter className="h-4 w-4" /> Filter Sources
+                <form onSubmit={handleSearch} className="relative mb-3">
+                    <input 
+                        type="text" 
+                        placeholder="Search news (e.g. Tesla)..." 
+                        value={customSearch}
+                        onChange={(e) => setCustomSearch(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                </form>
+                
+                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-xs uppercase tracking-wider">
+                    <Filter className="h-3 w-3" /> Filter Sources
                 </h3>
             </div>
             
@@ -200,11 +231,11 @@ export default function NewsPage() {
         {/* RIGHT: News Feed */}
         <div className="flex-1 min-w-0 overflow-y-auto">
             <div className="mb-6">
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                    {selectedTicker === 'GENERAL' ? 'General Markets' : 'Market News'}
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+                    {headerInfo.title}
                 </h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {getHeaderText()}
+                    {headerInfo.subtitle}
                 </p>
             </div>
 
