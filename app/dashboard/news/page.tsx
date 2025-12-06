@@ -8,7 +8,6 @@ import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe } from '
 
 // --- MACRO TOPICS LIST ---
 const GENERAL_TOPICS = [
-    // --- 1. INDIAN MACRO ---
     "Indian Economy GDP",
     "RBI Monetary Policy Repo Rate",
     "India Inflation CPI WPI",
@@ -16,8 +15,6 @@ const GENERAL_TOPICS = [
     "India GST Collections",
     "India Manufacturing PMI",
     "FII DII Activity India",
-
-    // --- 2. US & GLOBAL ECONOMY ---
     "US Federal Reserve Powell",
     "US Inflation CPI PCE Data",
     "US GDP Growth",
@@ -27,8 +24,6 @@ const GENERAL_TOPICS = [
     "Eurozone ECB Policy",
     "Bank of Japan Monetary Policy",
     "Bank of England Interest Rates",
-
-    // --- 3. COMMODITIES (The Supercycle) ---
     "Brent Crude Oil Price",
     "Gold Price Movement",
     "Silver Price Trends",
@@ -36,14 +31,10 @@ const GENERAL_TOPICS = [
     "Natural Gas Prices",
     "Steel Prices India",
     "Lithium Battery Metal Prices",
-
-    // --- 4. BONDS & YIELDS (The Smart Money) ---
     "US 10 Year Treasury Yield",
     "India 10 Year Bond Yield",
     "Global Bond Market Selloff",
     "Yield Curve Inversion",
-
-    // --- 5. GEOPOLITICS & EVENTS ---
     "Geopolitical Tensions Trade War",
     "OPEC Oil Production",
     "Global Supply Chain Crisis"
