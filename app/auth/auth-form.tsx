@@ -2,15 +2,33 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { Loader2, CheckSquare, Square } from 'lucide-react'
 
 export default function AuthForm() {
   const [isLogin, setIsLogin] = useState(true)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [keepSignedIn, setKeepSignedIn] = useState(true) // Default: Checked
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
   const supabase = createClient()
+
+  // Helper to configure persistence
+  const configurePersistence = async () => {
+    try {
+      // 1. Determine Mode using native Browser APIs
+      // If 'Keep me signed in' is checked -> Use Local Storage (Persist across closes)
+      // If unchecked -> Use Session Storage (Clear on close)
+      const storage = keepSignedIn ? localStorage : sessionStorage
+      
+      // 2. Apply Setting
+      // We cast to 'any' because TypeScript sometimes misses this method in the definitions
+      await (supabase.auth as any).setPersistence(storage)
+    } catch (e) {
+      console.warn("Persistence setting failed, falling back to default", e)
+    }
+  }
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -18,6 +36,8 @@ export default function AuthForm() {
     setMessage('')
 
     try {
+      await configurePersistence() // <--- Apply preference
+
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
@@ -41,6 +61,8 @@ export default function AuthForm() {
   const handleGoogleLogin = async () => {
     setLoading(true)
     try {
+      await configurePersistence() // <--- Apply preference
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -61,17 +83,19 @@ export default function AuthForm() {
         {isLogin ? 'Welcome Back' : 'Create Account'}
       </h2>
 
-      {/* GOOGLE LOGIN BUTTON - GLASS STYLE */}
+      {/* GOOGLE LOGIN BUTTON */}
       <button
         onClick={handleGoogleLogin}
         disabled={loading}
         className="flex w-full items-center justify-center gap-3 rounded-lg border border-white/30 bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/20 disabled:opacity-70 shadow-md transition-all backdrop-blur-md mb-6"
       >
         {loading ? (
-            <span className="text-slate-200">Connecting...</span>
+            <span className="text-slate-200 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> Connecting...
+            </span>
         ) : (
             <>
-                {/* Google Icon */}
+                {/* Google SVG Icon */}
                 <svg className="h-5 w-5" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
@@ -83,7 +107,7 @@ export default function AuthForm() {
         )}
       </button>
 
-      {/* DIVIDER - FIXED (Using Flexbox instead of overlay) */}
+      {/* DIVIDER */}
       <div className="flex items-center gap-4 mb-6">
         <div className="h-px flex-1 bg-white/20"></div>
         <span className="text-xs uppercase text-slate-300 font-medium">Or with email</span>
@@ -114,6 +138,19 @@ export default function AuthForm() {
             className="w-full rounded-lg border border-white/30 bg-transparent px-3 py-2.5 text-sm text-white placeholder-slate-300 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 transition-all backdrop-blur-sm"
             placeholder="••••••••"
           />
+        </div>
+
+        {/* CHECKBOX: KEEP ME SIGNED IN */}
+        <div 
+            className="flex items-center gap-2 cursor-pointer group" 
+            onClick={() => setKeepSignedIn(!keepSignedIn)}
+        >
+            <div className={`transition-colors ${keepSignedIn ? 'text-indigo-400' : 'text-slate-400 group-hover:text-slate-200'}`}>
+                {keepSignedIn ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+            </div>
+            <span className="text-xs text-slate-200 select-none group-hover:text-white transition-colors">
+                Keep me signed in
+            </span>
         </div>
 
         {message && (
