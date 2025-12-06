@@ -8,33 +8,29 @@ import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search,
 
 // --- COMPREHENSIVE GLOBAL & INDIAN MACRO LIST ---
 const GENERAL_TOPICS = [
-    // Global Market Movers
     "US Federal Reserve Powell",
-    "US Inflation CPI Data",
-    "Global Recession Risks",
-    "China Economic Stimulus",
+    "RBI Monetary Policy India",
     "Brent Crude Oil Price",
     "Gold Price USD",
+    "Nifty 50 Sensex",
+    "Global Stock Markets",
+    "US Inflation CPI Data",
+    "India Inflation CPI WPI",
+    "US GDP Growth",
+    "India GDP Growth",
+    "US Treasury Bond Yields",
+    "India 10 Year Bond Yield",
+    "Dollar Index DXY",
+    "USD INR Forex",
+    "OPEC Oil Production",
     "Silver Price Trends",
     "Copper Prices LME",
-    "US 10 Year Treasury Yield",
-    "Dollar Index DXY",
-    
-    // Indian Macro
-    "Indian Economy GDP",
-    "RBI Monetary Policy Repo Rate",
-    "India Inflation CPI WPI",
-    "Nifty 50 Sensex",
-    "Indian Rupee vs Dollar",
-    "FII DII Activity India",
-    "India GST Collections",
-    
-    // Geopolitics
     "Geopolitical Tensions Trade War",
-    "OPEC Oil Production",
-    "Global Supply Chain Crisis",
+    "China Economic Stimulus",
     "Eurozone ECB Policy",
-    "Bank of Japan Monetary Policy"
+    "Bank of Japan Policy",
+    "FII DII Activity India",
+    "India GST Collections"
 ]
 
 export default function NewsPage() {
