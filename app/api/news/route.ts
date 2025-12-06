@@ -12,37 +12,48 @@ export async function POST(request: Request) {
     }
 
     // 1. Construct Smart Query
-    // We limit to 50 terms to maximize coverage
-    const safeQueries = queries.slice(0, 50).map(q => `"${q}"`)
+    const safeQueries = queries.slice(0, 150).map(q => `"${q}"`)
     const queryString = safeQueries.join(' OR ')
     
-    // 2. Fetch from Google News
-    // We explicitly include 'when:2d' INSIDE the encoded query.
-    // This forces Google to strictly respect the 48-hour window.
+    // STRICT TIME FILTER: "when:2d" (Last 48 hours)
+    // We encode it WITH the query to ensure Google respects it
     const strictQuery = `${queryString} when:2d`
     const encodedQuery = encodeURIComponent(strictQuery)
     
-    // Use US Edition for Global/Macro coverage, specific keywords handle Indian context
-    const feedUrl = `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-US&gl=US&ceid=US:en`
-    
-    const feed = await parser.parseURL(feedUrl)
+    // 2. PARALLEL FETCH: India (Local) + US (Global)
+    // This ensures we get "RBI" news from Indian sources AND "Fed/Oil" news from Global sources
+    const [feedIN, feedUS] = await Promise.all([
+        parser.parseURL(`https://news.google.com/rss/search?q=${encodedQuery}&hl=en-IN&gl=IN&ceid=IN:en`).catch(() => ({ items: [] })),
+        parser.parseURL(`https://news.google.com/rss/search?q=${encodedQuery}&hl=en-US&gl=US&ceid=US:en`).catch(() => ({ items: [] }))
+    ])
 
-    // 3. Clean & Sort Data
-    const items = feed.items.map(item => ({
-      title: item.title,
-      link: item.link,
-      // FIX: Provide a fallback date string to satisfy TypeScript
-      pubDate: item.pubDate || new Date().toISOString(),
-      source: item.contentSnippet || item.creator || 'Google News',
-      sourceName: item.title?.split(' - ').pop() || 'News'
-    }))
+    // 3. Merge & Deduplicate
+    const allItems = [...feedIN.items, ...feedUS.items]
+    const uniqueItems: any[] = []
+    const seenTitles = new Set()
 
-    // FIX: Sort by Newest First (Date logic is now safe)
-    items.sort((a, b) => {
+    allItems.forEach(item => {
+        // Normalize title to check for dupes (ignore case/spacing)
+        const cleanTitle = item.title?.toLowerCase().trim()
+        if (cleanTitle && !seenTitles.has(cleanTitle)) {
+            seenTitles.add(cleanTitle)
+            uniqueItems.push({
+                title: item.title,
+                link: item.link,
+                pubDate: item.pubDate || new Date().toISOString(), // Fallback for TS
+                source: item.contentSnippet || item.creator || 'Google News',
+                sourceName: item.title?.split(' - ').pop() || 'News'
+            })
+        }
+    })
+
+    // 4. Sort by Date (Newest First)
+    // Essential because merging two feeds breaks the original sort order
+    uniqueItems.sort((a, b) => {
         return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
     })
 
-    return NextResponse.json({ items })
+    return NextResponse.json({ items: uniqueItems })
 
   } catch (error: any) {
     console.error('News Fetch Error:', error)
