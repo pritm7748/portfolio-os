@@ -23,14 +23,13 @@ type Fundamentals = {
 
 export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }: AssetDetailsDrawerProps) {
   const { selectedPortfolio } = usePortfolio()
-  
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
-  
   const [stats, setStats] = useState<Fundamentals | null>(null)
   const [loadingStats, setLoadingStats] = useState(false)
   
+  // Edit States
   const [editQty, setEditQty] = useState('')
   const [editPrice, setEditPrice] = useState('')
   const [editDate, setEditDate] = useState('')
@@ -39,65 +38,85 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
 
   useEffect(() => {
     if (asset && isOpen) {
+        // Run the robust fetcher
         fetchHistory()
-        // Only fetch fundamentals for Stocks/MFs
+        
+        // Fetch fundamentals
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
             setStats(null)
         }
     }
-  }, [asset, isOpen, selectedPortfolio]) // Re-run if portfolio changes or drawer opens
+  }, [asset, isOpen, selectedPortfolio])
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
+    console.log(`[Drawer] Opening for: ${asset.ticker} | Portfolio: ${selectedPortfolio?.id}`)
 
     try {
-        let validAssetIds: number[] = []
-
-        // --- STEP 1: RESOLVE FRESH ASSET IDs ---
-        // We do not trust asset.ids from props because they might be aggregated.
-        // We query the DB for the asset ID that matches the Ticker AND the Active Portfolio.
+        // STRATEGY: Fetch ALL transactions for this ticker string, then filter in JS.
+        // This bypasses any complex DB relationship issues.
         
-        let assetQuery = supabase
+        // 1. Find all Asset IDs that match this ticker text (e.g. "TCS" or "TCS.NS")
+        // We use 'ilike' to be case-insensitive and handle variations
+        const { data: matchingAssets, error: assetError } = await supabase
             .from('assets')
-            .select('id')
-            .eq('ticker', asset.ticker) // Always match the ticker
-
-        // If a specific portfolio is selected (and it's not "All Portfolios")
-        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            assetQuery = assetQuery.eq('portfolio_id', selectedPortfolio.id)
-        }
-
-        const { data: assetData, error: assetError } = await assetQuery
+            .select('id, ticker, portfolio_id')
+            .ilike('ticker', asset.ticker) 
 
         if (assetError) throw assetError
+        
+        console.log("[Drawer] Matching Assets found in DB:", matchingAssets)
 
-        if (!assetData || assetData.length === 0) {
-            console.log("No asset found for this portfolio/ticker combination.")
+        if (!matchingAssets || matchingAssets.length === 0) {
+            console.warn("[Drawer] No assets found in DB matching ticker:", asset.ticker)
             setTransactions([])
             setLoading(false)
             return
         }
 
-        validAssetIds = assetData.map(a => a.id)
+        // 2. Extract valid IDs
+        const allAssetIds = matchingAssets.map(a => a.id)
 
-        // --- STEP 2: FETCH TRANSACTIONS ---
-        // Now we fetch transactions specifically for the IDs we just found.
-        const { data: txnData, error: txnError } = await supabase
+        // 3. Fetch Transactions for ALL these IDs
+        const { data: allTxns, error: txnError } = await supabase
             .from('transactions')
-            .select('*')
-            .in('asset_id', validAssetIds)
+            .select(`
+                *,
+                assets (
+                    id,
+                    ticker,
+                    portfolio_id
+                )
+            `)
+            .in('asset_id', allAssetIds)
             .order('date', { ascending: false })
 
         if (txnError) throw txnError
 
-        setTransactions(txnData || [])
+        console.log("[Drawer] Raw Transactions Fetched:", allTxns)
+
+        // 4. FILTERING LOGIC
+        // We filter manually to ensure complete control
+        let finalTxns = allTxns || []
+
+        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
+            finalTxns = finalTxns.filter((t: any) => {
+                // Check if the transaction's parent asset belongs to the selected portfolio
+                // We use "==" for loose equality (string '1' == number 1)
+                const belongsToPortfolio = t.assets?.portfolio_id == selectedPortfolio.id
+                return belongsToPortfolio
+            })
+        }
+
+        console.log("[Drawer] Final Filtered Transactions:", finalTxns)
+        setTransactions(finalTxns)
 
     } catch (e: any) {
-        console.error("Error fetching transactions:", e.message)
-        setTransactions([])
+        console.error("[Drawer] Critical Error:", e.message)
+        alert("Error fetching data. Check console for details.")
     } finally {
         setLoading(false)
     }
@@ -113,17 +132,15 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
         if (res.ok) {
             const data = await res.json()
             setStats(data)
-        } else {
-            setStats(null)
         }
       } catch (e) {
           console.error(e)
-          setStats(null)
       } finally {
           setLoadingStats(false)
       }
   }
 
+  // --- HANDLERS ---
   const handleStartEdit = (txn: any) => {
     setEditingId(txn.id)
     setEditQty(txn.quantity)
@@ -139,8 +156,8 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             .eq('id', id)
         if (error) throw error
         setEditingId(null)
-        fetchHistory() // Refresh list
-        onUpdate()     // Refresh parent holdings
+        fetchHistory()
+        onUpdate()
     } catch (e: any) {
         alert("Update failed: " + e.message)
     }
@@ -150,26 +167,18 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     if (!confirm('Delete this transaction?')) return
     const { error } = await supabase.from('transactions').delete().eq('id', txnId)
     if (!error) {
-        // Optimistic update
         const remaining = transactions.filter(t => t.id !== txnId)
         setTransactions(remaining)
         onUpdate() 
         if (remaining.length === 0) onClose()
-        else fetchHistory() // Full refresh to be safe
+        else fetchHistory()
     }
   }
 
-  // Formatter for Indian Market Cap
   const formatMarketCap = (num: number) => {
       if (!num) return '-'
-      if (num >= 10000000) {
-          const crores = num / 10000000
-          return crores.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " Cr"
-      }
-      if (num >= 100000) {
-          const lakhs = num / 100000
-          return lakhs.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " L"
-      }
+      if (num >= 10000000) return (num / 10000000).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " Cr"
+      if (num >= 100000) return (num / 100000).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " L"
       return num.toLocaleString('en-IN')
   }
 
@@ -179,13 +188,10 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      
-      {/* Drawer */}
       <div className="relative h-full w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden dark:bg-slate-900 animate-in slide-in-from-right duration-300">
         
-        {/* Header */}
+        {/* HEADER */}
         <div className="flex items-center justify-between border-b border-slate-100 p-6 bg-slate-50 dark:bg-slate-900 dark:border-slate-800">
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white">{asset.name}</h2>
@@ -200,10 +206,10 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
           </button>
         </div>
 
-        {/* Body */}
+        {/* BODY */}
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
             
-            {/* Fundamentals Card */}
+            {/* FUNDAMENTALS */}
             {!asset.ticker.startsWith('COMMODITY:') && (
                 <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:bg-slate-800/50 dark:border-slate-700">
                     <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -238,7 +244,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                 </div>
             )}
 
-            {/* Transactions Section */}
+            {/* TRANSACTIONS */}
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <BarChart3 className="h-3 w-3" /> Transaction History
             </h3>
@@ -247,8 +253,10 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>
             ) : transactions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-slate-100 rounded-xl dark:border-slate-800">
-                    <p className="text-slate-400 text-sm">No transactions found for this portfolio.</p>
-                    <p className="text-xs text-slate-300 mt-1">Try switching portfolios if you don't see what you expect.</p>
+                    <p className="text-slate-400 text-sm">No transactions found.</p>
+                    <p className="text-xs text-slate-300 mt-2 max-w-[200px]">
+                        Debugging: Check console (F12) to see raw data fetch details.
+                    </p>
                 </div>
             ) : (
                 <div className="space-y-4">
