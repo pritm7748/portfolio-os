@@ -152,7 +152,7 @@ export default function AnalyticsPage() {
               const cat = getCategory(portfolio[ticker].type)
               if (cat === 'commodity') valComm += val; else valEq += val
 
-              // Sector Logic
+              // --- SECTOR LOGIC ---
               let sec = portfolio[ticker].sector
               const assetType = portfolio[ticker].type?.toLowerCase() || ''
 
@@ -167,7 +167,7 @@ export default function AnalyticsPage() {
               }
               sectorMap[sec] = (sectorMap[sec] || 0) + val
 
-              // Conglomerate Radar
+              // --- CONGLOMERATE LOGIC ---
               const nameUpper = portfolio[ticker].name.toUpperCase()
               let group = 'Others'
               if (nameUpper.match(/TATA|TITAN|TCS|VOLTAS|TRENT|INDIAN HOTELS/)) group = 'Tata Group'
@@ -200,7 +200,7 @@ export default function AnalyticsPage() {
         totalProfit: totalProfit, investment: costTotal, currentVal: valTotal, xirr: xirrTotal 
       }
 
-      // --- FORMATTING (No Grouping "Others") ---
+      // --- FORMATTING (Show ALL, No Grouping) ---
       const formattedSectors = Object.keys(sectorMap)
         .map(k => ({ name: k, value: sectorMap[k] }))
         .sort((a, b) => b.value - a.value)
@@ -376,29 +376,29 @@ export default function AnalyticsPage() {
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR EXPOSURE (Fixed: No black box, No overlap) */}
+        {/* 1. SECTOR EXPOSURE (Fixed: No focus ring, better sizing) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
-            <div className="flex-1 min-h-0 relative">
+            <div className="flex-1 min-h-0 relative pb-4">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 20, right: 0, bottom: 20, left: 0 }}>
+                    <PieChart margin={{ top: 0, right: 0, bottom: 20, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
-                            innerRadius={80} 
-                            outerRadius={110} 
-                            paddingAngle={3} 
+                            innerRadius={70} 
+                            outerRadius={105} // Slightly reduced for mobile overlap
+                            paddingAngle={2} 
                             dataKey="value"
-                            style={{ outline: 'none' }} // <--- FIX: Removes black focus box
+                            style={{ outline: 'none' }} // REMOVES BLACK BOX
                         >
                             {sectorData.map((entry, index) => (
                                 <Cell 
                                     key={`cell-${index}`} 
                                     fill={COLORS[index % COLORS.length]} 
                                     strokeWidth={0}
-                                    style={{ outline: 'none' }} // <--- FIX: Extra safety
+                                    style={{ outline: 'none' }} // EXTRA SAFETY
                                 />
                             ))}
                         </Pie>
@@ -407,7 +407,7 @@ export default function AnalyticsPage() {
                             layout="horizontal" 
                             verticalAlign="bottom" 
                             align="center" 
-                            wrapperStyle={{fontSize: '11px', paddingTop: '20px'}} 
+                            wrapperStyle={{fontSize: '11px', paddingTop: '10px'}} 
                             iconSize={8} 
                             iconType="circle" 
                         />
@@ -424,7 +424,7 @@ export default function AnalyticsPage() {
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE RADAR (Fixed: No black box) */}
+        {/* 2. CONGLOMERATE RADAR (Fixed: No focus ring) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
@@ -465,7 +465,7 @@ export default function AnalyticsPage() {
                                 radius={[0, 6, 6, 0]} 
                                 barSize={20} 
                                 animationDuration={1500}
-                                style={{ outline: 'none' }} // <--- FIX: Removes black focus box
+                                style={{ outline: 'none' }} // REMOVES BLACK BOX
                             />
                         </BarChart>
                     </ResponsiveContainer>
