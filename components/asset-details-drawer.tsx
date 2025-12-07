@@ -40,7 +40,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
-        // Only fetch fundamentals for Stocks/MFs
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
@@ -54,37 +53,33 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     setLoading(true)
 
     try {
-        let targetIds = asset.ids
-
-        // 1. FILTER: If a specific portfolio is selected, verify which Asset IDs belong to it
-        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            const { data: validAssets, error: assetError } = await supabase
-                .from('assets')
-                .select('id')
-                .in('id', asset.ids)
-                .eq('portfolio_id', selectedPortfolio.id)
-            
-            if (assetError) throw assetError
-            
-            // If no assets match the current portfolio (rare edge case), show nothing
-            if (!validAssets || validAssets.length === 0) {
-                setTransactions([])
-                setLoading(false)
-                return
-            }
-
-            targetIds = validAssets.map(a => a.id)
-        }
-
-        // 2. FETCH: Get transactions only for the valid filtered IDs
+        // 1. Fetch ALL transactions for these asset IDs
+        // We implicitly join 'assets' to get the portfolio_id for filtering
         const { data, error } = await supabase
             .from('transactions')
-            .select('*')
-            .in('asset_id', targetIds)
+            .select(`
+                *,
+                assets (
+                    portfolio_id
+                )
+            `)
+            .in('asset_id', asset.ids)
             .order('date', { ascending: false })
 
         if (error) throw error
-        setTransactions(data || [])
+
+        let filteredData = data || []
+
+        // 2. CLIENT-SIDE FILTER (Robust)
+        // If a specific portfolio is selected (id is not 'all')
+        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
+            filteredData = filteredData.filter((txn: any) => {
+                // Ensure loose comparison (1 == '1') to avoid type mismatches
+                return txn.assets?.portfolio_id == selectedPortfolio.id
+            })
+        }
+
+        setTransactions(filteredData)
 
     } catch (e) {
         console.error("Error fetching transactions:", e)
@@ -149,7 +144,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
-  // --- FORMATTER FOR INDIAN MARKET CAP ---
   const formatMarketCap = (num: number) => {
       if (!num) return '-'
       if (num >= 10000000) {
