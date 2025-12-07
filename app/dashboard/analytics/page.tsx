@@ -200,7 +200,7 @@ export default function AnalyticsPage() {
         totalProfit: totalProfit, investment: costTotal, currentVal: valTotal, xirr: xirrTotal 
       }
 
-      // --- FORMATTING (Show ALL, No Grouping) ---
+      // --- FORMATTING ---
       const formattedSectors = Object.keys(sectorMap)
         .map(k => ({ name: k, value: sectorMap[k] }))
         .sort((a, b) => b.value - a.value)
@@ -376,30 +376,27 @@ export default function AnalyticsPage() {
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR EXPOSURE (Fixed: No focus ring, better sizing) */}
+        {/* 1. SECTOR EXPOSURE (Fixed: No black box, spacing) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+            {/* Added mb-8 for mobile spacing */}
+            <h3 className="mb-8 md:mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
-            <div className="flex-1 min-h-0 relative pb-4">
+            {/* Tailwind utility [&_*:focus]:outline-none kills all focus rings */}
+            <div className="flex-1 min-h-0 relative pb-4 [&_*:focus]:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 0, right: 0, bottom: 20, left: 0 }}>
+                    <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
-                            innerRadius={70} 
-                            outerRadius={105} // Slightly reduced for mobile overlap
+                            innerRadius={85} // Bigger hole to avoid text overlap
+                            outerRadius={110} 
                             paddingAngle={2} 
                             dataKey="value"
-                            style={{ outline: 'none' }} // REMOVES BLACK BOX
+                            isAnimationActive={false} // Disable expansion animation to protect center text
                         >
                             {sectorData.map((entry, index) => (
-                                <Cell 
-                                    key={`cell-${index}`} 
-                                    fill={COLORS[index % COLORS.length]} 
-                                    strokeWidth={0}
-                                    style={{ outline: 'none' }} // EXTRA SAFETY
-                                />
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={0} />
                             ))}
                         </Pie>
                         <Tooltip content={<CustomTooltip />} />
@@ -424,7 +421,7 @@ export default function AnalyticsPage() {
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE RADAR (Fixed: No focus ring) */}
+        {/* 2. CONGLOMERATE RADAR (Fixed: No black box) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
@@ -433,7 +430,8 @@ export default function AnalyticsPage() {
                 <Info className="h-4 w-4 text-slate-400" />
             </div>
             
-            <div className="flex-1 min-h-0">
+            {/* Tailwind utility [&_*:focus]:outline-none kills all focus rings */}
+            <div className="flex-1 min-h-0 [&_*:focus]:outline-none">
                 {conglomerateData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart 
@@ -465,7 +463,7 @@ export default function AnalyticsPage() {
                                 radius={[0, 6, 6, 0]} 
                                 barSize={20} 
                                 animationDuration={1500}
-                                style={{ outline: 'none' }} // REMOVES BLACK BOX
+                                activeBar={false} // Disable active outline logic
                             />
                         </BarChart>
                     </ResponsiveContainer>
