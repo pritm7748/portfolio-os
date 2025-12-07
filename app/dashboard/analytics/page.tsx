@@ -5,7 +5,7 @@ import { calculateXIRR } from '@/lib/xirr'
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info } from 'lucide-react'
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-    PieChart, Pie, Cell, Legend 
+    PieChart, Pie, Cell, Legend, Sector
 } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
@@ -17,8 +17,7 @@ const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308'
 
 type ChartDataPoint = { date: string; invested: number; value: number }
 
-// --- HELPER COMPONENTS ---
-
+// --- HELPER: CUSTOM TOOLTIP ---
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
@@ -45,10 +44,26 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     return null
 }
 
+// --- HELPER: STATIC ACTIVE SHAPE (Prevents Expansion) ---
+// This forces the slice to stay the exact same size on hover
+const renderActiveShape = (props: any) => {
+    const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props
+    return (
+        <Sector
+            cx={cx}
+            cy={cy}
+            innerRadius={innerRadius}
+            outerRadius={outerRadius} // Keep original radius (No expansion)
+            startAngle={startAngle}
+            endAngle={endAngle}
+            fill={fill}
+            style={{ outline: 'none' }} // Ensure no focus ring
+        />
+    )
+}
+
 export default function AnalyticsPage() {
   const { selectedPortfolio } = usePortfolio()
-  
-  // 1. DATA HOOKS
   const { data: transactions, isLoading: txnsLoading } = useTransactions()
   
   const allTickers = useMemo(() => {
@@ -58,32 +73,25 @@ export default function AnalyticsPage() {
 
   const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
-  // Chart State
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [chartLoading, setChartLoading] = useState(false)
   const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity')
   const [currentRange, setCurrentRange] = useState('1y')
 
-  // Helper
   const getCategory = (type: string) => {
       const t = type.toLowerCase()
       if (t.includes('commodity') || t.includes('gold') || t.includes('silver') || t.includes('currency')) return 'commodity'
       return 'equity'
   }
 
-  // 3. CALCULATION ENGINE
+  // --- CALCULATION ENGINE ---
   const { metrics, sectorData, conglomerateData, aiSummary } = useMemo(() => {
       const emptyMetrics = { totalXirr: 0, equityXirr: 0, commXirr: 0, netWorth: 0, unrealized: 0, realized: 0, totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 }
       
       if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null }
 
-      // ... (Calculation logic remains identical to previous working version) ...
-      // Keeping it concise for the fix, let me know if you need the full logic block reprinted.
-      
-      // A. Metrics Setup
       const flowsTotal: any[] = []; const flowsEquity: any[] = []; const flowsComm: any[] = []
       let totalRealizedPnL = 0; let totalDividends = 0
-      
       const assetLots: Record<string, { price: number, quantity: number }[]> = {}
       const portfolio: Record<string, any> = {} 
 
@@ -153,6 +161,7 @@ export default function AnalyticsPage() {
               const cat = getCategory(portfolio[ticker].type)
               if (cat === 'commodity') valComm += val; else valEq += val
 
+              // Sector Logic
               let sec = portfolio[ticker].sector
               const assetType = portfolio[ticker].type?.toLowerCase() || ''
 
@@ -167,6 +176,7 @@ export default function AnalyticsPage() {
               }
               sectorMap[sec] = (sectorMap[sec] || 0) + val
 
+              // Conglomerate
               const nameUpper = portfolio[ticker].name.toUpperCase()
               let group = 'Others'
               if (nameUpper.match(/TATA|TITAN|TCS|VOLTAS|TRENT|INDIAN HOTELS/)) group = 'Tata Group'
@@ -220,7 +230,6 @@ export default function AnalyticsPage() {
   }, [transactions, priceMap])
 
 
-  // --- CHART FETCHING ---
   useEffect(() => {
       if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
   }, [transactions]) 
@@ -304,14 +313,12 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6 pb-10">
       
-      {/* 1. CHART */}
       <PortfolioHistoryChart 
          data={chartData} isLoading={chartLoading} category={chartCategory}
          onRangeChange={(r) => fetchChartData(r, chartCategory)} 
          onCategoryChange={(c) => fetchChartData(currentRange, c)}
       />
 
-      {/* 2. METRICS CARDS */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
@@ -323,7 +330,6 @@ export default function AnalyticsPage() {
                 <div className="text-4xl font-bold relative z-10">{metrics.totalXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 opacity-70 relative z-10">Annualized Return</p>
             </div>
-
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-indigo-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Equity XIRR</span>
@@ -332,7 +338,6 @@ export default function AnalyticsPage() {
                 <div className="text-3xl font-bold text-slate-900 dark:text-white">{metrics.equityXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 text-slate-400">Stocks & Mutual Funds</p>
             </div>
-
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-amber-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Commodity XIRR</span>
@@ -344,10 +349,8 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* 3. AI ANALYST */}
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
-      {/* 4. FINANCIAL SUMMARY */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -369,30 +372,27 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* 5. RISK ANALYSIS - FIXED STYLING */}
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
         {/* 1. SECTOR EXPOSURE */}
-        {/* Increased Height for Mobile Legend */}
-        <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            {/* Added mb-10 for Mobile Breathing Room */}
-            <h3 className="mb-10 md:mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+        <div className="min-h-[520px] md:h-[480px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+            {/* Added Extra Spacing for Mobile Header */}
+            <h3 className="mb-12 md:mb-6 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
             
-            {/* [&_*:focus]:outline-none REMOVES BLACK BOX */}
             <div className="flex-1 min-h-0 relative pb-4 [&_*:focus]:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 0, right: 0, bottom: 20, left: 0 }}>
+                    <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
-                            innerRadius={90}  // Increased hole for text safety
-                            outerRadius={115} 
+                            innerRadius={100}  // Expanded hole for desktop safety
+                            outerRadius={125} 
                             paddingAngle={2} 
                             dataKey="value"
-                            isAnimationActive={false} // Disable expansion to prevent center overlap
+                            activeShape={renderActiveShape} // Disables expansion on hover
                             style={{ outline: 'none' }}
                         >
                             {sectorData.map((entry, index) => (
@@ -416,8 +416,8 @@ export default function AnalyticsPage() {
                     </PieChart>
                 </ResponsiveContainer>
                 
-                {/* Center Label - Perfectly Centered */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8">
+                {/* Center Label - Perfectly Centered & Safe */}
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8 z-0">
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
                         ₹{(metrics.netWorth / 100000).toFixed(2)}L
@@ -427,7 +427,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* 2. CONGLOMERATE RADAR */}
-        <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+        <div className="h-[480px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Briefcase className="h-4 w-4 text-amber-500" /> Conglomerate Radar
@@ -468,7 +468,7 @@ export default function AnalyticsPage() {
                                 barSize={20} 
                                 animationDuration={1500}
                                 style={{ outline: 'none' }}
-                                activeBar= {false} // Remove black box
+                                activeBar= {false}
                             />
                         </BarChart>
                     </ResponsiveContainer>
@@ -483,7 +483,6 @@ export default function AnalyticsPage() {
 
       </div>
 
-      {/* Portfolio Health */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
             <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
             <ul className="space-y-6">
