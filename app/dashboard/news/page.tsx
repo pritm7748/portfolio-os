@@ -4,48 +4,64 @@ import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTransactions, useNewsPreferences, useNews } from '@/hooks/use-portfolio-data'
-import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search, X, ChevronLeft, ArrowLeft } from 'lucide-react'
+import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search, X, ArrowLeft } from 'lucide-react'
 
-// --- MACRO TOPICS LIST ---
+// --- OPTIMIZED MACRO TOPICS (Interleaved for better balance) ---
 const GENERAL_TOPICS = [
-    "Indian Economy GDP", "RBI Monetary Policy", "India Inflation CPI", "Nifty 50 Sensex", 
-    "US Federal Reserve", "Brent Crude Oil", "Gold Price", "Global Recession", 
-    "FII DII Activity", "India GST Collections", "Geopolitical Tensions"
+    // Tier 1: Major Global & Indian Movers (Mixed)
+    "US Federal Reserve",
+    "RBI Monetary Policy",
+    "Brent Crude Oil",
+    "Nifty 50 Sensex",
+    "Gold Price USD",
+    "Indian Rupee vs Dollar",
+    "US Inflation CPI",
+    "India Inflation CPI",
+    
+    // Tier 2: Macro Indicators
+    "Global Recession",
+    "India GDP Growth",
+    "US 10 Year Bond Yield",
+    "FII DII Activity India",
+    "China Economic Stimulus",
+    "India GST Collections",
+    
+    // Tier 3: Geopolitics & Sectors
+    "Geopolitical Tensions",
+    "Bank of Japan Policy",
+    "Silver Price Trends",
+    "Eurozone ECB",
+    "OPEC Oil Production"
 ]
 
 export default function NewsPage() {
   const [selectedTicker, setSelectedTicker] = useState<string>('ALL')
   const [customSearch, setCustomSearch] = useState('')
-  const [isSearching, setIsSearching] = useState(false)
   
-  // MOBILE NAVIGATION STATE
-  // false = Show Filter List, true = Show News Feed
+  // MOBILE NAV: false = List, true = Feed
   const [showFeed, setShowFeed] = useState(false) 
   
   const supabase = createClient()
   const queryClient = useQueryClient()
 
+  // 1. Fetch Data
   const { data: transactions } = useTransactions()
   const { data: prefs } = useNewsPreferences()
 
+  // 2. Process Holdings
   const holdings = useMemo(() => {
       if (!transactions) return []
       const map: Record<string, { name: string, value: number }> = {}
       transactions.forEach(t => {
-          const val = t.transaction_type === 'Buy' ? (t.price * t.quantity) : -(t.price * t.quantity)
+          const val = Math.abs(t.price * t.quantity)
           if (!map[t.assets.ticker]) map[t.assets.ticker] = { name: t.assets.name, value: 0 }
           map[t.assets.ticker].value += val
       })
-      const list = Object.entries(map).map(([ticker, data]) => ({ ticker, ...data }))
-      return list.sort((a, b) => {
-          const aPref = prefs?.[a.ticker] || { is_favorite: false, is_muted: false }
-          const bPref = prefs?.[b.ticker] || { is_favorite: false, is_muted: false }
-          if (aPref.is_favorite && !bPref.is_favorite) return -1
-          if (!aPref.is_favorite && bPref.is_favorite) return 1
-          return b.value - a.value
-      })
-  }, [transactions, prefs])
+      return Object.entries(map).map(([ticker, data]) => ({ ticker, ...data }))
+        .sort((a, b) => b.value - a.value)
+  }, [transactions])
 
+  // 3. Query Logic
   const searchQueries = useMemo(() => {
       if (selectedTicker.startsWith('SEARCH:')) return [selectedTicker.replace('SEARCH:', '')]
       if (selectedTicker === 'GENERAL') return GENERAL_TOPICS
@@ -66,26 +82,19 @@ export default function NewsPage() {
 
   const { data: newsData, isLoading: newsLoading } = useNews(searchQueries)
 
-  // HANDLERS
+  // --- HANDLERS ---
   const handleSelect = (ticker: string) => {
       setSelectedTicker(ticker)
       setCustomSearch('')
-      setShowFeed(true) // <--- Go to Feed View on Mobile
+      setShowFeed(true) // Open Feed on Mobile
   }
 
   const handleSearch = (e: React.FormEvent) => {
       e.preventDefault()
       if (customSearch.trim()) {
           setSelectedTicker(`SEARCH:${customSearch}`)
-          setIsSearching(true)
-          setShowFeed(true) // <--- Go to Feed View on Mobile
+          setShowFeed(true) // Open Feed on Mobile
       }
-  }
-
-  const clearSearch = () => {
-      setCustomSearch('')
-      setIsSearching(false)
-      setSelectedTicker('ALL')
   }
 
   const togglePreference = async (ticker: string, field: 'is_muted' | 'is_favorite') => {
@@ -115,27 +124,14 @@ export default function NewsPage() {
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-100px)] gap-6 relative">
         
-        {/* --- LEFT: FILTERS LIST (Sidebar) --- */}
-        {/* Hidden on mobile if viewing feed, Always visible on desktop */}
+        {/* --- LEFT: FILTER LIST (Hidden on mobile if viewing feed) --- */}
         <div className={`
             w-full lg:w-80 flex-shrink-0 flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm h-full
-            ${showFeed ? 'hidden lg:flex' : 'flex'} 
+            ${showFeed ? 'hidden lg:flex' : 'flex'}
         `}>
-            
-            {/* Search Bar (Now inside Sidebar for Mobile Context) */}
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col gap-3">
-                <form onSubmit={handleSearch} className="relative w-full">
-                    <input 
-                        type="text" 
-                        placeholder="Search news..." 
-                        value={customSearch}
-                        onChange={(e) => setCustomSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                </form>
-                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-xs uppercase tracking-wider">
-                    <Filter className="h-3 w-3" /> Filter Sources
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-sm uppercase tracking-wider">
+                    <Filter className="h-4 w-4" /> Filter Sources
                 </h3>
             </div>
             
@@ -148,8 +144,7 @@ export default function NewsPage() {
                 </button>
                 
                 <div className="my-2 h-px bg-slate-100 dark:bg-slate-800 mx-2"></div>
-                <div className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Holdings</div>
-
+                
                 {holdings.map(h => {
                     const p = prefs?.[h.ticker] || { is_muted: false, is_favorite: false }
                     return (
@@ -167,32 +162,42 @@ export default function NewsPage() {
             </div>
         </div>
 
-        {/* --- RIGHT: NEWS FEED (Main Content) --- */}
-        {/* Hidden on mobile if NOT showing feed, Always visible on desktop */}
+        {/* --- RIGHT: NEWS FEED (Hidden on mobile unless active) --- */}
         <div className={`
             flex-1 flex-col min-w-0 h-full
             ${!showFeed ? 'hidden lg:flex' : 'flex'}
         `}>
             
-            {/* Header Area */}
+            {/* Header + Search */}
             <div className="flex flex-col gap-4 mb-4">
-                
                 {/* Mobile Back Button */}
                 <button 
                     onClick={() => setShowFeed(false)}
-                    className="lg:hidden flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 mb-2 dark:text-indigo-400"
+                    className="lg:hidden flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 mb-1 dark:text-indigo-400"
                 >
                     <ArrowLeft className="h-4 w-4" /> Back to Filters
                 </button>
 
-                {/* Title Section */}
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white leading-tight">{headerInfo.title}</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{headerInfo.subtitle}</p>
+                <div className="flex flex-col-reverse md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white leading-tight">{headerInfo.title}</h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{headerInfo.subtitle}</p>
+                    </div>
+
+                    <form onSubmit={handleSearch} className="relative w-full md:w-80">
+                        <input 
+                            type="text" 
+                            placeholder="Search news..." 
+                            value={customSearch}
+                            onChange={(e) => setCustomSearch(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                        />
+                        <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                    </form>
                 </div>
             </div>
 
-            {/* FEED GRID */}
+            {/* Feed Content */}
             <div className="flex-1 overflow-y-auto pr-1">
                 {newsLoading ? (
                     <div className="flex h-60 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
