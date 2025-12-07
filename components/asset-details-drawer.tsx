@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, Activity, BarChart3 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { usePortfolio } from '@/context/portfolio-context' // <--- IMPORT ADDED
 
 type AssetDetailsDrawerProps = {
   asset: { ids: number[]; name: string; ticker: string } | null
@@ -21,6 +22,8 @@ type Fundamentals = {
 }
 
 export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }: AssetDetailsDrawerProps) {
+  const { selectedPortfolio } = usePortfolio() // <--- GET SELECTED PORTFOLIO
+  
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -44,17 +47,34 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             setStats(null)
         }
     }
-  }, [asset, isOpen])
+  }, [asset, isOpen, selectedPortfolio]) // Re-fetch if portfolio changes
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
-    const { data } = await supabase
+
+    // 1. Base Query: Join 'assets' table to access 'portfolio_id'
+    let query = supabase
       .from('transactions')
-      .select('*')
+      .select('*, assets!inner(portfolio_id)') // Inner join to filter by parent asset's portfolio
       .in('asset_id', asset.ids)
       .order('date', { ascending: false })
-    setTransactions(data || [])
+
+    // 2. Apply Portfolio Filter
+    // If a specific portfolio is selected (not 'all'), enforce strict filtering
+    if (selectedPortfolio && selectedPortfolio.id !== 'all') {
+        query = query.eq('assets.portfolio_id', selectedPortfolio.id)
+    }
+
+    const { data, error } = await query
+    
+    if (error) {
+        console.error("Error fetching transactions:", error)
+        setTransactions([])
+    } else {
+        setTransactions(data || [])
+    }
+    
     setLoading(false)
   }
 
@@ -113,24 +133,17 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
-  // --- UPDATED FORMATTER FOR INDIAN MARKET CAP ---
+  // --- FORMATTER FOR INDIAN MARKET CAP ---
   const formatMarketCap = (num: number) => {
       if (!num) return '-'
-      
-      // If value is large enough to be Crores (>= 1 Cr)
-      // We divide by 1 Cr (10,000,000) and format nicely
       if (num >= 10000000) {
           const crores = num / 10000000
-          // toLocaleString('en-IN') adds the commas: 1,50,000
           return crores.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " Cr"
       }
-      
-      // Fallback for smaller numbers (Lakhs)
       if (num >= 100000) {
           const lakhs = num / 100000
           return lakhs.toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " L"
       }
-
       return num.toLocaleString('en-IN')
   }
 
@@ -197,7 +210,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             {loading ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>
             ) : transactions.length === 0 ? (
-                <p className="text-center text-slate-400">No transactions found.</p>
+                <p className="text-center text-slate-400">No transactions found for this portfolio.</p>
             ) : (
                 <div className="space-y-4">
                 {transactions.map((txn) => (
