@@ -45,7 +45,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 }
 
 // --- HELPER: STATIC ACTIVE SHAPE (Prevents Expansion) ---
-// This forces the slice to stay the exact same size on hover
 const renderActiveShape = (props: any) => {
     const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props
     return (
@@ -53,11 +52,11 @@ const renderActiveShape = (props: any) => {
             cx={cx}
             cy={cy}
             innerRadius={innerRadius}
-            outerRadius={outerRadius} // Keep original radius (No expansion)
+            outerRadius={outerRadius}
             startAngle={startAngle}
             endAngle={endAngle}
             fill={fill}
-            style={{ outline: 'none' }} // Ensure no focus ring
+            style={{ outline: 'none' }}
         />
     )
 }
@@ -161,7 +160,6 @@ export default function AnalyticsPage() {
               const cat = getCategory(portfolio[ticker].type)
               if (cat === 'commodity') valComm += val; else valEq += val
 
-              // Sector Logic
               let sec = portfolio[ticker].sector
               const assetType = portfolio[ticker].type?.toLowerCase() || ''
 
@@ -176,7 +174,6 @@ export default function AnalyticsPage() {
               }
               sectorMap[sec] = (sectorMap[sec] || 0) + val
 
-              // Conglomerate
               const nameUpper = portfolio[ticker].name.toUpperCase()
               let group = 'Others'
               if (nameUpper.match(/TATA|TITAN|TCS|VOLTAS|TRENT|INDIAN HOTELS/)) group = 'Tata Group'
@@ -313,12 +310,14 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-6 pb-10">
       
+      {/* 1. CHART */}
       <PortfolioHistoryChart 
          data={chartData} isLoading={chartLoading} category={chartCategory}
          onRangeChange={(r) => fetchChartData(r, chartCategory)} 
          onCategoryChange={(c) => fetchChartData(currentRange, c)}
       />
 
+      {/* 2. METRICS CARDS */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
@@ -330,6 +329,7 @@ export default function AnalyticsPage() {
                 <div className="text-4xl font-bold relative z-10">{metrics.totalXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 opacity-70 relative z-10">Annualized Return</p>
             </div>
+
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-indigo-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Equity XIRR</span>
@@ -338,6 +338,7 @@ export default function AnalyticsPage() {
                 <div className="text-3xl font-bold text-slate-900 dark:text-white">{metrics.equityXirr.toFixed(2)}%</div>
                 <p className="text-xs mt-2 text-slate-400">Stocks & Mutual Funds</p>
             </div>
+
             <div className="rounded-xl bg-white p-6 border border-slate-200 shadow-sm dark:bg-slate-900 dark:border-slate-800 transition-hover hover:border-amber-200">
                 <div className="flex items-center justify-between mb-2 text-slate-500 dark:text-slate-400">
                     <span className="font-medium text-sm uppercase tracking-wider">Commodity XIRR</span>
@@ -349,8 +350,10 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {/* 3. AI ANALYST */}
       {aiSummary && <AIAnalyst data={aiSummary} />}
 
+      {/* 4. FINANCIAL SUMMARY */}
       {metrics && (
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -372,13 +375,13 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {/* 5. RISK ANALYSIS */}
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
         {/* 1. SECTOR EXPOSURE */}
-        <div className="min-h-[520px] md:h-[480px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            {/* Added Extra Spacing for Mobile Header */}
-            <h3 className="mb-12 md:mb-6 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+        <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+            <h3 className="mb-10 md:mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
             
@@ -388,11 +391,11 @@ export default function AnalyticsPage() {
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
-                            innerRadius={100}  // Expanded hole for desktop safety
-                            outerRadius={125} 
+                            innerRadius={90} 
+                            outerRadius={110} 
                             paddingAngle={2} 
                             dataKey="value"
-                            activeShape={renderActiveShape} // Disables expansion on hover
+                            activeShape={renderActiveShape} 
                             style={{ outline: 'none' }}
                         >
                             {sectorData.map((entry, index) => (
@@ -404,10 +407,7 @@ export default function AnalyticsPage() {
                                 />
                             ))}
                         </Pie>
-                        <Tooltip 
-                            content={<CustomTooltip />} 
-                            position={{ x: 10, y: 10 }}
-                        />
+                        <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} />
                         <Legend 
                             layout="horizontal" 
                             verticalAlign="bottom" 
@@ -419,8 +419,8 @@ export default function AnalyticsPage() {
                     </PieChart>
                 </ResponsiveContainer>
                 
-                {/* Center Label - Perfectly Centered & Safe */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-10">
+                {/* Center Label */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-10">
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
                         ₹{(metrics.netWorth / 100000).toFixed(2)}L
@@ -430,7 +430,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* 2. CONGLOMERATE RADAR */}
-        <div className="h-[480px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
+        <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Briefcase className="h-4 w-4 text-amber-500" /> Conglomerate Radar
@@ -471,7 +471,6 @@ export default function AnalyticsPage() {
                                 barSize={20} 
                                 animationDuration={1500}
                                 style={{ outline: 'none' }}
-                                activeBar= {false}
                             />
                         </BarChart>
                     </ResponsiveContainer>
