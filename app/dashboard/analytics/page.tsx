@@ -152,10 +152,17 @@ export default function AnalyticsPage() {
               const cat = getCategory(portfolio[ticker].type)
               if (cat === 'commodity') valComm += val; else valEq += val
 
-              // Sector
+              // Sector Logic
               let sec = portfolio[ticker].sector
-              if (!sec || sec === 'Unknown') {
+              const assetType = portfolio[ticker].type?.toLowerCase() || ''
+
+              if (!sec || sec === 'Unknown' || sec === 'Unclassified') {
                   if (cat === 'commodity') sec = 'Commodities'
+                  else if (assetType.includes('mutual')) sec = 'Mutual Funds'
+                  else if (assetType.includes('etf')) sec = 'ETFs'
+                  else if (assetType.includes('gold')) sec = 'Gold'
+                  else if (assetType.includes('index')) sec = 'Indices'
+                  else if (assetType.includes('bond') || assetType.includes('debt')) sec = 'Bonds'
                   else sec = 'Unclassified'
               }
               sectorMap[sec] = (sectorMap[sec] || 0) + val
@@ -193,7 +200,7 @@ export default function AnalyticsPage() {
         totalProfit: totalProfit, investment: costTotal, currentVal: valTotal, xirr: xirrTotal 
       }
 
-      // Formatted Data
+      // --- FORMATTING (No Grouping "Others") ---
       const formattedSectors = Object.keys(sectorMap)
         .map(k => ({ name: k, value: sectorMap[k] }))
         .sort((a, b) => b.value - a.value)
@@ -251,18 +258,17 @@ export default function AnalyticsPage() {
         const sortedDates = Array.from(allDatesSet).sort()
         const finalChartData: ChartDataPoint[] = []
         const runningHoldings: Record<string, number> = {}
-        const lastKnownPrices: Record<string, number> = {} // <--- NEW: Forward Fill Tracker
+        const lastKnownPrices: Record<string, number> = {} 
         
         let runningInvested = 0; let txnIndex = 0
 
         for (const date of sortedDates) {
             const dayStart = new Date(date).getTime()
             
-            // 1. Process Transactions up to this date
             while (txnIndex < categoryTxns.length) {
                 const t = categoryTxns[txnIndex]
                 const tTime = new Date(t.date).getTime()
-                if (tTime > dayStart + 86400000) break; // Break if txn is in future relative to current loop date
+                if (tTime > dayStart + 86400000) break;
                 
                 if (t.transaction_type === 'Buy') {
                     runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
@@ -274,25 +280,20 @@ export default function AnalyticsPage() {
                 txnIndex++
             }
 
-            // 2. Update Last Known Prices
-            // If data exists for today, update tracker. If not, we will use the old value.
             const daysPrices = priceLookup[date] || {}
             Object.keys(daysPrices).forEach(t => {
                 if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
             })
 
-            // 3. Calculate Portfolio Value
             let dailyValue = 0
             Object.keys(runningHoldings).forEach(ticker => {
                 const qty = runningHoldings[ticker]
                 if (qty > 0) { 
-                    // Use today's price OR the last known price to prevent dips
                     const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
                     if (price > 0) dailyValue += (qty * price) 
                 }
             })
 
-            // Only push points where we have investment or value
             if (runningInvested > 0 || dailyValue > 0) {
                 finalChartData.push({ date, invested: Math.max(0, runningInvested), value: dailyValue })
             }
@@ -375,14 +376,14 @@ export default function AnalyticsPage() {
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR EXPOSURE */}
+        {/* 1. SECTOR EXPOSURE (Fixed: No black box, No overlap) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
             <div className="flex-1 min-h-0 relative">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
+                    <PieChart margin={{ top: 20, right: 0, bottom: 20, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
@@ -390,13 +391,26 @@ export default function AnalyticsPage() {
                             outerRadius={110} 
                             paddingAngle={3} 
                             dataKey="value"
+                            style={{ outline: 'none' }} // <--- FIX: Removes black focus box
                         >
                             {sectorData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={0} />
+                                <Cell 
+                                    key={`cell-${index}`} 
+                                    fill={COLORS[index % COLORS.length]} 
+                                    strokeWidth={0}
+                                    style={{ outline: 'none' }} // <--- FIX: Extra safety
+                                />
                             ))}
                         </Pie>
                         <Tooltip content={<CustomTooltip />} />
-                        <Legend layout="horizontal" verticalAlign="bottom" align="center" wrapperStyle={{fontSize: '11px', paddingTop: '20px'}} iconSize={8} iconType="circle" />
+                        <Legend 
+                            layout="horizontal" 
+                            verticalAlign="bottom" 
+                            align="center" 
+                            wrapperStyle={{fontSize: '11px', paddingTop: '20px'}} 
+                            iconSize={8} 
+                            iconType="circle" 
+                        />
                     </PieChart>
                 </ResponsiveContainer>
                 
@@ -410,7 +424,7 @@ export default function AnalyticsPage() {
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE RADAR */}
+        {/* 2. CONGLOMERATE RADAR (Fixed: No black box) */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
@@ -451,6 +465,7 @@ export default function AnalyticsPage() {
                                 radius={[0, 6, 6, 0]} 
                                 barSize={20} 
                                 animationDuration={1500}
+                                style={{ outline: 'none' }} // <--- FIX: Removes black focus box
                             />
                         </BarChart>
                     </ResponsiveContainer>
