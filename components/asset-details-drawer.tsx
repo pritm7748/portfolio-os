@@ -26,10 +26,10 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
+  
   const [stats, setStats] = useState<Fundamentals | null>(null)
   const [loadingStats, setLoadingStats] = useState(false)
   
-  // Edit States
   const [editQty, setEditQty] = useState('')
   const [editPrice, setEditPrice] = useState('')
   const [editDate, setEditDate] = useState('')
@@ -38,10 +38,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
 
   useEffect(() => {
     if (asset && isOpen) {
-        // Run the robust fetcher
         fetchHistory()
-        
-        // Fetch fundamentals
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
@@ -53,70 +50,33 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
-    console.log(`[Drawer] Opening for: ${asset.ticker} | Portfolio: ${selectedPortfolio?.id}`)
 
     try {
-        // STRATEGY: Fetch ALL transactions for this ticker string, then filter in JS.
-        // This bypasses any complex DB relationship issues.
-        
-        // 1. Find all Asset IDs that match this ticker text (e.g. "TCS" or "TCS.NS")
-        // We use 'ilike' to be case-insensitive and handle variations
-        const { data: matchingAssets, error: assetError } = await supabase
-            .from('assets')
-            .select('id, ticker, portfolio_id')
-            .ilike('ticker', asset.ticker) 
-
-        if (assetError) throw assetError
-        
-        console.log("[Drawer] Matching Assets found in DB:", matchingAssets)
-
-        if (!matchingAssets || matchingAssets.length === 0) {
-            console.warn("[Drawer] No assets found in DB matching ticker:", asset.ticker)
-            setTransactions([])
-            setLoading(false)
-            return
-        }
-
-        // 2. Extract valid IDs
-        const allAssetIds = matchingAssets.map(a => a.id)
-
-        // 3. Fetch Transactions for ALL these IDs
-        const { data: allTxns, error: txnError } = await supabase
+        // 1. Start the query on the 'transactions' table
+        let query = supabase
             .from('transactions')
-            .select(`
-                *,
-                assets (
-                    id,
-                    ticker,
-                    portfolio_id
-                )
-            `)
-            .in('asset_id', allAssetIds)
+            .select('*')
+            // Filter by the asset IDs passed to the drawer (e.g. TCS)
+            .in('asset_id', asset.ids)
             .order('date', { ascending: false })
 
-        if (txnError) throw txnError
-
-        console.log("[Drawer] Raw Transactions Fetched:", allTxns)
-
-        // 4. FILTERING LOGIC
-        // We filter manually to ensure complete control
-        let finalTxns = allTxns || []
-
+        // 2. Apply Portfolio Filter (Directly on transactions table)
         if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            finalTxns = finalTxns.filter((t: any) => {
-                // Check if the transaction's parent asset belongs to the selected portfolio
-                // We use "==" for loose equality (string '1' == number 1)
-                const belongsToPortfolio = t.assets?.portfolio_id == selectedPortfolio.id
-                return belongsToPortfolio
-            })
+            // FIX: Ensure we filter by portfolio_id directly on the transaction
+            query = query.eq('portfolio_id', selectedPortfolio.id)
         }
 
-        console.log("[Drawer] Final Filtered Transactions:", finalTxns)
-        setTransactions(finalTxns)
+        const { data, error } = await query
+
+        if (error) {
+            console.error("Error fetching transactions:", error.message)
+            setTransactions([])
+        } else {
+            setTransactions(data || [])
+        }
 
     } catch (e: any) {
-        console.error("[Drawer] Critical Error:", e.message)
-        alert("Error fetching data. Check console for details.")
+        console.error("Critical Error:", e.message)
     } finally {
         setLoading(false)
     }
@@ -140,7 +100,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
       }
   }
 
-  // --- HANDLERS ---
   const handleStartEdit = (txn: any) => {
     setEditingId(txn.id)
     setEditQty(txn.quantity)
@@ -253,10 +212,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>
             ) : transactions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-slate-100 rounded-xl dark:border-slate-800">
-                    <p className="text-slate-400 text-sm">No transactions found.</p>
-                    <p className="text-xs text-slate-300 mt-2 max-w-[200px]">
-                        Debugging: Check console (F12) to see raw data fetch details.
-                    </p>
+                    <p className="text-slate-400 text-sm">No transactions found for this portfolio.</p>
                 </div>
             ) : (
                 <div className="space-y-4">
