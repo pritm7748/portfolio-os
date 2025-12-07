@@ -381,18 +381,19 @@ export default function AnalyticsPage() {
         
         {/* 1. SECTOR EXPOSURE */}
         <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
-            <h3 className="mb-10 md:mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+            <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
             </h3>
             
-            <div className="flex-1 min-h-0 relative pb-4 [&_*:focus]:outline-none">
+            <div className="flex-1 min-h-0 relative [&_*:focus]:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 10, right: 0, bottom: 80, left: 0 }}>
+                    <PieChart margin={{ top: 10, right: 0, bottom: 10, left: 0 }}>
                         <Pie 
                             data={sectorData} 
-                            cx="50%" cy="50%" 
-                            innerRadius={90} 
-                            outerRadius={110} 
+                            cx="50%" 
+                            cy="45%" 
+                            innerRadius={70} 
+                            outerRadius={90} 
                             paddingAngle={2} 
                             dataKey="value"
                             activeShape={renderActiveShape} 
@@ -407,12 +408,12 @@ export default function AnalyticsPage() {
                                 />
                             ))}
                         </Pie>
-                        <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} />
+                        <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} wrapperStyle={{ zIndex: 1000 }} />
                         <Legend 
                             layout="horizontal" 
                             verticalAlign="bottom" 
                             align="center" 
-                            wrapperStyle={{fontSize: '11px', paddingTop: '24px'}} 
+                            wrapperStyle={{fontSize: '10px', paddingTop: '16px', maxHeight: '120px', overflow: 'auto'}} 
                             iconSize={8} 
                             iconType="circle" 
                         />
@@ -420,7 +421,7 @@ export default function AnalyticsPage() {
                 </ResponsiveContainer>
                 
                 {/* Center Label */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-10">
+                <div className="absolute top-[45%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
                         ₹{(metrics.netWorth / 100000).toFixed(2)}L
