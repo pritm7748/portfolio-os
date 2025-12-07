@@ -40,46 +40,60 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
+        // Fetch fundamentals only for stocks
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
             setStats(null)
         }
     }
-  }, [asset, isOpen, selectedPortfolio])
+  }, [asset, isOpen, selectedPortfolio]) // Re-run if portfolio changes
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
 
     try {
-        // 1. Fetch ALL transactions for these asset IDs
-        // We implicitly join 'assets' to get the portfolio_id for filtering
+        let validAssetIds = asset.ids
+
+        // --- STEP 1: RESOLVE ASSET IDs ---
+        // If a specific portfolio is selected, we must ensure we only look at 
+        // the Asset ID that belongs to THAT portfolio.
+        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
+            const { data: assetData, error: assetError } = await supabase
+                .from('assets')
+                .select('id') // We only need the ID
+                .in('id', asset.ids) // Filter from the list of IDs passed to the drawer
+                .eq('portfolio_id', selectedPortfolio.id) // STRICTLY match current portfolio
+
+            if (assetError) {
+                console.error("Error verifying asset ownership:", assetError)
+                setTransactions([])
+                setLoading(false)
+                return
+            }
+
+            // If no assets match (e.g. stock exists in Portfolio A but we are viewing Portfolio B), return empty
+            if (!assetData || assetData.length === 0) {
+                setTransactions([])
+                setLoading(false)
+                return
+            }
+
+            // Use ONLY the IDs that belong to this portfolio
+            validAssetIds = assetData.map(a => a.id)
+        }
+
+        // --- STEP 2: FETCH TRANSACTIONS ---
+        // Now fetch transactions for the filtered list of IDs
         const { data, error } = await supabase
             .from('transactions')
-            .select(`
-                *,
-                assets (
-                    portfolio_id
-                )
-            `)
-            .in('asset_id', asset.ids)
+            .select('*')
+            .in('asset_id', validAssetIds) //
             .order('date', { ascending: false })
 
         if (error) throw error
-
-        let filteredData = data || []
-
-        // 2. CLIENT-SIDE FILTER (Robust)
-        // If a specific portfolio is selected (id is not 'all')
-        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            filteredData = filteredData.filter((txn: any) => {
-                // Ensure loose comparison (1 == '1') to avoid type mismatches
-                return txn.assets?.portfolio_id == selectedPortfolio.id
-            })
-        }
-
-        setTransactions(filteredData)
+        setTransactions(data || [])
 
     } catch (e) {
         console.error("Error fetching transactions:", e)
@@ -144,6 +158,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
+  // Formatter for Indian Market Cap (Cr/L)
   const formatMarketCap = (num: number) => {
       if (!num) return '-'
       if (num >= 10000000) {
@@ -220,7 +235,9 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             {loading ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>
             ) : transactions.length === 0 ? (
-                <p className="text-center text-slate-400">No transactions found for this portfolio.</p>
+                <div className="text-center py-8 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                    <p className="text-slate-400 text-sm">No transactions found for this portfolio.</p>
+                </div>
             ) : (
                 <div className="space-y-4">
                 {transactions.map((txn) => (
@@ -259,7 +276,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                             </div>
                             <div className="flex items-center gap-1 text-xs text-slate-500">
                                 <Calendar className="h-3 w-3" />
-                                {txn.date}
+                                {new Date(txn.date).toLocaleDateString()}
                             </div>
                             </div>
                         </div>
