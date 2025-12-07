@@ -6,7 +6,7 @@ import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info } from 
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
     PieChart, Pie, Cell, Legend 
-} from 'recharts' // Removed 'Sector'
+} from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
 import PortfolioHistoryChart from '@/components/portfolio-history-chart'
@@ -19,7 +19,6 @@ type ChartDataPoint = { date: string; invested: number; value: number }
 
 // --- HELPER COMPONENTS ---
 
-// 1. Custom Tooltip for Pie/Bar Charts (The Pro Styling)
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
@@ -32,7 +31,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
                         ₹{data.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                 </div>
-                {/* Show Percentage if available (Pie Chart) */}
                 {payload[0].percent !== undefined && (
                     <div className="flex items-center justify-between gap-4 text-xs mt-1">
                         <span className="text-slate-500 dark:text-slate-400">Allocation:</span>
@@ -243,19 +241,29 @@ export default function AnalyticsPage() {
         const allDatesSet = new Set<string>()
         Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
             if (!Array.isArray(history)) return
-            history.forEach((point: any) => { const d = point.date; allDatesSet.add(d); if (!priceLookup[d]) priceLookup[d] = {}; priceLookup[d][ticker] = point.price })
+            history.forEach((point: any) => { 
+                const d = point.date
+                allDatesSet.add(d) 
+                if (!priceLookup[d]) priceLookup[d] = {}
+                priceLookup[d][ticker] = point.price 
+            })
         })
         const sortedDates = Array.from(allDatesSet).sort()
         const finalChartData: ChartDataPoint[] = []
         const runningHoldings: Record<string, number> = {}
+        const lastKnownPrices: Record<string, number> = {} // <--- NEW: Forward Fill Tracker
+        
         let runningInvested = 0; let txnIndex = 0
 
         for (const date of sortedDates) {
             const dayStart = new Date(date).getTime()
+            
+            // 1. Process Transactions up to this date
             while (txnIndex < categoryTxns.length) {
                 const t = categoryTxns[txnIndex]
                 const tTime = new Date(t.date).getTime()
-                if (tTime > dayStart + 86400000) break; 
+                if (tTime > dayStart + 86400000) break; // Break if txn is in future relative to current loop date
+                
                 if (t.transaction_type === 'Buy') {
                     runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
                     runningInvested += (Number(t.price) * Number(t.quantity))
@@ -265,12 +273,29 @@ export default function AnalyticsPage() {
                 }
                 txnIndex++
             }
-            let dailyValue = 0; const daysPrices = priceLookup[date] || {}
+
+            // 2. Update Last Known Prices
+            // If data exists for today, update tracker. If not, we will use the old value.
+            const daysPrices = priceLookup[date] || {}
+            Object.keys(daysPrices).forEach(t => {
+                if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
+            })
+
+            // 3. Calculate Portfolio Value
+            let dailyValue = 0
             Object.keys(runningHoldings).forEach(ticker => {
                 const qty = runningHoldings[ticker]
-                if (qty > 0) { const price = daysPrices[ticker] || 0; if (price > 0) dailyValue += (qty * price) }
+                if (qty > 0) { 
+                    // Use today's price OR the last known price to prevent dips
+                    const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
+                    if (price > 0) dailyValue += (qty * price) 
+                }
             })
-            if (runningInvested > 0 || dailyValue > 0) finalChartData.push({ date, invested: Math.max(0, runningInvested), value: dailyValue })
+
+            // Only push points where we have investment or value
+            if (runningInvested > 0 || dailyValue > 0) {
+                finalChartData.push({ date, invested: Math.max(0, runningInvested), value: dailyValue })
+            }
         }
         setChartData(finalChartData)
       } catch (e) { console.error(e) } finally { setChartLoading(false) }
@@ -346,11 +371,11 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* 5. RISK ANALYSIS (Fixed) */}
+      {/* 5. RISK ANALYSIS */}
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR EXPOSURE (Simple Pie) */}
+        {/* 1. SECTOR EXPOSURE */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
@@ -385,7 +410,7 @@ export default function AnalyticsPage() {
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE RADAR (Horizontal Bar) */}
+        {/* 2. CONGLOMERATE RADAR */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
