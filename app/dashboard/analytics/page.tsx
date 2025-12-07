@@ -384,7 +384,7 @@ export default function AnalyticsPage() {
             
             <div className="flex-1 min-h-0 relative pb-4 [&_*:focus]:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                    <PieChart margin={{ top: 10, right: 0, bottom: 80, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" cy="50%" 
@@ -404,7 +404,10 @@ export default function AnalyticsPage() {
                                 />
                             ))}
                         </Pie>
-                        <Tooltip content={<CustomTooltip />} />
+                        <Tooltip 
+                            content={<CustomTooltip />} 
+                            position={{ x: 10, y: 10 }}
+                        />
                         <Legend 
                             layout="horizontal" 
                             verticalAlign="bottom" 
@@ -417,7 +420,7 @@ export default function AnalyticsPage() {
                 </ResponsiveContainer>
                 
                 {/* Center Label - Perfectly Centered & Safe */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none pb-8 z-0">
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-10">
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
                         ₹{(metrics.netWorth / 100000).toFixed(2)}L
