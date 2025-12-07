@@ -386,46 +386,58 @@ export default function AnalyticsPage() {
             </h3>
             
             <div className="flex-1 min-h-0 relative [&_*:focus]:outline-none">
-                <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 20, right: 0, bottom: 100, left: 0 }}>
-                        <Pie 
-                            data={sectorData} 
-                            cx="50%" 
-                            cy="40%" 
-                            innerRadius={70} 
-                            outerRadius={90} 
-                            paddingAngle={2} 
-                            dataKey="value"
-                            activeShape={renderActiveShape} 
-                            style={{ outline: 'none' }}
-                        >
+                <div className="absolute inset-0 flex flex-col">
+                    {/* Chart Container */}
+                    <div className="flex-1 relative" style={{ minHeight: 0 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie 
+                                    data={sectorData} 
+                                    cx="50%" 
+                                    cy="50%" 
+                                    innerRadius={70} 
+                                    outerRadius={90} 
+                                    paddingAngle={2} 
+                                    dataKey="value"
+                                    activeShape={renderActiveShape} 
+                                    style={{ outline: 'none' }}
+                                >
+                                    {sectorData.map((entry, index) => (
+                                        <Cell 
+                                            key={`cell-${index}`} 
+                                            fill={COLORS[index % COLORS.length]} 
+                                            strokeWidth={0}
+                                            style={{ outline: 'none' }} 
+                                        />
+                                    ))}
+                                </Pie>
+                                <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} wrapperStyle={{ zIndex: 1000 }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                        
+                        {/* Center Label - Now positioned relative to chart container */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
+                            <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
+                                ₹{(metrics.netWorth / 100000).toFixed(2)}L
+                            </p>
+                        </div>
+                    </div>
+                    
+                    {/* Legend Container - Separated */}
+                    <div className="pt-4 pb-2 overflow-auto" style={{ maxHeight: '120px' }}>
+                        <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px]">
                             {sectorData.map((entry, index) => (
-                                <Cell 
-                                    key={`cell-${index}`} 
-                                    fill={COLORS[index % COLORS.length]} 
-                                    strokeWidth={0}
-                                    style={{ outline: 'none' }} 
-                                />
+                                <div key={`legend-${index}`} className="flex items-center gap-1">
+                                    <div 
+                                        className="w-2 h-2 rounded-full" 
+                                        style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                                    />
+                                    <span className="text-slate-600 dark:text-slate-400">{entry.name}</span>
+                                </div>
                             ))}
-                        </Pie>
-                        <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} wrapperStyle={{ zIndex: 1000 }} />
-                        <Legend 
-                            layout="horizontal" 
-                            verticalAlign="bottom" 
-                            align="center" 
-                            wrapperStyle={{fontSize: '10px', paddingTop: '8px', maxHeight: '100px', overflow: 'auto'}} 
-                            iconSize={8} 
-                            iconType="circle" 
-                        />
-                    </PieChart>
-                </ResponsiveContainer>
-                
-                {/* Center Label */}
-                <div className="absolute top-[35%] md:top-[38%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
-                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
-                    <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
-                        ₹{(metrics.netWorth / 100000).toFixed(2)}L
-                    </p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
