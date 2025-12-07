@@ -387,11 +387,11 @@ export default function AnalyticsPage() {
             
             <div className="flex-1 min-h-0 relative [&_*:focus]:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 10, right: 0, bottom: 10, left: 0 }}>
+                    <PieChart margin={{ top: 20, right: 0, bottom: 100, left: 0 }}>
                         <Pie 
                             data={sectorData} 
                             cx="50%" 
-                            cy="45%" 
+                            cy="40%" 
                             innerRadius={70} 
                             outerRadius={90} 
                             paddingAngle={2} 
@@ -413,7 +413,7 @@ export default function AnalyticsPage() {
                             layout="horizontal" 
                             verticalAlign="bottom" 
                             align="center" 
-                            wrapperStyle={{fontSize: '10px', paddingTop: '16px', maxHeight: '120px', overflow: 'auto'}} 
+                            wrapperStyle={{fontSize: '10px', paddingTop: '8px', maxHeight: '100px', overflow: 'auto'}} 
                             iconSize={8} 
                             iconType="circle" 
                         />
@@ -421,7 +421,7 @@ export default function AnalyticsPage() {
                 </ResponsiveContainer>
                 
                 {/* Center Label */}
-                <div className="absolute top-[45%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
+                <div className="absolute top-[35%] md:top-[38%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
                         ₹{(metrics.netWorth / 100000).toFixed(2)}L
