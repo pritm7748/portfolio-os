@@ -40,63 +40,63 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
-        // Fetch fundamentals only for stocks
+        // Only fetch fundamentals for Stocks/MFs
         if (!asset.ticker.startsWith('COMMODITY:')) {
             fetchFundamentals(asset.ticker)
         } else {
             setStats(null)
         }
     }
-  }, [asset, isOpen, selectedPortfolio]) // Re-run if portfolio changes
+  }, [asset, isOpen, selectedPortfolio]) // Re-run if portfolio changes or drawer opens
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
 
     try {
-        let validAssetIds = asset.ids
+        let validAssetIds: number[] = []
 
-        // --- STEP 1: RESOLVE ASSET IDs ---
-        // If a specific portfolio is selected, we must ensure we only look at 
-        // the Asset ID that belongs to THAT portfolio.
+        // --- STEP 1: RESOLVE FRESH ASSET IDs ---
+        // We do not trust asset.ids from props because they might be aggregated.
+        // We query the DB for the asset ID that matches the Ticker AND the Active Portfolio.
+        
+        let assetQuery = supabase
+            .from('assets')
+            .select('id')
+            .eq('ticker', asset.ticker) // Always match the ticker
+
+        // If a specific portfolio is selected (and it's not "All Portfolios")
         if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            const { data: assetData, error: assetError } = await supabase
-                .from('assets')
-                .select('id') // We only need the ID
-                .in('id', asset.ids) // Filter from the list of IDs passed to the drawer
-                .eq('portfolio_id', selectedPortfolio.id) // STRICTLY match current portfolio
-
-            if (assetError) {
-                console.error("Error verifying asset ownership:", assetError)
-                setTransactions([])
-                setLoading(false)
-                return
-            }
-
-            // If no assets match (e.g. stock exists in Portfolio A but we are viewing Portfolio B), return empty
-            if (!assetData || assetData.length === 0) {
-                setTransactions([])
-                setLoading(false)
-                return
-            }
-
-            // Use ONLY the IDs that belong to this portfolio
-            validAssetIds = assetData.map(a => a.id)
+            assetQuery = assetQuery.eq('portfolio_id', selectedPortfolio.id)
         }
 
+        const { data: assetData, error: assetError } = await assetQuery
+
+        if (assetError) throw assetError
+
+        if (!assetData || assetData.length === 0) {
+            console.log("No asset found for this portfolio/ticker combination.")
+            setTransactions([])
+            setLoading(false)
+            return
+        }
+
+        validAssetIds = assetData.map(a => a.id)
+
         // --- STEP 2: FETCH TRANSACTIONS ---
-        // Now fetch transactions for the filtered list of IDs
-        const { data, error } = await supabase
+        // Now we fetch transactions specifically for the IDs we just found.
+        const { data: txnData, error: txnError } = await supabase
             .from('transactions')
             .select('*')
-            .in('asset_id', validAssetIds) //
+            .in('asset_id', validAssetIds)
             .order('date', { ascending: false })
 
-        if (error) throw error
-        setTransactions(data || [])
+        if (txnError) throw txnError
 
-    } catch (e) {
-        console.error("Error fetching transactions:", e)
+        setTransactions(txnData || [])
+
+    } catch (e: any) {
+        console.error("Error fetching transactions:", e.message)
         setTransactions([])
     } finally {
         setLoading(false)
@@ -139,8 +139,8 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             .eq('id', id)
         if (error) throw error
         setEditingId(null)
-        fetchHistory()
-        onUpdate()
+        fetchHistory() // Refresh list
+        onUpdate()     // Refresh parent holdings
     } catch (e: any) {
         alert("Update failed: " + e.message)
     }
@@ -150,15 +150,16 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     if (!confirm('Delete this transaction?')) return
     const { error } = await supabase.from('transactions').delete().eq('id', txnId)
     if (!error) {
+        // Optimistic update
         const remaining = transactions.filter(t => t.id !== txnId)
         setTransactions(remaining)
         onUpdate() 
         if (remaining.length === 0) onClose()
-        else fetchHistory()
+        else fetchHistory() // Full refresh to be safe
     }
   }
 
-  // Formatter for Indian Market Cap (Cr/L)
+  // Formatter for Indian Market Cap
   const formatMarketCap = (num: number) => {
       if (!num) return '-'
       if (num >= 10000000) {
@@ -178,19 +179,28 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative h-full w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden dark:bg-slate-900">
+      
+      {/* Drawer */}
+      <div className="relative h-full w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden dark:bg-slate-900 animate-in slide-in-from-right duration-300">
         
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 p-6 bg-slate-50 dark:bg-slate-900 dark:border-slate-800">
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white">{asset.name}</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">{asset.ticker}</p>
+            <div className="flex items-center gap-2">
+                <span className="text-sm font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                    {asset.ticker}
+                </span>
+            </div>
           </div>
           <button onClick={onClose} className="rounded-full p-2 hover:bg-white hover:shadow-sm transition dark:hover:bg-slate-800">
             <X className="h-6 w-6 text-slate-500" />
           </button>
         </div>
 
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
             
             {/* Fundamentals Card */}
@@ -228,6 +238,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                 </div>
             )}
 
+            {/* Transactions Section */}
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <BarChart3 className="h-3 w-3" /> Transaction History
             </h3>
@@ -235,14 +246,16 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             {loading ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-600" /></div>
             ) : transactions.length === 0 ? (
-                <div className="text-center py-8 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                <div className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-slate-100 rounded-xl dark:border-slate-800">
                     <p className="text-slate-400 text-sm">No transactions found for this portfolio.</p>
+                    <p className="text-xs text-slate-300 mt-1">Try switching portfolios if you don't see what you expect.</p>
                 </div>
             ) : (
                 <div className="space-y-4">
                 {transactions.map((txn) => (
                     <div key={txn.id} className={`rounded-lg border p-4 transition ${editingId === txn.id ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-slate-100 bg-white dark:bg-slate-900 dark:border-slate-800'}`}>
                     
+                    {/* EDIT MODE */}
                     {editingId === txn.id ? (
                         <div className="space-y-3">
                             <div className="flex gap-2">
@@ -265,26 +278,27 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                             </div>
                         </div>
                     ) : (
+                        /* VIEW MODE */
                         <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-4">
-                            <div className={`rounded-full p-2 ${txn.transaction_type === 'Buy' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>
-                            {txn.transaction_type === 'Buy' ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                            <div className="flex items-center gap-4">
+                                <div className={`rounded-full p-2 ${txn.transaction_type === 'Buy' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                    {txn.transaction_type === 'Buy' ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                                </div>
+                                <div>
+                                    <div className="font-semibold text-slate-900 dark:text-white">
+                                        {txn.transaction_type} <span className="text-slate-500 dark:text-slate-400">{txn.quantity} @ ₹{txn.price}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-xs text-slate-500">
+                                        <Calendar className="h-3 w-3" />
+                                        {new Date(txn.date).toLocaleDateString()}
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                            <div className="font-semibold text-slate-900 dark:text-white">
-                                {txn.transaction_type} <span className="text-slate-500 dark:text-slate-400">{txn.quantity} @ ₹{txn.price}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-xs text-slate-500">
-                                <Calendar className="h-3 w-3" />
-                                {new Date(txn.date).toLocaleDateString()}
-                            </div>
-                            </div>
-                        </div>
 
-                        <div className="flex items-center gap-1">
-                            <button onClick={() => handleStartEdit(txn)} className="p-2 text-slate-400 hover:text-indigo-600 transition dark:hover:text-indigo-400" title="Edit"><Edit2 className="h-4 w-4" /></button>
-                            <button onClick={() => handleDelete(txn.id)} className="p-2 text-slate-400 hover:text-red-600 transition dark:hover:text-red-400" title="Delete"><Trash2 className="h-4 w-4" /></button>
-                        </div>
+                            <div className="flex items-center gap-1">
+                                <button onClick={() => handleStartEdit(txn)} className="p-2 text-slate-400 hover:text-indigo-600 transition dark:hover:text-indigo-400" title="Edit"><Edit2 className="h-4 w-4" /></button>
+                                <button onClick={() => handleDelete(txn.id)} className="p-2 text-slate-400 hover:text-red-600 transition dark:hover:text-red-400" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                            </div>
                         </div>
                     )}
                     </div>
