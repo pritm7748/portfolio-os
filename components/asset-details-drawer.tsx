@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, Activity, BarChart3 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { usePortfolio } from '@/context/portfolio-context' // <--- IMPORT ADDED
+import { usePortfolio } from '@/context/portfolio-context'
 
 type AssetDetailsDrawerProps = {
   asset: { ids: number[]; name: string; ticker: string } | null
@@ -22,7 +22,7 @@ type Fundamentals = {
 }
 
 export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }: AssetDetailsDrawerProps) {
-  const { selectedPortfolio } = usePortfolio() // <--- GET SELECTED PORTFOLIO
+  const { selectedPortfolio } = usePortfolio()
   
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,35 +47,51 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
             setStats(null)
         }
     }
-  }, [asset, isOpen, selectedPortfolio]) // Re-fetch if portfolio changes
+  }, [asset, isOpen, selectedPortfolio])
 
   const fetchHistory = async () => {
     if (!asset) return
     setLoading(true)
 
-    // 1. Base Query: Join 'assets' table to access 'portfolio_id'
-    let query = supabase
-      .from('transactions')
-      .select('*, assets!inner(portfolio_id)') // Inner join to filter by parent asset's portfolio
-      .in('asset_id', asset.ids)
-      .order('date', { ascending: false })
+    try {
+        let targetIds = asset.ids
 
-    // 2. Apply Portfolio Filter
-    // If a specific portfolio is selected (not 'all'), enforce strict filtering
-    if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-        query = query.eq('assets.portfolio_id', selectedPortfolio.id)
-    }
+        // 1. FILTER: If a specific portfolio is selected, verify which Asset IDs belong to it
+        if (selectedPortfolio && selectedPortfolio.id !== 'all') {
+            const { data: validAssets, error: assetError } = await supabase
+                .from('assets')
+                .select('id')
+                .in('id', asset.ids)
+                .eq('portfolio_id', selectedPortfolio.id)
+            
+            if (assetError) throw assetError
+            
+            // If no assets match the current portfolio (rare edge case), show nothing
+            if (!validAssets || validAssets.length === 0) {
+                setTransactions([])
+                setLoading(false)
+                return
+            }
 
-    const { data, error } = await query
-    
-    if (error) {
-        console.error("Error fetching transactions:", error)
-        setTransactions([])
-    } else {
+            targetIds = validAssets.map(a => a.id)
+        }
+
+        // 2. FETCH: Get transactions only for the valid filtered IDs
+        const { data, error } = await supabase
+            .from('transactions')
+            .select('*')
+            .in('asset_id', targetIds)
+            .order('date', { ascending: false })
+
+        if (error) throw error
         setTransactions(data || [])
+
+    } catch (e) {
+        console.error("Error fetching transactions:", e)
+        setTransactions([])
+    } finally {
+        setLoading(false)
     }
-    
-    setLoading(false)
   }
 
   const fetchFundamentals = async (ticker: string) => {
