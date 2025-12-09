@@ -46,7 +46,7 @@ export default function PulsePage() {
               <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Zap className="h-5 w-5 text-amber-500" /> Big Money Radar
               </h3>
-              <p className="text-xs text-slate-500">Stocks with huge volume spikes (>2.5x avg). Potential bulk deals.</p>
+              <p className="text-xs text-slate-500">Stocks with huge volume spikes (&gt;2.5x avg). Potential bulk deals.</p>
               
               {!data?.shockers || data.shockers.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
