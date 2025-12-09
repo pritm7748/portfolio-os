@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     const shockers: any[] = []
     const macro: any[] = []
 
-    // 2. FETCH QUOTES (Batched)
+    // 2. FETCH QUOTES
     const CHUNK_SIZE = 30
     const quoteChunks = []
     
@@ -41,7 +41,6 @@ export async function POST(request: Request) {
         quoteChunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
-    // FIX: Explicitly cast the promise to avoid 'never' type error
     const chunkResults = await Promise.all(
         quoteChunks.map(chunk => 
             (yahooFinance.quote(chunk) as Promise<any[]>).catch((e: any) => {
@@ -53,7 +52,7 @@ export async function POST(request: Request) {
     
     const quoteResults = chunkResults.flat()
 
-    // 3. Process Quotes
+    // 3. Process Quotes & LOG DEBUG INFO
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
@@ -69,11 +68,17 @@ export async function POST(request: Request) {
             return
         }
 
-        // B. VOLUME SHOCKERS
+        // B. VOLUME SHOCKERS DEBUGGING
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
+        const lastTradeTime = q.regularMarketTime ? new Date(q.regularMarketTime).toLocaleString() : 'Unknown Time'
 
+        // --- DEBUG LOGGING ---
+        // This will print to your Vercel Function Logs
+        console.log(`[Pulse DEBUG] ${q.symbol.padEnd(12)} | Vol: ${vol.toLocaleString().padEnd(10)} | Avg: ${avgVol.toLocaleString().padEnd(10)} | Ratio: ${ratio.toFixed(1)}x | Date: ${lastTradeTime}`)
+
+        // Threshold Logic
         if (ratio > 2.5 && vol > 10000) {
             shockers.push({
                 ticker: q.symbol.replace('.NS', ''),
@@ -85,7 +90,7 @@ export async function POST(request: Request) {
         }
     })
 
-    // 4. DEEP SCAN (Events & Insiders)
+    // 4. DEEP SCAN
     await Promise.all(deepScanHoldings.map(async (ticker) => {
         try {
             const result = await yahooFinance.quoteSummary(ticker, { 
