@@ -1,22 +1,22 @@
 import { NextResponse } from 'next/server'
 import YahooFinance from 'yahoo-finance2'
 
+// --- CONFIGURATION UPDATED ---
 const MACRO_TICKERS = [
-    { symbol: 'INR=X', name: 'USD/INR', type: 'Currency' },
-    { symbol: 'CL=F', name: 'Brent Crude', type: 'Commodity' },
-    { symbol: 'GC=F', name: 'Gold (Global)', type: 'Commodity' },
-    { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond' },
-    { symbol: '^NSEBANK', name: 'Bank Nifty', type: 'Index' }
+    { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
+    { symbol: 'CL=F', name: 'Brent Crude', type: 'Commodity', prefix: '$', suffix: '' },
+    { symbol: 'GC=F', name: 'Gold (Global)', type: 'Commodity', prefix: '$', suffix: '' },
+    { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
+    // Bank Nifty Removed
 ]
 
 export async function POST(request: Request) {
-  // 1. Instantiate Library (Required for Vercel)
   const yahooFinance = new YahooFinance()
 
   try {
     const { tickers } = await request.json()
     
-    // 2. Prepare Ticker List
+    // 1. Prepare Ticker List
     const uniqueTickers = Array.from(new Set(tickers as string[]))
     
     const allHoldings = uniqueTickers.map((t) => {
@@ -27,17 +27,14 @@ export async function POST(request: Request) {
          return clean
     })
 
-    // FIX: Removed the .slice(0, 20) limit.
-    // Now scans the entire portfolio for Insider/Events.
-    const deepScanHoldings = allHoldings 
+    const deepScanHoldings = allHoldings
 
     const events: any[] = []
     const insiders: any[] = []
     const shockers: any[] = []
     const macro: any[] = []
 
-    // 3. FETCH QUOTES (Batched for Speed)
-    // Used for "Big Money Radar" (Volume/Price)
+    // 2. FETCH QUOTES (Batched)
     const CHUNK_SIZE = 30
     const quoteChunks = []
     
@@ -49,7 +46,6 @@ export async function POST(request: Request) {
 
     const chunkResults = await Promise.all(
         quoteChunks.map(chunk => 
-            // Explicit cast to fix TS 'never' error
             (yahooFinance.quote(chunk) as Promise<any[]>).catch((e: any) => {
                 console.warn("Quote batch failed:", e.message)
                 return []
@@ -59,7 +55,7 @@ export async function POST(request: Request) {
     
     const quoteResults = chunkResults.flat()
 
-    // 4. Process Quotes
+    // 3. Process Quotes
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
@@ -70,21 +66,19 @@ export async function POST(request: Request) {
                 name: macroItem.name,
                 price: q.regularMarketPrice || 0,
                 change: q.regularMarketChangePercent || 0,
-                type: macroItem.type
+                type: macroItem.type,
+                // Pass formatting info to frontend
+                prefix: macroItem.prefix,
+                suffix: macroItem.suffix
             })
             return
         }
 
-        // B. VOLUME SHOCKERS (Big Money Radar)
+        // B. VOLUME SHOCKERS
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
         
-        // Debug Log
-        if (q.symbol.includes('ERIS') || q.symbol.includes('ANAND')) {
-             console.log(`[Pulse DEBUG] ${q.symbol}: Vol=${vol}, Avg=${avgVol}, Ratio=${ratio.toFixed(2)}x`)
-        }
-
         if (ratio > 2.5 && vol > 10000) {
             shockers.push({
                 ticker: q.symbol.replace('.NS', ''),
@@ -96,11 +90,9 @@ export async function POST(request: Request) {
         }
     })
 
-    // 5. DEEP SCAN (Events & Insiders)
-    // Now running on ALL holdings (Parallel Execution)
+    // 4. DEEP SCAN (Events & Insiders)
     await Promise.all(deepScanHoldings.map(async (ticker) => {
         try {
-            // Fetch heavyweight modules
             const result = await yahooFinance.quoteSummary(ticker, { 
                 modules: ['calendarEvents', 'insiderTransactions'] 
             }) as any
@@ -120,7 +112,7 @@ export async function POST(request: Request) {
                 }
             }
 
-            // Insider Activity
+            // Insiders
             const txns = result.insiderTransactions?.transactions || []
             txns.forEach((t: any) => {
                  if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 90)) {
@@ -137,7 +129,7 @@ export async function POST(request: Request) {
             })
 
         } catch (e) {
-            // Silent fail for individual tickers is expected if data is missing
+            // Ignore
         }
     }))
 

@@ -7,8 +7,7 @@ import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Act
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
   
-  // 1. GET ALL UNIQUE TICKERS (Removed Top 15 Limit)
-  // We need to scan everything to catch volume shockers in small holdings
+  // 1. GET ALL UNIQUE TICKERS
   const allTickers = useMemo(() => {
       if (!transactions) return []
       return Array.from(new Set(transactions.map(t => t.assets.ticker)))
@@ -22,7 +21,7 @@ export default function PulsePage() {
     <div className="space-y-8 pb-20">
       
       {/* 1. MACRO DASHBOARD */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4"> {/* Changed cols to 4 since Bank Nifty is gone */}
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
@@ -30,7 +29,10 @@ export default function PulsePage() {
                       {m.name}
                   </div>
                   <div className="mt-2 flex items-baseline gap-2">
-                      <span className="text-xl font-bold text-slate-900 dark:text-white">{m.price.toFixed(2)}</span>
+                      <span className="text-xl font-bold text-slate-900 dark:text-white">
+                          {/* Display Prefix (₹/$) + Price + Suffix (%) */}
+                          {m.prefix}{m.price.toFixed(2)}{m.suffix}
+                      </span>
                       <span className={`text-xs font-medium ${m.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                           {m.change > 0 ? '+' : ''}{m.change.toFixed(2)}%
                       </span>
@@ -41,7 +43,7 @@ export default function PulsePage() {
 
       <div className="grid gap-8 lg:grid-cols-3">
           
-          {/* COL 1: BIG MONEY RADAR (Volume Shockers) */}
+          {/* COL 1: BIG MONEY RADAR */}
           <div className="space-y-4">
               <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Zap className="h-5 w-5 text-amber-500" /> Big Money Radar
