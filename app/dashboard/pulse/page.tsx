@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
-import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity } from 'lucide-react'
+import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle } from 'lucide-react'
 
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
@@ -104,7 +104,7 @@ export default function PulsePage() {
               )}
           </div>
 
-          {/* COL 3: WHALE WATCH (Insider) */}
+          {/* COL 3: WHALE WATCH (Insider - FIXED LOGIC) */}
           <div className="space-y-4">
               <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Briefcase className="h-5 w-5 text-purple-500" /> Insider Activity
@@ -117,12 +117,23 @@ export default function PulsePage() {
               ) : (
                   <div className="space-y-3">
                       {data.insiders.map((txn: any, i: number) => {
-                          // FIX: Expanded keywords list to catch 'bought', 'acquisition', 'grant'
                           const actionText = (txn.action || '').toLowerCase()
+                          
+                          // 1. Check for BUY Keywords
                           const isBuy = [
                               'buy', 'bought', 'purchase', 'acquire', 'acquisition', 
-                              'grant', 'award', 'subscribe', 'allotment'
-                          ].some(keyword => actionText.includes(keyword))
+                              'grant', 'award', 'subscribe', 'allotment', 'inter-se', 'creeping'
+                          ].some(k => actionText.includes(k))
+
+                          // 2. Check for SELL Keywords
+                          const isSell = [
+                              'sell', 'sold', 'sale', 'disposal', 'dispose', 'revoke', 'invocation'
+                          ].some(k => actionText.includes(k))
+
+                          // 3. Determine Display Type (Buy / Sell / Other)
+                          let displayType = 'Other'
+                          if (isBuy) displayType = 'Buy'
+                          else if (isSell) displayType = 'Sell'
 
                           return (
                               <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -135,10 +146,22 @@ export default function PulsePage() {
                                   </p>
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
                                       <div className="flex flex-col">
-                                          <span className={`flex items-center gap-1 text-xs font-bold ${isBuy ? 'text-green-600' : 'text-red-600'}`}>
-                                              {isBuy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                                              {isBuy ? 'Buy' : 'Sell'}
-                                          </span>
+                                          {displayType === 'Buy' && (
+                                              <span className="flex items-center gap-1 text-xs font-bold text-green-600">
+                                                  <TrendingUp className="h-3 w-3" /> Buy
+                                              </span>
+                                          )}
+                                          {displayType === 'Sell' && (
+                                              <span className="flex items-center gap-1 text-xs font-bold text-red-600">
+                                                  <TrendingDown className="h-3 w-3" /> Sell
+                                              </span>
+                                          )}
+                                          {displayType === 'Other' && (
+                                              <span className="flex items-center gap-1 text-xs font-bold text-slate-500">
+                                                  <HelpCircle className="h-3 w-3" /> {txn.action || 'Unknown'}
+                                              </span>
+                                          )}
+                                          
                                           <span className="text-[10px] text-slate-400 font-medium mt-0.5">
                                               {txn.shares > 1000 ? (txn.shares / 1000).toFixed(1) + 'k' : txn.shares} Shares
                                           </span>
