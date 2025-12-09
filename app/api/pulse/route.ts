@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import YahooFinance from 'yahoo-finance2'
 
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency' },
@@ -10,10 +10,15 @@ const MACRO_TICKERS = [
 ]
 
 export async function POST(request: Request) {
+  // 1. Instantiate the library (Required for Vercel/Next.js environment)
+  const yahooFinance = new YahooFinance()
+  
+  // Note: 'suppressNotices' removed as it does not exist on the instance.
+
   try {
     const { tickers } = await request.json()
     
-    // 1. Prepare Ticker List
+    // 2. Prepare Ticker List
     const uniqueTickers = Array.from(new Set(tickers as string[]))
     
     const allHoldings = uniqueTickers.map((t) => {
@@ -31,7 +36,7 @@ export async function POST(request: Request) {
     const shockers: any[] = []
     const macro: any[] = []
 
-    // 2. FETCH QUOTES
+    // 3. FETCH QUOTES (Batched)
     const CHUNK_SIZE = 30
     const quoteChunks = []
     
@@ -43,6 +48,7 @@ export async function POST(request: Request) {
 
     const chunkResults = await Promise.all(
         quoteChunks.map(chunk => 
+            // FIX: Explicit cast to Promise<any[]> to avoid TS errors
             (yahooFinance.quote(chunk) as Promise<any[]>).catch((e: any) => {
                 console.warn("Quote batch failed:", e.message)
                 return []
@@ -52,7 +58,7 @@ export async function POST(request: Request) {
     
     const quoteResults = chunkResults.flat()
 
-    // 3. Process Quotes & LOG DEBUG INFO
+    // 4. Process Quotes
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
@@ -68,17 +74,16 @@ export async function POST(request: Request) {
             return
         }
 
-        // B. VOLUME SHOCKERS DEBUGGING
+        // B. VOLUME SHOCKERS
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
-        const lastTradeTime = q.regularMarketTime ? new Date(q.regularMarketTime).toLocaleString() : 'Unknown Time'
+        
+        // Debug Log
+        if (q.symbol.includes('ERIS') || q.symbol.includes('ANAND')) {
+             console.log(`[Pulse DEBUG] ${q.symbol}: Vol=${vol}, Avg=${avgVol}, Ratio=${ratio.toFixed(2)}x`)
+        }
 
-        // --- DEBUG LOGGING ---
-        // This will print to your Vercel Function Logs
-        console.log(`[Pulse DEBUG] ${q.symbol.padEnd(12)} | Vol: ${vol.toLocaleString().padEnd(10)} | Avg: ${avgVol.toLocaleString().padEnd(10)} | Ratio: ${ratio.toFixed(1)}x | Date: ${lastTradeTime}`)
-
-        // Threshold Logic
         if (ratio > 2.5 && vol > 10000) {
             shockers.push({
                 ticker: q.symbol.replace('.NS', ''),
@@ -90,9 +95,10 @@ export async function POST(request: Request) {
         }
     })
 
-    // 4. DEEP SCAN
+    // 5. DEEP SCAN (Events & Insiders)
     await Promise.all(deepScanHoldings.map(async (ticker) => {
         try {
+            // Use 'as any' to bypass strict type checks on the result
             const result = await yahooFinance.quoteSummary(ticker, { 
                 modules: ['calendarEvents', 'insiderTransactions'] 
             }) as any
@@ -127,7 +133,7 @@ export async function POST(request: Request) {
             })
 
         } catch (e) {
-            // Ignore
+            // Ignore individual failures
         }
     }))
 
