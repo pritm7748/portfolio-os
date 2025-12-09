@@ -32,14 +32,11 @@ export default function HoldingsPage() {
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   
-  // UI State
   const [filterType, setFilterType] = useState('All')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // 1. DATA HOOKS (Instant Load from Cache)
   const { data: transactions, isLoading: txnsLoading, refetch: refetchTxns } = useTransactions()
 
-  // 2. Derive Tickers for Price Fetching
   const allTickers = useMemo(() => {
       if (!transactions) return []
       const set = new Set<string>()
@@ -47,12 +44,10 @@ export default function HoldingsPage() {
       return Array.from(set)
   }, [transactions])
 
-  // 3. Fetch Prices (Auto-Refresh)
   const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
   const loading = txnsLoading || pricesLoading
 
-  // 4. CALCULATION ENGINE (Memoized)
   const holdings = useMemo(() => {
       if (!transactions) return []
 
@@ -87,7 +82,6 @@ export default function HoldingsPage() {
               }
           }
           
-          // Collect asset IDs for the details drawer
           if (!map[ticker].assetIds.includes(txn.asset_id)) {
              map[ticker].assetIds.push(txn.asset_id)
           }
@@ -99,7 +93,7 @@ export default function HoldingsPage() {
               assetLots[h.ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
           }
           
-          if (q <= 0.000001) return null // Hide fully sold assets
+          if (q <= 0.000001) return null
 
           h.quantity = q
           h.totalInvested = c
@@ -108,7 +102,6 @@ export default function HoldingsPage() {
           const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
           let priceData = priceMap?.[h.ticker]
           
-          // Fuzzy match logic
           if (!priceData && priceMap) {
               const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
               if (foundKey) priceData = priceMap[foundKey]
@@ -129,7 +122,6 @@ export default function HoldingsPage() {
 
   }, [transactions, priceMap])
 
-  // Filter Logic
   const filteredHoldings = holdings.filter(h => {
       const matchesSearch = h.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             h.ticker.toLowerCase().includes(searchQuery.toLowerCase())
@@ -142,7 +134,6 @@ export default function HoldingsPage() {
       return matchesSearch
   })
 
-  // Handlers
   const handleAssetClick = (h: Holding) => {
       setSelectedAsset({ ids: h.assetIds, name: h.name, ticker: h.ticker })
       setIsDrawerOpen(true)
@@ -167,7 +158,6 @@ export default function HoldingsPage() {
   return (
     <div className="space-y-6 pb-20">
       
-      {/* ACTIONS ROW (Title Removed) */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-end">
         <div className="flex gap-2">
             <button onClick={() => setIsSplitModalOpen(true)} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
@@ -182,7 +172,6 @@ export default function HoldingsPage() {
         </div>
       </div>
 
-      {/* FILTERS & SEARCH */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-xs">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -205,7 +194,6 @@ export default function HoldingsPage() {
         </div>
       </div>
 
-      {/* TABLE */}
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
         <div className="overflow-x-auto">
             {filteredHoldings.length === 0 ? (
@@ -213,16 +201,20 @@ export default function HoldingsPage() {
                     <p>No holdings found matching your criteria.</p>
                 </div>
             ) : (
-            <table className="w-full text-left text-sm">
+            
+            // --- UPDATED TABLE ---
+            // Added min-w-[1000px] to force scrolling on mobile
+            // Removed 'hidden' classes from columns to show all data
+            <table className="w-full text-left text-sm min-w-[1000px] whitespace-nowrap">
                 <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                     <tr>
-                        <th className="px-6 py-4">Asset Name</th>
-                        <th className="hidden sm:table-cell px-4 py-4">Type</th>
+                        <th className="px-6 py-4 sticky left-0 bg-slate-50 dark:bg-slate-800 z-10">Asset Name</th>
+                        <th className="px-4 py-4">Type</th>
                         <th className="px-4 py-4 text-right">Qty</th>
-                        <th className="hidden md:table-cell px-4 py-4 text-right">Avg. Price</th>
+                        <th className="px-4 py-4 text-right">Avg. Price</th>
                         <th className="px-4 py-4 text-right">Live Price</th>
-                        <th className="hidden md:table-cell px-4 py-4 text-right">Day Change</th>
-                        <th className="hidden lg:table-cell px-4 py-4 text-right">Total Value</th>
+                        <th className="px-4 py-4 text-right">Day Change</th>
+                        <th className="px-4 py-4 text-right">Total Value</th>
                         <th className="px-4 py-4 text-right">Total P&L</th>
                         <th className="px-4 py-4"></th>
                     </tr>
@@ -234,11 +226,12 @@ export default function HoldingsPage() {
                         onClick={() => handleAssetClick(holding)}
                         className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                     >
-                        <td className="px-6 py-4">
+                        {/* Sticky Name Column for better scrolling UX */}
+                        <td className="px-6 py-4 sticky left-0 bg-white group-hover:bg-slate-50 dark:bg-slate-900 dark:group-hover:bg-slate-800/50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                             <div className="font-bold text-slate-900 dark:text-white">{holding.name}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400">{holding.ticker}</div>
                         </td>
-                        <td className="hidden sm:table-cell px-4 py-4">
+                        <td className="px-4 py-4">
                             <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                 {holding.type}
                             </span>
@@ -246,19 +239,19 @@ export default function HoldingsPage() {
                         <td className="px-4 py-4 text-right font-medium text-slate-700 dark:text-slate-300">
                             {holding.quantity}
                         </td>
-                        <td className="hidden md:table-cell px-4 py-4 text-right text-slate-600 dark:text-slate-400">
+                        <td className="px-4 py-4 text-right text-slate-600 dark:text-slate-400">
                             ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </td>
                         <td className="px-4 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">
                             ₹{holding.currentPrice.toLocaleString('en-IN')}
                         </td>
-                        <td className="hidden md:table-cell px-4 py-4 text-right">
+                        <td className="px-4 py-4 text-right">
                             <div className={`flex flex-col items-end ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 <span className="font-medium">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
                                 <span className="text-xs opacity-80">{Math.abs(holding.dayChangePercent).toFixed(2)}%</span>
                             </div>
                         </td>
-                        <td className="hidden lg:table-cell px-4 py-4 text-right font-semibold text-slate-900 dark:text-white">
+                        <td className="px-4 py-4 text-right font-semibold text-slate-900 dark:text-white">
                             ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                         </td>
                         <td className="px-4 py-4 text-right">
