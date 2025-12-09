@@ -117,7 +117,13 @@ export default function PulsePage() {
               ) : (
                   <div className="space-y-3">
                       {data.insiders.map((txn: any, i: number) => {
-                          const isBuy = txn.action.toLowerCase().includes('buy') || txn.action.toLowerCase().includes('purchase')
+                          // FIX: Expanded keywords list to catch 'bought', 'acquisition', 'grant'
+                          const actionText = (txn.action || '').toLowerCase()
+                          const isBuy = [
+                              'buy', 'bought', 'purchase', 'acquire', 'acquisition', 
+                              'grant', 'award', 'subscribe', 'allotment'
+                          ].some(keyword => actionText.includes(keyword))
+
                           return (
                               <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                                   <div className="flex justify-between items-start mb-1">
