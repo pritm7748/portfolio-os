@@ -13,86 +13,107 @@ export async function POST(request: Request) {
   try {
     const { tickers } = await request.json()
     
-    // 1. Prepare Ticker List (Holdings + Macro)
-    const safeHoldings = (tickers || []).slice(0, 15).map((t: string) => {
+    // 1. Prepare Ticker Lists
+    // List A: ALL tickers for Volume/Price check (Fast)
+    const allHoldings = (tickers || []).map((t: string) => {
          let clean = t.toUpperCase().replace(/\s/g, '')
          if (!clean.includes('.') && !clean.includes('^')) clean += '.NS'
          return clean
     })
+
+    // List B: Top 20 for Deep Scan (Events/Insiders) to save time
+    const deepScanHoldings = allHoldings.slice(0, 20)
 
     const events: any[] = []
     const insiders: any[] = []
     const shockers: any[] = []
     const macro: any[] = []
 
-    // 2. Fetch Macro Data
-    await Promise.all(MACRO_TICKERS.map(async (m) => {
-        try {
-            // FIX: Cast to 'any' to resolve TypeScript 'never' error
-            const q = await yahooFinance.quote(m.symbol) as any
-            
-            if (q) {
-                macro.push({
-                    name: m.name,
-                    price: q.regularMarketPrice || 0,
-                    change: q.regularMarketChangePercent || 0,
-                    type: m.type
-                })
-            }
-        } catch (e) { console.warn(`Macro fail: ${m.symbol}`, e) }
-    }))
+    // 2. FETCH MACRO & HOLDINGS DATA (Parallel)
+    // We fetch quote data for MACRO + ALL HOLDINGS in one go if possible, or batched.
+    // Yahoo's quote() can take an array.
+    
+    const allSymbols = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
+    
+    // Fetch Quotes in a single batch (very fast)
+    let quoteResults: any[] = []
+    try {
+        quoteResults = await yahooFinance.quote(allSymbols) as any[]
+    } catch (e) {
+        console.warn("Batch quote fetch failed, falling back to individual")
+    }
 
-    // 3. Process Holdings (Events, Insiders, VOLUME SHOCKERS)
-    await Promise.all(safeHoldings.map(async (ticker: string) => {
+    // Process Quotes (Macro + Volume Shockers)
+    quoteResults.forEach(q => {
+        // A. Check if it's a Macro Indicator
+        const macroItem = MACRO_TICKERS.find(m => m.symbol === q.symbol)
+        if (macroItem) {
+            macro.push({
+                name: macroItem.name,
+                price: q.regularMarketPrice || 0,
+                change: q.regularMarketChangePercent || 0,
+                type: macroItem.type
+            })
+            return
+        }
+
+        // B. Check for VOLUME SHOCKERS (Big Money Radar)
+        // If Volume > 2.5x Average Volume
+        const vol = q.regularMarketVolume || 0
+        const avgVol = q.averageDailyVolume3Month || 1
+        
+        // Filter out tiny volume stocks to avoid noise
+        if (vol > (avgVol * 2.5) && vol > 50000 && avgVol > 0) {
+            shockers.push({
+                ticker: q.symbol.replace('.NS', ''), // Clean name for display
+                volume: vol,
+                avgVolume: avgVol,
+                ratio: (vol / avgVol).toFixed(1) + 'x',
+                change: q.regularMarketChangePercent || 0
+            })
+        }
+    })
+
+    // 3. DEEP SCAN (Events & Insiders) - Slower, so we limit to top 20
+    await Promise.all(deepScanHoldings.map(async (ticker: string) => {
         try {
-            // Fetch Modules + Quote for Volume
-            // We use 'as any' here too for safety
             const result = await yahooFinance.quoteSummary(ticker, { 
-                modules: ['calendarEvents', 'insiderTransactions', 'price', 'summaryDetail'] 
+                modules: ['calendarEvents', 'insiderTransactions'] 
             }) as any
 
-            // A. Calendar
+            // Calendar
             const cal = result.calendarEvents
             if (cal?.earnings?.earningsDate) {
                 cal.earnings.earningsDate.forEach((date: Date) => {
-                    if (new Date(date) > new Date(Date.now() - 86400000 * 2)) {
-                        events.push({ ticker, type: 'Earnings', date: date, desc: `Earnings Announcement` })
+                    if (new Date(date) > new Date(Date.now() - 86400000)) {
+                        events.push({ ticker: ticker.replace('.NS',''), type: 'Earnings', date: date, desc: `Earnings` })
                     }
                 })
             }
             if (cal?.exDividendDate) {
-                if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 30)) {
-                    events.push({ ticker, type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend Date' })
+                if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 5)) {
+                    events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend' })
                 }
             }
 
-            // B. Insider Transactions
+            // Insider
             const txns = result.insiderTransactions?.transactions || []
             txns.forEach((t: any) => {
-                 if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 180)) {
+                 if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 90)) {
                      insiders.push({
-                         ticker, holder: t.filerName, relation: t.filerRelation,
-                         action: t.transactionText, shares: t.shares.raw, value: t.value.raw, date: t.startDate
+                         ticker: ticker.replace('.NS',''),
+                         holder: t.filerName,
+                         relation: t.filerRelation,
+                         action: t.transactionText,
+                         shares: t.shares.raw,
+                         value: t.value.raw,
+                         date: t.startDate
                      })
                  }
             })
 
-            // C. VOLUME SHOCKERS (Bulk Deal Proxy)
-            // If Volume > 2.5x Average Volume, it's suspicious/big activity
-            const vol = result.summaryDetail?.volume?.raw || 0
-            const avgVol = result.summaryDetail?.averageVolume?.raw || 1
-            if (vol > (avgVol * 2.5) && vol > 100000) {
-                shockers.push({
-                    ticker,
-                    volume: vol,
-                    avgVolume: avgVol,
-                    ratio: (vol / avgVol).toFixed(1) + 'x',
-                    change: result.price?.regularMarketChangePercent?.raw || 0
-                })
-            }
-
         } catch (e) {
-            console.warn(`Pulse fail for ${ticker}`)
+            // diverse error handling
         }
     }))
 

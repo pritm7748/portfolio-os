@@ -2,21 +2,19 @@
 
 import { useMemo } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
-import { Loader2, Calendar, User, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity } from 'lucide-react'
+import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity } from 'lucide-react'
 
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
   
-  const topTickers = useMemo(() => {
+  // 1. GET ALL UNIQUE TICKERS (Removed Top 15 Limit)
+  // We need to scan everything to catch volume shockers in small holdings
+  const allTickers = useMemo(() => {
       if (!transactions) return []
-      const map: Record<string, number> = {}
-      transactions.forEach(t => {
-          map[t.assets.ticker] = (map[t.assets.ticker] || 0) + (Number(t.quantity) * Number(t.price))
-      })
-      return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 15).map(x => x[0])
+      return Array.from(new Set(transactions.map(t => t.assets.ticker)))
   }, [transactions])
 
-  const { data, isLoading } = usePulse(topTickers)
+  const { data, isLoading } = usePulse(allTickers)
 
   if (isLoading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
@@ -52,7 +50,7 @@ export default function PulsePage() {
               
               {!data?.shockers || data.shockers.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
-                      No unusual volume detected.
+                      No unusual volume detected today.
                   </div>
               ) : (
                   <div className="space-y-3">
@@ -114,7 +112,7 @@ export default function PulsePage() {
 
               {!data?.insiders || data.insiders.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
-                      No recent insider trades.
+                      No recent insider trades found.
                   </div>
               ) : (
                   <div className="space-y-3">
