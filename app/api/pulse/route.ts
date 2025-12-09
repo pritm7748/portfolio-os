@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server'
 import YahooFinance from 'yahoo-finance2'
 
-// --- CONFIGURATION UPDATED ---
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
     { symbol: 'CL=F', name: 'Brent Crude', type: 'Commodity', prefix: '$', suffix: '' },
     { symbol: 'GC=F', name: 'Gold (Global)', type: 'Commodity', prefix: '$', suffix: '' },
     { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
-    // Bank Nifty Removed
 ]
 
 export async function POST(request: Request) {
@@ -18,26 +16,25 @@ export async function POST(request: Request) {
     
     // 1. Prepare Ticker List
     const uniqueTickers = Array.from(new Set(tickers as string[]))
-    
     const allHoldings = uniqueTickers.map((t) => {
          let clean = t.toUpperCase().trim()
-         if (!clean.includes('.') && !clean.includes('^')) {
-             clean += '.NS'
-         }
+         if (!clean.includes('.') && !clean.includes('^')) clean += '.NS'
          return clean
     })
 
-    const deepScanHoldings = allHoldings
+    const deepScanHoldings = allHoldings // Scan ALL holdings
 
     const events: any[] = []
     const insiders: any[] = []
     const shockers: any[] = []
     const macro: any[] = []
+    
+    // NEW: Price Map to calculate missing insider values
+    const livePrices: Record<string, number> = {}
 
     // 2. FETCH QUOTES (Batched)
     const CHUNK_SIZE = 30
     const quoteChunks = []
-    
     const symbolsToFetch = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
     
     for (let i = 0; i < symbolsToFetch.length; i += CHUNK_SIZE) {
@@ -46,20 +43,19 @@ export async function POST(request: Request) {
 
     const chunkResults = await Promise.all(
         quoteChunks.map(chunk => 
-            (yahooFinance.quote(chunk) as Promise<any[]>).catch((e: any) => {
-                console.warn("Quote batch failed:", e.message)
-                return []
-            })
+            (yahooFinance.quote(chunk) as Promise<any[]>).catch(() => [])
         )
     )
-    
     const quoteResults = chunkResults.flat()
 
     // 3. Process Quotes
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
-        // A. Macro Indicators
+        // Store Price for later
+        livePrices[q.symbol] = q.regularMarketPrice || 0
+
+        // A. Macro
         const macroItem = MACRO_TICKERS.find(m => m.symbol === q.symbol)
         if (macroItem) {
             macro.push({
@@ -67,14 +63,13 @@ export async function POST(request: Request) {
                 price: q.regularMarketPrice || 0,
                 change: q.regularMarketChangePercent || 0,
                 type: macroItem.type,
-                // Pass formatting info to frontend
                 prefix: macroItem.prefix,
                 suffix: macroItem.suffix
             })
             return
         }
 
-        // B. VOLUME SHOCKERS
+        // B. Volume Shockers
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
@@ -112,28 +107,36 @@ export async function POST(request: Request) {
                 }
             }
 
-            // Insiders
+            // Insiders (FIXED VALUE LOGIC)
             const txns = result.insiderTransactions?.transactions || []
             txns.forEach((t: any) => {
                  if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 90)) {
+                     
+                     // Safe Access for Shares
+                     const shares = t.shares?.raw || t.shares || 0
+                     
+                     // Calculate Value: explicit value OR shares * current price
+                     let value = t.value?.raw || t.value || 0
+                     if (value === 0 && shares > 0) {
+                         const currentPrice = livePrices[ticker] || 0
+                         value = shares * currentPrice
+                     }
+
                      insiders.push({
                          ticker: ticker.replace('.NS',''),
                          holder: t.filerName,
                          relation: t.filerRelation,
                          action: t.transactionText,
-                         shares: t.shares.raw,
-                         value: t.value.raw,
+                         shares: shares, // Pass Shares explicitly
+                         value: value,
                          date: t.startDate
                      })
                  }
             })
 
-        } catch (e) {
-            // Ignore
-        }
+        } catch (e) { }
     }))
 
-    // Sort Results
     events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     insiders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))

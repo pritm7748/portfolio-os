@@ -7,7 +7,6 @@ import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Act
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
   
-  // 1. GET ALL UNIQUE TICKERS
   const allTickers = useMemo(() => {
       if (!transactions) return []
       return Array.from(new Set(transactions.map(t => t.assets.ticker)))
@@ -21,7 +20,7 @@ export default function PulsePage() {
     <div className="space-y-8 pb-20">
       
       {/* 1. MACRO DASHBOARD */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4"> {/* Changed cols to 4 since Bank Nifty is gone */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
@@ -30,7 +29,6 @@ export default function PulsePage() {
                   </div>
                   <div className="mt-2 flex items-baseline gap-2">
                       <span className="text-xl font-bold text-slate-900 dark:text-white">
-                          {/* Display Prefix (₹/$) + Price + Suffix (%) */}
                           {m.prefix}{m.price.toFixed(2)}{m.suffix}
                       </span>
                       <span className={`text-xs font-medium ${m.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -48,7 +46,7 @@ export default function PulsePage() {
               <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Zap className="h-5 w-5 text-amber-500" /> Big Money Radar
               </h3>
-              <p className="text-xs text-slate-500">Stocks with huge volume spikes (&gt;2.5x avg). Potential bulk deals.</p>
+              <p className="text-xs text-slate-500">Stocks with huge volume spikes (>2.5x avg). Potential bulk deals.</p>
               
               {!data?.shockers || data.shockers.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
@@ -130,12 +128,17 @@ export default function PulsePage() {
                                       {txn.holder} ({txn.relation})
                                   </p>
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
-                                      <span className={`flex items-center gap-1 text-xs font-bold ${isBuy ? 'text-green-600' : 'text-red-600'}`}>
-                                          {isBuy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                                          {isBuy ? 'Buy' : 'Sell'}
-                                      </span>
-                                      <span className="text-xs font-mono text-slate-500">
-                                           ₹{(txn.value / 10000000).toFixed(2)}Cr
+                                      <div className="flex flex-col">
+                                          <span className={`flex items-center gap-1 text-xs font-bold ${isBuy ? 'text-green-600' : 'text-red-600'}`}>
+                                              {isBuy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                                              {isBuy ? 'Buy' : 'Sell'}
+                                          </span>
+                                          <span className="text-[10px] text-slate-400 font-medium mt-0.5">
+                                              {txn.shares > 1000 ? (txn.shares / 1000).toFixed(1) + 'k' : txn.shares} Shares
+                                          </span>
+                                      </div>
+                                      <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+                                           {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
                                       </span>
                                   </div>
                               </div>
