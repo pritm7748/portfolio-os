@@ -2,7 +2,57 @@
 
 import { useMemo } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
-import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle } from 'lucide-react'
+import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft } from 'lucide-react'
+
+// --- SMART CLASSIFIER UTILITY ---
+const getTransactionType = (txn: any) => {
+    const text = (txn.action || '').toLowerCase().trim()
+    const shares = Number(txn.shares) || 0
+    const value = Number(txn.value) || 0
+    const price = value > 0 && shares > 0 ? value / shares : 0
+
+    // 1. Explicit Types (Strong Match)
+    if (text.includes('buy') || text.includes('bought') || text.includes('purchase')) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
+    if (text.includes('sell') || text.includes('sold') || text.includes('sale') || text.includes('disposal')) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+    
+    // 2. Compensation / Grants
+    if (text.includes('grant') || text.includes('award') || text.includes('expire') || text.includes('vest')) {
+        return { label: 'Grant/Award', color: 'text-indigo-600', icon: Gift }
+    }
+
+    // 3. Conversions / Exercises
+    if (text.includes('exercise') || text.includes('conversion') || text.includes('opt') || text.includes('derivative')) {
+        return { label: 'Option Exercise', color: 'text-amber-600', icon: FileText }
+    }
+
+    // 4. Gifts
+    if (text.includes('gift') || text.includes('donat')) {
+        return { label: 'Gift', color: 'text-pink-600', icon: Gift }
+    }
+
+    // 5. Deduce "Other/Unknown" based on Math
+    if (text === '' || text.includes('other') || text.includes('unknown') || text.includes('statement')) {
+        // Huge volume check (likely just a holding report, not a trade)
+        if (Math.abs(shares) > 10000000 && value === 0) {
+            return { label: 'Holding Update', color: 'text-slate-500', icon: FileText }
+        }
+        
+        // Price is 0 or very low -> Likely a Grant or Bonus
+        if (price < 1 && shares > 0) {
+            return { label: 'Grant/Bonus', color: 'text-indigo-600', icon: Gift }
+        }
+
+        if (shares > 0) return { label: 'Accumulate', color: 'text-green-600', icon: TrendingUp }
+        if (shares < 0) return { label: 'Dispose', color: 'text-red-600', icon: TrendingDown }
+    }
+
+    // 6. Fallback: Show raw text if short, otherwise "Transfer"
+    return { 
+        label: text.length > 20 ? 'Transfer' : text || 'Unknown', 
+        color: 'text-slate-500', 
+        icon: ArrowRightLeft 
+    }
+}
 
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
@@ -104,7 +154,7 @@ export default function PulsePage() {
               )}
           </div>
 
-          {/* COL 3: WHALE WATCH (Insider - FIXED LOGIC) */}
+          {/* COL 3: WHALE WATCH (SMART CLASSIFIER) */}
           <div className="space-y-4">
               <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Briefcase className="h-5 w-5 text-purple-500" /> Insider Activity
@@ -117,24 +167,8 @@ export default function PulsePage() {
               ) : (
                   <div className="space-y-3">
                       {data.insiders.map((txn: any, i: number) => {
-                          const actionText = (txn.action || '').toLowerCase()
+                          const { label, color, icon: Icon } = getTransactionType(txn)
                           
-                          // 1. Check for BUY Keywords
-                          const isBuy = [
-                              'buy', 'bought', 'purchase', 'acquire', 'acquisition', 
-                              'grant', 'award', 'subscribe', 'allotment', 'inter-se', 'creeping'
-                          ].some(k => actionText.includes(k))
-
-                          // 2. Check for SELL Keywords
-                          const isSell = [
-                              'sell', 'sold', 'sale', 'disposal', 'dispose', 'revoke', 'invocation'
-                          ].some(k => actionText.includes(k))
-
-                          // 3. Determine Display Type (Buy / Sell / Other)
-                          let displayType = 'Other'
-                          if (isBuy) displayType = 'Buy'
-                          else if (isSell) displayType = 'Sell'
-
                           return (
                               <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                                   <div className="flex justify-between items-start mb-1">
@@ -146,29 +180,22 @@ export default function PulsePage() {
                                   </p>
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
                                       <div className="flex flex-col">
-                                          {displayType === 'Buy' && (
-                                              <span className="flex items-center gap-1 text-xs font-bold text-green-600">
-                                                  <TrendingUp className="h-3 w-3" /> Buy
-                                              </span>
-                                          )}
-                                          {displayType === 'Sell' && (
-                                              <span className="flex items-center gap-1 text-xs font-bold text-red-600">
-                                                  <TrendingDown className="h-3 w-3" /> Sell
-                                              </span>
-                                          )}
-                                          {displayType === 'Other' && (
-                                              <span className="flex items-center gap-1 text-xs font-bold text-slate-500">
-                                                  <HelpCircle className="h-3 w-3" /> {txn.action || 'Unknown'}
-                                              </span>
-                                          )}
-                                          
+                                          <span className={`flex items-center gap-1 text-xs font-bold ${color}`}>
+                                              <Icon className="h-3 w-3" /> {label}
+                                          </span>
                                           <span className="text-[10px] text-slate-400 font-medium mt-0.5">
-                                              {txn.shares > 1000 ? (txn.shares / 1000).toFixed(1) + 'k' : txn.shares} Shares
+                                              {Math.abs(txn.shares) > 1000 ? (Math.abs(txn.shares) / 1000).toFixed(1) + 'k' : Math.abs(txn.shares)} Shares
                                           </span>
                                       </div>
-                                      <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
-                                           {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
-                                      </span>
+                                      
+                                      {/* Only show value if it's significant and not a "Statement" */}
+                                      {txn.value > 0 && label !== 'Holding Update' ? (
+                                          <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+                                              {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
+                                          </span>
+                                      ) : (
+                                          <span className="text-[10px] text-slate-400 italic">Reported</span>
+                                      )}
                                   </div>
                               </div>
                           )
