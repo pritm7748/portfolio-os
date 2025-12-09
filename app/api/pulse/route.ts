@@ -10,10 +10,8 @@ const MACRO_TICKERS = [
 ]
 
 export async function POST(request: Request) {
-  // 1. Instantiate the library (Required for Vercel/Next.js environment)
+  // 1. Instantiate Library (Required for Vercel)
   const yahooFinance = new YahooFinance()
-  
-  // Note: 'suppressNotices' removed as it does not exist on the instance.
 
   try {
     const { tickers } = await request.json()
@@ -29,14 +27,17 @@ export async function POST(request: Request) {
          return clean
     })
 
-    const deepScanHoldings = allHoldings.slice(0, 20)
+    // FIX: Removed the .slice(0, 20) limit.
+    // Now scans the entire portfolio for Insider/Events.
+    const deepScanHoldings = allHoldings 
 
     const events: any[] = []
     const insiders: any[] = []
     const shockers: any[] = []
     const macro: any[] = []
 
-    // 3. FETCH QUOTES (Batched)
+    // 3. FETCH QUOTES (Batched for Speed)
+    // Used for "Big Money Radar" (Volume/Price)
     const CHUNK_SIZE = 30
     const quoteChunks = []
     
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
 
     const chunkResults = await Promise.all(
         quoteChunks.map(chunk => 
-            // FIX: Explicit cast to Promise<any[]> to avoid TS errors
+            // Explicit cast to fix TS 'never' error
             (yahooFinance.quote(chunk) as Promise<any[]>).catch((e: any) => {
                 console.warn("Quote batch failed:", e.message)
                 return []
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
             return
         }
 
-        // B. VOLUME SHOCKERS
+        // B. VOLUME SHOCKERS (Big Money Radar)
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
@@ -96,13 +97,15 @@ export async function POST(request: Request) {
     })
 
     // 5. DEEP SCAN (Events & Insiders)
+    // Now running on ALL holdings (Parallel Execution)
     await Promise.all(deepScanHoldings.map(async (ticker) => {
         try {
-            // Use 'as any' to bypass strict type checks on the result
+            // Fetch heavyweight modules
             const result = await yahooFinance.quoteSummary(ticker, { 
                 modules: ['calendarEvents', 'insiderTransactions'] 
             }) as any
 
+            // Calendar
             const cal = result.calendarEvents
             if (cal?.earnings?.earningsDate) {
                 cal.earnings.earningsDate.forEach((date: Date) => {
@@ -117,6 +120,7 @@ export async function POST(request: Request) {
                 }
             }
 
+            // Insider Activity
             const txns = result.insiderTransactions?.transactions || []
             txns.forEach((t: any) => {
                  if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 90)) {
@@ -133,10 +137,11 @@ export async function POST(request: Request) {
             })
 
         } catch (e) {
-            // Ignore individual failures
+            // Silent fail for individual tickers is expected if data is missing
         }
     }))
 
+    // Sort Results
     events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     insiders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
