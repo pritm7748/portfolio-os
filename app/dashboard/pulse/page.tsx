@@ -5,55 +5,68 @@ import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
 import { 
     Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, 
     HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock, 
-    AlertTriangle, ShieldCheck 
+    AlertTriangle, ShieldCheck, RefreshCcw, Layers 
 } from 'lucide-react'
 
-// --- 1. THE ULTIMATE CLASSIFIER (SEBI / Indian Context Optimized) ---
+// --- 1. FORENSIC TRANSACTION CLASSIFIER (SEBI Optimized) ---
 const getTransactionType = (txn: any) => {
-    // 1. Clean the text: Remove noise like dates or "via market" for pure matching
+    // Clean inputs
     const raw = (txn.action || '').toLowerCase().trim()
     const shares = Number(txn.shares) || 0
     const value = Number(txn.value) || 0
+    const price = shares !== 0 ? Math.abs(value / shares) : 0
 
-    // Helper: Regex Match
+    // Helper: Regex Matcher
     const is = (pattern: RegExp) => pattern.test(raw)
 
-    // --- TIER 1: HIGH PRIORITY (Pledges & Corp Actions) ---
-    
-    // Pledges (Critical for Indian Promoters)
-    if (is(/invok/)) return { label: 'Pledge Invoked', color: 'text-red-700 bg-red-50', icon: AlertTriangle } // Bad
+    // --- PRIORITY 1: BLOCK & BULK DEALS (High Impact) ---
+    if (is(/block deal|bulk deal/)) {
+        if (is(/sale|sold|dispos/)) return { label: 'Block Deal (Sell)', color: 'text-red-700 bg-red-50', icon: Layers }
+        if (is(/purchase|buy|acqui/)) return { label: 'Block Deal (Buy)', color: 'text-green-700 bg-green-50', icon: Layers }
+        return { label: 'Block Deal', color: 'text-indigo-700 bg-indigo-50', icon: Layers }
+    }
+
+    // --- PRIORITY 2: PLEDGES (Promoter Risk) ---
+    if (is(/invok/)) return { label: 'Pledge Invoked', color: 'text-red-700 bg-red-50', icon: AlertTriangle } // Danger
     if (is(/revok|release|clos/)) return { label: 'Pledge Revoked', color: 'text-green-600 bg-green-50', icon: Unlock } // Good
     if (is(/creat|pledge/)) return { label: 'Pledge Created', color: 'text-orange-600 bg-orange-50', icon: Lock } // Caution
 
-    // ESOPs / Employee Shares
+    // --- PRIORITY 3: CORPORATE ACTIONS & CONVERSIONS ---
+    if (is(/conversion|convert|ccd|debenture/)) return { label: 'Securities Conversion', color: 'text-blue-600 bg-blue-50', icon: RefreshCcw }
     if (is(/esop|exercise|vest|employee/)) return { label: 'ESOP Exercise', color: 'text-blue-600 bg-blue-50', icon: FileText }
-
-    // Corporate Actions
-    if (is(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600 bg-indigo-50', icon: Gift }
     if (is(/rights/)) return { label: 'Rights Issue', color: 'text-indigo-600 bg-indigo-50', icon: FileText }
-    if (is(/allotment|preferential|conversion|warrant/)) return { label: 'Pref. Allotment', color: 'text-indigo-600 bg-indigo-50', icon: ShieldCheck }
+    if (is(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600 bg-indigo-50', icon: Gift }
+    if (is(/buyback/)) return { label: 'Share Buyback', color: 'text-indigo-600 bg-indigo-50', icon: RefreshCcw }
+    if (is(/allotment|preferential|warrant/)) return { label: 'Pref. Allotment', color: 'text-indigo-600 bg-indigo-50', icon: ShieldCheck }
 
-    // --- TIER 2: TRANSFERS & NON-MARKET ---
-    
+    // --- PRIORITY 4: TRANSFERS (Non-Market) ---
     if (is(/gift|donat/)) return { label: 'Gift / Donation', color: 'text-pink-600 bg-pink-50', icon: Gift }
     if (is(/inter-se|inter se/)) return { label: 'Inter-se Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
     if (is(/off market|off-market/)) return { label: 'Off-Market Deal', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
     if (is(/transfer|transmission/)) return { label: 'Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
 
-    // --- TIER 3: EXPLICIT BUY/SELL (Market & Strategic) ---
+    // --- PRIORITY 5: EXPLICIT MARKET TRADES ---
+    // Note: We prioritize TEXT over share sign because APIs mess up signs often.
+    if (is(/market sale|open market sale/)) return { label: 'Market Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
+    if (is(/dispos|sell|sold|sale|divest/)) return { label: 'Market Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown } // Catches "Divestment"
 
-    // Buys
     if (is(/creeping/)) return { label: 'Creeping Acq.', color: 'text-green-700 bg-green-50', icon: TrendingUp }
     if (is(/market purchase|open market/)) return { label: 'Market Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
-    if (is(/acqui|buy|bought|purchase|subscri/)) return { label: 'Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
+    if (is(/acqui|buy|bought|purchase|subscri/)) return { label: 'Market Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
 
-    // Sells
-    if (is(/market sale|open market sale/)) return { label: 'Market Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
-    if (is(/dispos|sell|sold|sale|divest/)) return { label: 'Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
-
-    // --- TIER 4: FALLBACKS (Smart Guessing) ---
+    // --- PRIORITY 6: FALLBACKS (Smart Guessing for "Other") ---
     
-    // If text is "Other" or empty, infer from share direction
+    // Case: "Other at price 0.0..." -> Usually a Pledge Revocation or Gift
+    if (is(/other/) && price < 0.5) {
+        return { label: 'Non-Market Move', color: 'text-slate-500 bg-slate-100', icon: Activity }
+    }
+
+    // Case: Huge Volume with no text -> Usually a Holding Statement Update
+    if (Math.abs(shares) > 10000000 && value === 0) {
+        return { label: 'Holding Update', color: 'text-slate-400 bg-slate-50', icon: FileText }
+    }
+
+    // Directional Fallback
     if (shares > 0) return { label: 'Strategic Add', color: 'text-teal-600 bg-teal-50', icon: TrendingUp }
     if (shares < 0) return { label: 'Strategic Sell', color: 'text-orange-600 bg-orange-50', icon: TrendingDown }
 
@@ -210,7 +223,7 @@ export default function PulsePage() {
               </div>
           </Section>
 
-          {/* SECTION 3: INSIDER ACTIVITY (Smart Display) */}
+          {/* SECTION 3: INSIDER ACTIVITY (FORENSIC CLASSIFIER) */}
           <Section 
             title="Insider Activity" 
             icon={Briefcase} 
@@ -249,7 +262,8 @@ export default function PulsePage() {
                                       </div>
                                       
                                       <div className="text-right">
-                                          {txn.value > 0 ? (
+                                          {/* Logic to hide Value for Non-Monetary Actions */}
+                                          {txn.value > 0 && !label.includes('Update') && !label.includes('Pledge') ? (
                                               <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
                                                   {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
                                               </span>
