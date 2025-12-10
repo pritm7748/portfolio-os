@@ -218,11 +218,14 @@ export default function HoldingsPage() {
                                     </span>
                                 </div>
                             </div>
-                            <div className="text-right">
+                            <div className={`text-right ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 <p className="font-bold text-indigo-600 dark:text-indigo-400">₹{holding.currentPrice.toLocaleString('en-IN')}</p>
-                                <p className={`text-xs ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                    {holding.dayChangeValue >= 0 ? '+' : ''}{Math.abs(holding.dayChangePercent).toFixed(2)}%
-                                </p>
+                                
+                                {/* NEW: Showing both Amount AND Percent for Day Change */}
+                                <div className="text-xs font-medium">
+                                    <span className="block">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
+                                    <span className="block opacity-80">({Math.abs(holding.dayChangePercent).toFixed(2)}%)</span>
+                                </div>
                             </div>
                         </div>
 
@@ -241,9 +244,12 @@ export default function HoldingsPage() {
                             </div>
                             <div className="text-right">
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Total P&L</p>
-                                <p className={`font-bold ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                    {holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                                </p>
+                                
+                                {/* NEW: Showing both Amount AND Percent for Total P&L */}
+                                <div className={`font-bold ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    <p>{holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                                    <p className="text-xs opacity-80">({holding.pnlPercent.toFixed(2)}%)</p>
+                                </div>
                             </div>
                         </div>
                     </div>
