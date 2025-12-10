@@ -336,7 +336,7 @@ export default function HoldingsPage() {
 
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
         <Info className="h-4 w-4" />
-        <span>Note: Commodity prices are approximations based on global spot rates + estimated duties.</span>
+        <span>Note: Commodity prices are approximations based on global spot rates + estimated duties and are closest to the MCX prices. Physical rates differ across cities.</span>
       </div>
 
       <TransactionModal 
