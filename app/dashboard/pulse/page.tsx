@@ -1,61 +1,94 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
-import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft } from 'lucide-react'
+import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react'
 
-// --- SMART CLASSIFIER UTILITY ---
+// --- 1. PRECISE TRANSACTION CLASSIFIER ---
 const getTransactionType = (txn: any) => {
-    const text = (txn.action || '').toLowerCase().trim()
-    const shares = Number(txn.shares) || 0
-    const value = Number(txn.value) || 0
-    const price = value > 0 && shares > 0 ? value / shares : 0
-
-    // 1. Explicit Types (Strong Match)
-    if (text.includes('buy') || text.includes('bought') || text.includes('purchase')) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
-    if (text.includes('sell') || text.includes('sold') || text.includes('sale') || text.includes('disposal')) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+    const raw = (txn.action || '').toLowerCase().trim()
     
-    // 2. Compensation / Grants
-    if (text.includes('grant') || text.includes('award') || text.includes('expire') || text.includes('vest')) {
-        return { label: 'Grant/Award', color: 'text-indigo-600', icon: Gift }
-    }
+    // Helper to check keywords
+    const has = (w: string) => raw.includes(w)
 
-    // 3. Conversions / Exercises
-    if (text.includes('exercise') || text.includes('conversion') || text.includes('opt') || text.includes('derivative')) {
-        return { label: 'Option Exercise', color: 'text-amber-600', icon: FileText }
-    }
+    // A. Explicit Market Trades
+    if (has('market purchase') || has('open market') || has('creeping')) 
+        return { label: 'Market Buy', color: 'text-green-600', icon: TrendingUp }
+    
+    if (has('market sale') || has('market disposal')) 
+        return { label: 'Market Sell', color: 'text-red-600', icon: TrendingDown }
 
-    // 4. Gifts
-    if (text.includes('gift') || text.includes('donat')) {
-        return { label: 'Gift', color: 'text-pink-600', icon: Gift }
-    }
+    // B. Pledges (Promoter Activity)
+    if (has('pledge') && has('creation')) return { label: 'Pledge Created', color: 'text-red-500', icon: Lock }
+    if (has('pledge') && (has('revocation') || has('release'))) return { label: 'Pledge Revoked', color: 'text-green-500', icon: Unlock }
+    if (has('pledge') && has('invocation')) return { label: 'Pledge Invoked', color: 'text-red-700', icon: TrendingDown }
 
-    // 5. Deduce "Other/Unknown" based on Math
-    if (text === '' || text.includes('other') || text.includes('unknown') || text.includes('statement')) {
-        // Huge volume check (likely just a holding report, not a trade)
-        if (Math.abs(shares) > 10000000 && value === 0) {
-            return { label: 'Holding Update', color: 'text-slate-500', icon: FileText }
-        }
-        
-        // Price is 0 or very low -> Likely a Grant or Bonus
-        if (price < 1 && shares > 0) {
-            return { label: 'Grant/Bonus', color: 'text-indigo-600', icon: Gift }
-        }
+    // C. Transfers / Gifts / Off-Market
+    if (has('inter-se') || has('transfer')) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
+    if (has('gift')) return { label: 'Gift', color: 'text-pink-500', icon: Gift }
+    if (has('off market')) return { label: 'Off-Market Trade', color: 'text-slate-600', icon: ArrowRightLeft }
 
-        if (shares > 0) return { label: 'Accumulate', color: 'text-green-600', icon: TrendingUp }
-        if (shares < 0) return { label: 'Dispose', color: 'text-red-600', icon: TrendingDown }
-    }
+    // D. Corporate Actions
+    if (has('allotment') || has('preferential')) return { label: 'Pref. Allotment', color: 'text-indigo-600', icon: FileText }
+    if (has('esop') || has('exercise')) return { label: 'ESOP Exercise', color: 'text-amber-600', icon: FileText }
 
-    // 6. Fallback: Show raw text if short, otherwise "Transfer"
+    // E. Fallbacks (Base logic)
+    if (has('buy') || has('acquisition') || has('purchase')) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
+    if (has('sell') || has('sale') || has('disposal')) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+
+    // F. Unknown - Show truncated text instead of "Unknown"
     return { 
-        label: text.length > 20 ? 'Transfer' : text || 'Unknown', 
+        label: txn.action.length > 25 ? txn.action.substring(0, 22) + '...' : txn.action || 'Update', 
         color: 'text-slate-500', 
-        icon: ArrowRightLeft 
+        icon: HelpCircle 
     }
+}
+
+// --- 2. MOBILE ACCORDION COMPONENT ---
+const Section = ({ title, icon: Icon, children, isOpen, onToggle, isMobile }: any) => {
+    if (!isMobile) {
+        // Desktop: Always visible card
+        return (
+            <div className="space-y-4 h-full">
+                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Icon className="h-5 w-5 text-indigo-500" /> {title}
+                </h3>
+                {children}
+            </div>
+        )
+    }
+
+    // Mobile: Collapsible Accordion
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 overflow-hidden shadow-sm">
+            <button 
+                onClick={onToggle}
+                className="w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50"
+            >
+                <span className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Icon className="h-5 w-5 text-indigo-500" /> {title}
+                </span>
+                {isOpen ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+            </button>
+            
+            {isOpen && (
+                <div className="p-4 border-t border-slate-100 dark:border-slate-800 animate-in slide-in-from-top-2">
+                    {children}
+                </div>
+            )}
+        </div>
+    )
 }
 
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
+  
+  // Mobile Accordion State (Open 'Radar' by default)
+  const [openSection, setOpenSection] = useState<string | null>('radar')
+
+  const toggleSection = (id: string) => {
+      setOpenSection(current => current === id ? null : id)
+  }
   
   const allTickers = useMemo(() => {
       if (!transactions) return []
@@ -69,16 +102,16 @@ export default function PulsePage() {
   return (
     <div className="space-y-8 pb-20">
       
-      {/* 1. MACRO DASHBOARD */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* 1. MACRO DASHBOARD (Always Visible) */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                       {m.type === 'Currency' ? <Globe className="h-3 w-3" /> : <Activity className="h-3 w-3" />}
                       {m.name}
                   </div>
-                  <div className="mt-2 flex items-baseline gap-2">
-                      <span className="text-xl font-bold text-slate-900 dark:text-white">
+                  <div className="mt-1 flex items-baseline gap-2">
+                      <span className="text-lg font-bold text-slate-900 dark:text-white">
                           {m.prefix}{m.price.toFixed(2)}{m.suffix}
                       </span>
                       <span className={`text-xs font-medium ${m.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -89,58 +122,58 @@ export default function PulsePage() {
           ))}
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-3">
+      {/* 2. CONTENT SECTIONS (Desktop: Grid, Mobile: Accordion Stack) */}
+      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
           
-          {/* COL 1: BIG MONEY RADAR */}
-          <div className="space-y-4">
-              <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                  <Zap className="h-5 w-5 text-amber-500" /> Big Money Radar
-              </h3>
-              <p className="text-xs text-slate-500">Stocks with huge volume spikes (&gt;2.5x avg). Potential bulk deals.</p>
-              
-              {!data?.shockers || data.shockers.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
-                      No unusual volume detected today.
-                  </div>
-              ) : (
-                  <div className="space-y-3">
-                      {data.shockers.map((s: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between rounded-xl border border-amber-100 bg-amber-50/50 p-4 dark:bg-amber-900/10 dark:border-amber-900/30">
+          {/* SECTION 1: BIG MONEY RADAR */}
+          <Section 
+            title="Big Money Radar" 
+            icon={Zap} 
+            isMobile={true} // Enable accordion logic
+            isOpen={openSection === 'radar'} 
+            onToggle={() => toggleSection('radar')}
+          >
+              <div className="space-y-3">
+                  {!data?.shockers || data.shockers.length === 0 ? (
+                      <p className="text-sm text-slate-400 text-center py-4">No unusual volume detected.</p>
+                  ) : (
+                      data.shockers.map((s: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between rounded-lg border border-amber-100 bg-amber-50/50 p-3 dark:bg-amber-900/10 dark:border-amber-900/30">
                               <div>
-                                  <h4 className="font-bold text-slate-900 dark:text-white">{s.ticker}</h4>
+                                  <h4 className="font-bold text-slate-900 dark:text-white text-sm">{s.ticker}</h4>
                                   <span className={`text-xs font-medium ${s.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                       {s.change > 0 ? '+' : ''}{s.change.toFixed(2)}% Today
                                   </span>
                               </div>
                               <div className="text-right">
-                                  <span className="block text-lg font-bold text-amber-600 dark:text-amber-500">{s.ratio}</span>
+                                  <span className="block text-base font-bold text-amber-600 dark:text-amber-500">{s.ratio}</span>
                                   <span className="text-[10px] text-slate-500 uppercase">Vol vs Avg</span>
                               </div>
                           </div>
-                      ))}
-                  </div>
-              )}
-          </div>
+                      ))
+                  )}
+              </div>
+          </Section>
 
-          {/* COL 2: EVENT CALENDAR */}
-          <div className="space-y-4">
-              <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                  <Calendar className="h-5 w-5 text-indigo-500" /> Upcoming Events
-              </h3>
-              
-              {!data?.events || data.events.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
-                      No earnings or dividends soon.
-                  </div>
-              ) : (
-                  <div className="space-y-3">
-                      {data.events.map((event: any, i: number) => (
-                          <div key={i} className="flex items-center gap-4 rounded-xl border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                              <div className="flex flex-col items-center justify-center rounded-lg bg-indigo-50 p-2 min-w-[50px] dark:bg-indigo-900/20">
-                                  <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
-                                      {new Date(event.date).toLocaleString('default', { month: 'short' }).toUpperCase()}
+          {/* SECTION 2: EVENT CALENDAR */}
+          <Section 
+            title="Upcoming Events" 
+            icon={Calendar} 
+            isMobile={true} 
+            isOpen={openSection === 'events'} 
+            onToggle={() => toggleSection('events')}
+          >
+              <div className="space-y-3">
+                  {!data?.events || data.events.length === 0 ? (
+                      <p className="text-sm text-slate-400 text-center py-4">No upcoming events.</p>
+                  ) : (
+                      data.events.map((event: any, i: number) => (
+                          <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3 dark:bg-slate-800/30 dark:border-slate-800">
+                              <div className="flex flex-col items-center justify-center rounded bg-white p-1.5 min-w-[45px] shadow-sm dark:bg-slate-900">
+                                  <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase">
+                                      {new Date(event.date).toLocaleString('default', { month: 'short' })}
                                   </span>
-                                  <span className="text-lg font-bold text-slate-900 dark:text-white">
+                                  <span className="text-sm font-bold text-slate-900 dark:text-white">
                                       {new Date(event.date).getDate()}
                                   </span>
                               </div>
@@ -149,35 +182,39 @@ export default function PulsePage() {
                                   <p className="text-xs text-slate-500 dark:text-slate-400">{event.desc}</p>
                               </div>
                           </div>
-                      ))}
-                  </div>
-              )}
-          </div>
+                      ))
+                  )}
+              </div>
+          </Section>
 
-          {/* COL 3: WHALE WATCH (SMART CLASSIFIER) */}
-          <div className="space-y-4">
-              <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                  <Briefcase className="h-5 w-5 text-purple-500" /> Insider Activity
-              </h3>
-
-              {!data?.insiders || data.insiders.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 dark:border-slate-800">
-                      No recent insider trades found.
-                  </div>
-              ) : (
-                  <div className="space-y-3">
-                      {data.insiders.map((txn: any, i: number) => {
+          {/* SECTION 3: INSIDER ACTIVITY */}
+          <Section 
+            title="Insider Activity" 
+            icon={Briefcase} 
+            isMobile={true} 
+            isOpen={openSection === 'insiders'} 
+            onToggle={() => toggleSection('insiders')}
+          >
+              <div className="space-y-3">
+                  {!data?.insiders || data.insiders.length === 0 ? (
+                      <p className="text-sm text-slate-400 text-center py-4">No recent insider trades.</p>
+                  ) : (
+                      data.insiders.map((txn: any, i: number) => {
                           const { label, color, icon: Icon } = getTransactionType(txn)
-                          
                           return (
-                              <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                                  <div className="flex justify-between items-start mb-1">
-                                      <h4 className="font-bold text-sm text-slate-900 dark:text-white">{txn.ticker}</h4>
-                                      <span className="text-[10px] text-slate-400">{new Date(txn.date).toLocaleDateString()}</span>
+                              <div key={i} className="rounded-lg border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                                  <div className="flex justify-between items-start mb-2">
+                                      <div>
+                                          <h4 className="font-bold text-sm text-slate-900 dark:text-white">{txn.ticker}</h4>
+                                          <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 max-w-[150px]">
+                                              {txn.holder} ({txn.relation})
+                                          </p>
+                                      </div>
+                                      <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
+                                          {new Date(txn.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
+                                      </span>
                                   </div>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 truncate">
-                                      {txn.holder} ({txn.relation})
-                                  </p>
+                                  
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
                                       <div className="flex flex-col">
                                           <span className={`flex items-center gap-1 text-xs font-bold ${color}`}>
@@ -188,21 +225,20 @@ export default function PulsePage() {
                                           </span>
                                       </div>
                                       
-                                      {/* Only show value if it's significant and not a "Statement" */}
-                                      {txn.value > 0 && label !== 'Holding Update' ? (
+                                      {txn.value > 0 ? (
                                           <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
                                               {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
                                           </span>
                                       ) : (
-                                          <span className="text-[10px] text-slate-400 italic">Reported</span>
+                                          <span className="text-[10px] text-slate-400 italic">-</span>
                                       )}
                                   </div>
                               </div>
                           )
-                      })}
-                  </div>
-              )}
-          </div>
+                      })
+                  )}
+              </div>
+          </Section>
 
       </div>
     </div>
