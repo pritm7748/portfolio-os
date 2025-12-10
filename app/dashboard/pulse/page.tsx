@@ -4,61 +4,62 @@ import { useMemo, useState } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
 import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react'
 
-// --- 1. STRICT TRANSACTION CLASSIFIER ---
-// No guessing. We map specific phrases to specific labels.
+// --- 1. ADVANCED TRANSACTION CLASSIFIER ---
 const getTransactionType = (txn: any) => {
+    // Normalize text: combine action + any raw text available, lowercased
     const raw = (txn.action || '').toLowerCase().trim()
-    
-    // Helper
-    const has = (w: string) => raw.includes(w)
+    const shares = Number(txn.shares) || 0
 
-    // A. BUY ACTIONS
-    if (has('market purchase') || has('open market purchase')) 
+    // Helper for regex matching
+    const matches = (regex: RegExp) => regex.test(raw)
+
+    // A. MARKET TRADES (The most common, explicit ones)
+    if (matches(/(open market|market purchase|creeping acquisition)/)) 
         return { label: 'Market Buy', color: 'text-green-600', icon: TrendingUp }
-    if (has('creeping acquisition')) 
-        return { label: 'Creeping Acq.', color: 'text-green-600', icon: TrendingUp }
-    if (has('buy') || has('bought') || has('purchase') || has('acqui')) 
-        return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
-
-    // B. SELL ACTIONS
-    if (has('market sale') || has('open market sale')) 
+    
+    if (matches(/(open market sale|market sale|market disposal)/)) 
         return { label: 'Market Sell', color: 'text-red-600', icon: TrendingDown }
-    if (has('sell') || has('sold') || has('sale') || has('disposal') || has('dispose')) 
-        return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
 
-    // C. PLEDGES
-    if (has('pledge') && has('creation')) return { label: 'Pledge Created', color: 'text-red-500', icon: Lock }
-    if (has('pledge') && (has('revocation') || has('release'))) return { label: 'Pledge Revoked', color: 'text-green-500', icon: Unlock }
-    if (has('pledge') && has('invocation')) return { label: 'Pledge Invoked', color: 'text-red-700', icon: TrendingDown }
+    // B. PLEDGE ACTIVITIES (Promoter Funding)
+    if (matches(/pledge.*creat/)) return { label: 'Pledge Created', color: 'text-red-500', icon: Lock }
+    if (matches(/pledge.*(revok|release|clos)/)) return { label: 'Pledge Revoked', color: 'text-green-500', icon: Unlock }
+    if (matches(/pledge.*invo/)) return { label: 'Pledge Invoked', color: 'text-red-700', icon: TrendingDown }
 
-    // D. TRANSFERS & OFF-MARKET
-    if (has('inter-se') || has('inter se')) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
-    if (has('gift')) return { label: 'Gift', color: 'text-pink-500', icon: Gift }
-    if (has('off market')) return { label: 'Off-Market Trade', color: 'text-slate-600', icon: ArrowRightLeft }
-    if (has('transfer')) return { label: 'Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
+    // C. OFF-MARKET & TRANSFERS
+    // Catches "Other at price..." which usually means non-open-market allotment
+    if (matches(/other at price/)) return { label: 'Off-Market / Allotment', color: 'text-indigo-600', icon: FileText }
+    if (matches(/(inter-se|inter se|transfer)/)) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
+    if (matches(/(gift|donation)/)) return { label: 'Gift', color: 'text-pink-500', icon: Gift }
+    if (matches(/off market/)) return { label: 'Off-Market Trade', color: 'text-slate-600', icon: ArrowRightLeft }
 
-    // E. CORPORATE ACTIONS
-    if (has('allotment') || has('preferential')) return { label: 'Pref. Allotment', color: 'text-indigo-600', icon: FileText }
-    if (has('esop') || has('exercise')) return { label: 'ESOP Exercise', color: 'text-amber-600', icon: FileText }
-    if (has('bonus')) return { label: 'Bonus Issue', color: 'text-indigo-600', icon: Gift }
-    if (has('rights')) return { label: 'Rights Entitlement', color: 'text-indigo-600', icon: FileText }
+    // D. CORPORATE ACTIONS
+    if (matches(/(allotment|preferential|warrant)/)) return { label: 'Pref. Allotment', color: 'text-indigo-600', icon: FileText }
+    if (matches(/(esop|exercise|vest)/)) return { label: 'ESOP Exercise', color: 'text-amber-600', icon: FileText }
+    if (matches(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600', icon: Gift }
+    if (matches(/rights/)) return { label: 'Rights Issue', color: 'text-indigo-600', icon: FileText }
 
-    // F. FALLBACK: Show the raw text (Truncated)
-    // This ensures we never show "Unknown" for valid data
-    const cleanText = txn.action.replace(/acquisition|disposal|transfer|shares/gi, '').trim()
+    // E. GENERIC FALLBACKS (If no specific context found)
+    if (matches(/(buy|bought|purchase|acqui)/)) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
+    if (matches(/(sell|sold|sale|dispos)/)) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+
+    // F. UNKNOWN / EMPTY / "Other"
+    // If we have shares direction, assume Accumulate/Dispose
+    if (shares > 0) return { label: 'Accumulate', color: 'text-green-600', icon: TrendingUp }
+    if (shares < 0) return { label: 'Dispose', color: 'text-red-600', icon: TrendingDown }
+
     return { 
-        label: cleanText.length > 20 ? cleanText.substring(0, 18) + '...' : cleanText || 'Update', 
+        label: 'Update', 
         color: 'text-slate-500', 
         icon: HelpCircle 
     }
 }
 
 // --- 2. RESPONSIVE SECTION COMPONENT ---
-// Mobile: Accordion | Desktop: Static Card
 const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
     return (
         <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 overflow-hidden shadow-sm h-fit">
-            {/* MOBILE HEADER (Clickable) */}
+            
+            {/* MOBILE HEADER (Collapsible) - Hidden on Desktop */}
             <button 
                 onClick={onToggle}
                 className="md:hidden w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50"
@@ -69,14 +70,14 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
                 {isOpen ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
             </button>
 
-            {/* DESKTOP HEADER (Static) */}
-            <div className="hidden md:flex p-4 pb-0 items-center gap-2 mb-4">
+            {/* DESKTOP HEADER (Static) - Hidden on Mobile */}
+            <div className="hidden md:flex p-4 pb-0 items-center gap-2 mb-4 border-b-0">
                 <Icon className="h-5 w-5 text-indigo-500" /> 
                 <h3 className="font-bold text-slate-800 dark:text-white">{title}</h3>
             </div>
             
             {/* CONTENT AREA */}
-            {/* Visible if: (Mobile AND Open) OR (Desktop) */}
+            {/* On Mobile: Hidden unless 'isOpen'. On Desktop: Always 'block' */}
             <div className={`${isOpen ? 'block' : 'hidden'} md:block p-4 pt-0 border-t border-slate-100 md:border-0 dark:border-slate-800 animate-in slide-in-from-top-1`}>
                 {children}
             </div>
@@ -106,7 +107,7 @@ export default function PulsePage() {
   return (
     <div className="space-y-8 pb-20">
       
-      {/* 1. MACRO DASHBOARD (Always Grid) */}
+      {/* 1. MACRO DASHBOARD (Grid on all screens) */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -126,7 +127,7 @@ export default function PulsePage() {
           ))}
       </div>
 
-      {/* 2. CONTENT SECTIONS */}
+      {/* 2. CONTENT SECTIONS (Column on Mobile, Grid on Desktop) */}
       <div className="flex flex-col md:grid md:grid-cols-3 gap-6">
           
           {/* SECTION 1: BIG MONEY RADAR */}
@@ -207,7 +208,7 @@ export default function PulsePage() {
                                   <div className="flex justify-between items-start mb-2">
                                       <div>
                                           <h4 className="font-bold text-sm text-slate-900 dark:text-white">{txn.ticker}</h4>
-                                          <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 max-w-[150px]">
+                                          <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 max-w-[150px]" title={txn.holder}>
                                               {txn.holder} ({txn.relation})
                                           </p>
                                       </div>
