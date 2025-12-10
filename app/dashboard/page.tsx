@@ -6,7 +6,6 @@ import { ArrowUpRight, ArrowDownRight, Wallet, PieChart as PieIcon, IndianRupee,
 import AssetAllocationChart from '@/components/asset-allocation-chart'
 import MarketStatus from '@/components/market-status'
 import { useTransactions, useLivePrices, useDividends } from '@/hooks/use-portfolio-data'
-import { usePrivacy } from '@/context/privacy-context' // <--- Import Context
 
 type SummaryStats = {
   invested: number
@@ -25,8 +24,6 @@ type DashboardData = {
 type AllocationData = { name: string; value: number }
 
 export default function DashboardPage() {
-  const { isPrivacyMode } = usePrivacy() // <--- Use Privacy Hook
-
   // 1. Fetch Core Data (Cached)
   const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
@@ -63,6 +60,10 @@ export default function DashboardPage() {
           const ticker = txn.assets.ticker
           
           if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') {
+              // Note: We use the stored total_value for historical record, 
+              // but we also re-calculate below to catch missed dividends if needed.
+              // For dashboard summary, let's rely on the DB record for accuracy of "received" money.
+              // totalIncome += Number(txn.total_value) <--- We calculate this dynamically below instead
               return
           }
           
@@ -102,6 +103,7 @@ export default function DashboardPage() {
           const dividends = dividendMap[ticker]
           if (!dividends) return
           
+          // Get only relevant txns for this stock
           const stockTxns = transactions.filter((t) => t.assets.ticker === ticker)
           
           dividends.forEach((div: any) => {
@@ -130,6 +132,7 @@ export default function DashboardPage() {
       holdingList.forEach((h: any) => {
           const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
           
+          // Fuzzy match for price keys
           let priceData = priceMap[h.ticker]
           if (!priceData) {
               const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
@@ -137,12 +140,15 @@ export default function DashboardPage() {
           }
 
           const price = priceData?.price || (h.totalInvested / h.quantity)
-          const changePercent = priceData?.change || 0
+          const changePercent = priceData?.change || 0 // 'change' from API is %
 
           const val = h.quantity * price
+          
+          // Day P&L Logic
           const prevPrice = price / (1 + (changePercent / 100))
           const dayChange = (price - prevPrice) * h.quantity
 
+          // Bucketing
           const isComm = h.type === 'Commodity' || h.type === 'Currency' || h.type === 'Gold' || h.ticker.startsWith('COMMODITY:')
 
           if (isComm) {
@@ -194,12 +200,6 @@ export default function DashboardPage() {
 
   if (!dashboardData) return <div className="p-8 text-center text-slate-500">No data found. Add a transaction to get started.</div>
 
-  // --- HELPER: MASK SENSITIVE DATA ---
-  const formatVal = (val: number, isFraction: boolean = false) => {
-      if (isPrivacyMode) return '₹****'
-      return '₹' + val.toLocaleString('en-IN', { maximumFractionDigits: isFraction ? 0 : 0 })
-  }
-
   // Helper for Stats Row
   const StatsRow = ({ title, icon: Icon, stats, colorClass }: any) => {
       const isProfitable = stats.unrealizedPnl >= 0
@@ -221,11 +221,11 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wider">Invested</p>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{formatVal(stats.invested)}</p>
+                    <p className="text-lg font-bold text-slate-900 dark:text-white">₹{stats.invested.toLocaleString('en-IN')}</p>
                 </div>
                 <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wider">Current</p>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{formatVal(stats.current)}</p>
+                    <p className="text-lg font-bold text-slate-900 dark:text-white">₹{stats.current.toLocaleString('en-IN')}</p>
                 </div>
                 
                 {/* Day's P&L Row */}
@@ -234,8 +234,7 @@ export default function DashboardPage() {
                         <Activity className="h-3 w-3" /> Day's Change
                     </span>
                     <span className={`font-bold text-sm ${isDayGreen ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {/* We hide the value but show +/-, actually better to hide all for privacy */}
-                        {isPrivacyMode ? '₹****' : (isDayGreen ? '+' : '') + '₹' + stats.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        {isDayGreen ? '+' : ''}₹{stats.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                 </div>
                 
@@ -243,7 +242,7 @@ export default function DashboardPage() {
                 <div className="col-span-2 flex justify-between items-center">
                     <span className="text-xs text-slate-500">Net P&L</span>
                     <span className={`font-bold ${isProfitable ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {isPrivacyMode ? '₹****' : (isProfitable ? '+' : '') + '₹' + stats.unrealizedPnl.toLocaleString('en-IN')}
+                        {isProfitable ? '+' : ''}₹{stats.unrealizedPnl.toLocaleString('en-IN')}
                     </span>
                 </div>
             </div>
@@ -260,11 +259,11 @@ export default function DashboardPage() {
          {/* Net Worth & Day P&L */}
          <div className="rounded-xl bg-indigo-600 p-6 text-white shadow-lg dark:bg-indigo-700">
             <p className="text-indigo-200 text-sm font-medium mb-1">Total Net Worth</p>
-            <h2 className="text-3xl font-bold">{formatVal(dashboardData.total.current, true)}</h2>
+            <h2 className="text-3xl font-bold">₹{dashboardData.total.current.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h2>
             <div className="mt-4 flex items-center gap-4 text-sm">
                  <div className="flex items-center gap-1">
                     <span className={dashboardData.total.dayPnl >= 0 ? 'text-green-300' : 'text-red-300'}>
-                        {isPrivacyMode ? '₹****' : (dashboardData.total.dayPnl >= 0 ? '+' : '') + '₹' + dashboardData.total.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        {dashboardData.total.dayPnl >= 0 ? '+' : ''}₹{dashboardData.total.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                     <span className="text-indigo-200 text-xs uppercase">Today</span>
                  </div>
@@ -277,7 +276,7 @@ export default function DashboardPage() {
                 <div className="p-2 bg-blue-100 rounded-lg text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Wallet className="h-5 w-5"/></div>
                 <h3 className="font-semibold text-slate-700 dark:text-slate-200">Total Invested</h3>
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatVal(dashboardData.total.invested)}</p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.invested.toLocaleString('en-IN')}</p>
             <p className="text-xs text-slate-400 mt-1 flex justify-between">
                 <span>Unrealized:</span>
                 <span className={dashboardData.total.unrealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}>
@@ -293,7 +292,7 @@ export default function DashboardPage() {
                 <h3 className="font-semibold text-slate-700 dark:text-slate-200">Realized P&L</h3>
             </div>
             <p className={`text-2xl font-bold ${dashboardData.total.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                {isPrivacyMode ? '₹****' : (dashboardData.total.realizedPnl >= 0 ? '+' : '') + '₹' + dashboardData.total.realizedPnl.toLocaleString('en-IN')}
+                {dashboardData.total.realizedPnl >= 0 ? '+' : ''}₹{dashboardData.total.realizedPnl.toLocaleString('en-IN')}
             </p>
             <p className="text-xs text-slate-400 mt-1">Booked Profits</p>
          </div>
@@ -312,7 +311,7 @@ export default function DashboardPage() {
                 </div>
                 <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-emerald-500 transition-colors" />
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatVal(dashboardData.total.income)}</p>
+            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.income.toLocaleString('en-IN')}</p>
             <p className="text-xs text-slate-400 mt-1">
                 {dashboardData.total.dividendCount > 0 
                     ? `${dashboardData.total.dividendCount} payouts detected` 
@@ -334,12 +333,7 @@ export default function DashboardPage() {
       <div className="grid gap-6 md:grid-cols-2">
         <div className="h-[400px] rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex flex-col dark:bg-slate-900 dark:border-slate-800">
           <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-2 dark:text-white"><PieIcon className="h-4 w-4 text-slate-500" /> Asset Allocation</h3>
-          <div className="flex-1 w-full relative">
-              {/* Optional: Blur chart if privacy is on */}
-              <div className={isPrivacyMode ? "blur-md pointer-events-none transition-all duration-300" : "transition-all duration-300"}>
-                  <AssetAllocationChart data={allocationData} />
-              </div>
-          </div>
+          <div className="flex-1 w-full relative"><AssetAllocationChart data={allocationData} /></div>
         </div>
         <div className="h-[400px] rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex flex-col dark:bg-slate-900 dark:border-slate-800">
           <h3 className="font-semibold text-slate-800 mb-4 dark:text-white">Market Status</h3>

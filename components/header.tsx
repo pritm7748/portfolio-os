@@ -2,19 +2,16 @@
 
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Bell, ChevronDown, User, Settings, LogOut, HelpCircle, CreditCard, Menu, Eye, EyeOff } from 'lucide-react'
+import { Bell, ChevronDown, User, Settings, LogOut, HelpCircle, CreditCard, Menu } from 'lucide-react'
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useState } from 'react'
-import { usePrivacy } from '@/context/privacy-context' // <--- Import Context
 
 export default function Header({ onMenuClick }: { onMenuClick: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   
-  const { isPrivacyMode, togglePrivacy } = usePrivacy() // <--- Use Privacy Hook
-
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
@@ -84,18 +81,6 @@ export default function Header({ onMenuClick }: { onMenuClick: () => void }) {
       <div className="flex items-center gap-2 md:gap-6">
         
         <div className="flex items-center gap-2 md:gap-3">
-          
-          {/* --- PRIVACY SHIELD TOGGLE (Dashboard Only) --- */}
-          {pathname === '/dashboard' && (
-              <button 
-                onClick={togglePrivacy}
-                className="rounded-full p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition"
-                title={isPrivacyMode ? "Show Values" : "Hide Values"}
-              >
-                  {isPrivacyMode ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
-          )}
-
           <ThemeToggle />
           
           <Link href="/dashboard/alerts">
