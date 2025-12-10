@@ -4,78 +4,82 @@ import { useMemo, useState } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
 import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react'
 
-// --- 1. PRECISE TRANSACTION CLASSIFIER ---
+// --- 1. STRICT TRANSACTION CLASSIFIER ---
+// No guessing. We map specific phrases to specific labels.
 const getTransactionType = (txn: any) => {
     const raw = (txn.action || '').toLowerCase().trim()
     
-    // Helper to check keywords
+    // Helper
     const has = (w: string) => raw.includes(w)
 
-    // A. Explicit Market Trades
-    if (has('market purchase') || has('open market') || has('creeping')) 
+    // A. BUY ACTIONS
+    if (has('market purchase') || has('open market purchase')) 
         return { label: 'Market Buy', color: 'text-green-600', icon: TrendingUp }
-    
-    if (has('market sale') || has('market disposal')) 
-        return { label: 'Market Sell', color: 'text-red-600', icon: TrendingDown }
+    if (has('creeping acquisition')) 
+        return { label: 'Creeping Acq.', color: 'text-green-600', icon: TrendingUp }
+    if (has('buy') || has('bought') || has('purchase') || has('acqui')) 
+        return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
 
-    // B. Pledges (Promoter Activity)
+    // B. SELL ACTIONS
+    if (has('market sale') || has('open market sale')) 
+        return { label: 'Market Sell', color: 'text-red-600', icon: TrendingDown }
+    if (has('sell') || has('sold') || has('sale') || has('disposal') || has('dispose')) 
+        return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+
+    // C. PLEDGES
     if (has('pledge') && has('creation')) return { label: 'Pledge Created', color: 'text-red-500', icon: Lock }
     if (has('pledge') && (has('revocation') || has('release'))) return { label: 'Pledge Revoked', color: 'text-green-500', icon: Unlock }
     if (has('pledge') && has('invocation')) return { label: 'Pledge Invoked', color: 'text-red-700', icon: TrendingDown }
 
-    // C. Transfers / Gifts / Off-Market
-    if (has('inter-se') || has('transfer')) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
+    // D. TRANSFERS & OFF-MARKET
+    if (has('inter-se') || has('inter se')) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
     if (has('gift')) return { label: 'Gift', color: 'text-pink-500', icon: Gift }
     if (has('off market')) return { label: 'Off-Market Trade', color: 'text-slate-600', icon: ArrowRightLeft }
+    if (has('transfer')) return { label: 'Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
 
-    // D. Corporate Actions
+    // E. CORPORATE ACTIONS
     if (has('allotment') || has('preferential')) return { label: 'Pref. Allotment', color: 'text-indigo-600', icon: FileText }
     if (has('esop') || has('exercise')) return { label: 'ESOP Exercise', color: 'text-amber-600', icon: FileText }
+    if (has('bonus')) return { label: 'Bonus Issue', color: 'text-indigo-600', icon: Gift }
+    if (has('rights')) return { label: 'Rights Entitlement', color: 'text-indigo-600', icon: FileText }
 
-    // E. Fallbacks (Base logic)
-    if (has('buy') || has('acquisition') || has('purchase')) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
-    if (has('sell') || has('sale') || has('disposal')) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
-
-    // F. Unknown - Show truncated text instead of "Unknown"
+    // F. FALLBACK: Show the raw text (Truncated)
+    // This ensures we never show "Unknown" for valid data
+    const cleanText = txn.action.replace(/acquisition|disposal|transfer|shares/gi, '').trim()
     return { 
-        label: txn.action.length > 25 ? txn.action.substring(0, 22) + '...' : txn.action || 'Update', 
+        label: cleanText.length > 20 ? cleanText.substring(0, 18) + '...' : cleanText || 'Update', 
         color: 'text-slate-500', 
         icon: HelpCircle 
     }
 }
 
-// --- 2. MOBILE ACCORDION COMPONENT ---
-const Section = ({ title, icon: Icon, children, isOpen, onToggle, isMobile }: any) => {
-    if (!isMobile) {
-        // Desktop: Always visible card
-        return (
-            <div className="space-y-4 h-full">
-                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                    <Icon className="h-5 w-5 text-indigo-500" /> {title}
-                </h3>
-                {children}
-            </div>
-        )
-    }
-
-    // Mobile: Collapsible Accordion
+// --- 2. RESPONSIVE SECTION COMPONENT ---
+// Mobile: Accordion | Desktop: Static Card
+const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
     return (
-        <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 overflow-hidden shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 overflow-hidden shadow-sm h-fit">
+            {/* MOBILE HEADER (Clickable) */}
             <button 
                 onClick={onToggle}
-                className="w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50"
+                className="md:hidden w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50"
             >
                 <span className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Icon className="h-5 w-5 text-indigo-500" /> {title}
                 </span>
                 {isOpen ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
             </button>
+
+            {/* DESKTOP HEADER (Static) */}
+            <div className="hidden md:flex p-4 pb-0 items-center gap-2 mb-4">
+                <Icon className="h-5 w-5 text-indigo-500" /> 
+                <h3 className="font-bold text-slate-800 dark:text-white">{title}</h3>
+            </div>
             
-            {isOpen && (
-                <div className="p-4 border-t border-slate-100 dark:border-slate-800 animate-in slide-in-from-top-2">
-                    {children}
-                </div>
-            )}
+            {/* CONTENT AREA */}
+            {/* Visible if: (Mobile AND Open) OR (Desktop) */}
+            <div className={`${isOpen ? 'block' : 'hidden'} md:block p-4 pt-0 border-t border-slate-100 md:border-0 dark:border-slate-800 animate-in slide-in-from-top-1`}>
+                {children}
+            </div>
         </div>
     )
 }
@@ -83,7 +87,7 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle, isMobile }: an
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
   
-  // Mobile Accordion State (Open 'Radar' by default)
+  // Mobile Accordion State (Open 'radar' by default)
   const [openSection, setOpenSection] = useState<string | null>('radar')
 
   const toggleSection = (id: string) => {
@@ -102,7 +106,7 @@ export default function PulsePage() {
   return (
     <div className="space-y-8 pb-20">
       
-      {/* 1. MACRO DASHBOARD (Always Visible) */}
+      {/* 1. MACRO DASHBOARD (Always Grid) */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -122,14 +126,13 @@ export default function PulsePage() {
           ))}
       </div>
 
-      {/* 2. CONTENT SECTIONS (Desktop: Grid, Mobile: Accordion Stack) */}
-      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
+      {/* 2. CONTENT SECTIONS */}
+      <div className="flex flex-col md:grid md:grid-cols-3 gap-6">
           
           {/* SECTION 1: BIG MONEY RADAR */}
           <Section 
             title="Big Money Radar" 
             icon={Zap} 
-            isMobile={true} // Enable accordion logic
             isOpen={openSection === 'radar'} 
             onToggle={() => toggleSection('radar')}
           >
@@ -159,7 +162,6 @@ export default function PulsePage() {
           <Section 
             title="Upcoming Events" 
             icon={Calendar} 
-            isMobile={true} 
             isOpen={openSection === 'events'} 
             onToggle={() => toggleSection('events')}
           >
@@ -191,7 +193,6 @@ export default function PulsePage() {
           <Section 
             title="Insider Activity" 
             icon={Briefcase} 
-            isMobile={true} 
             isOpen={openSection === 'insiders'} 
             onToggle={() => toggleSection('insiders')}
           >
