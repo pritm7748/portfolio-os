@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 import { Loader2 } from 'lucide-react'
 
@@ -12,13 +12,14 @@ type ChartDataPoint = {
 
 type Props = {
     data: ChartDataPoint[]
+    currentValue?: number // <--- NEW PROP to fix the end of the graph
     onRangeChange: (range: string) => void
     onCategoryChange: (category: 'equity' | 'commodity') => void
     isLoading: boolean
     category: 'equity' | 'commodity'
 }
 
-export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryChange, isLoading, category }: Props) {
+export default function PortfolioHistoryChart({ data, currentValue, onRangeChange, onCategoryChange, isLoading, category }: Props) {
   const [activeRange, setActiveRange] = useState('1y')
 
   const handleRange = (r: string) => {
@@ -26,8 +27,45 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
       onRangeChange(r === 'all' ? 'max' : r)
   }
 
-  // Dynamic Colors based on Category
-  const color = category === 'equity' ? '#6366f1' : '#f59e0b' // Indigo vs Amber
+  // Filter & Patch Data
+  const chartData = useMemo(() => {
+      if (!data || data.length === 0) return []
+      
+      const now = new Date()
+      let startDate = new Date()
+      
+      if (activeRange === '1mo') startDate.setMonth(now.getMonth() - 1)
+      if (activeRange === '6mo') startDate.setMonth(now.getMonth() - 6)
+      if (activeRange === '1y') startDate.setFullYear(now.getFullYear() - 1)
+      if (activeRange === '5y') startDate.setFullYear(now.getFullYear() - 5)
+      if (activeRange === 'all') startDate = new Date('2000-01-01')
+
+      const filtered = data.filter(d => new Date(d.date) >= startDate)
+
+      // FIX: Patch the last data point with the REAL current value from Dashboard
+      // This ensures the yellow line ends at your actual Net Worth, not just Invested amount.
+      if (filtered.length > 0 && currentValue) {
+          const last = filtered[filtered.length - 1]
+          // If the last point is "today" or close to it, update it
+          // Or we append a "Today" point
+          const todayStr = new Date().toISOString()
+          
+          // Clone to avoid mutation issues
+          const patched = [...filtered]
+          
+          // Ensure the last point reflects current reality
+          patched.push({
+              date: todayStr,
+              invested: last.invested, // Assume invested hasn't changed since last txn
+              value: currentValue // FORCE this to match dashboard
+          })
+          return patched
+      }
+
+      return filtered
+  }, [data, activeRange, currentValue])
+
+  const color = category === 'equity' ? '#6366f1' : '#f59e0b'
   const gradientId = category === 'equity' ? 'colorEq' : 'colorComm'
 
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -60,51 +98,34 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
       <div className="flex flex-col gap-6">
-          
-          {/* Header Row: Title & Category Switcher */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
                 <h3 className="font-bold text-lg text-slate-900 dark:text-white">Portfolio Performance</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">Track value vs. investment over time.</p>
             </div>
-
-            {/* CATEGORY SWITCHER */}
             <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg self-start md:self-auto">
                 <button
                     onClick={() => onCategoryChange('equity')}
-                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
-                        category === 'equity'
-                        ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
-                    }`}
+                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${category === 'equity' ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                 >
                     Equity & Mutual Funds
                 </button>
                 <button
                     onClick={() => onCategoryChange('commodity')}
-                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${
-                        category === 'commodity'
-                        ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
-                    }`}
+                    className={`px-4 py-2 text-xs font-semibold rounded-md transition-all ${category === 'commodity' ? 'bg-white dark:bg-slate-700 text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                 >
                     Commodity & Currency
                 </button>
             </div>
           </div>
 
-          {/* Time Range Selector (Moved below or separate line for better mobile fit) */}
           <div className="flex justify-end">
             <div className="flex bg-slate-50 dark:bg-slate-800/50 rounded-lg p-1">
                 {['1mo', '6mo', '1y', '5y', 'all'].map((range) => (
                     <button
                         key={range}
                         onClick={() => handleRange(range)}
-                        className={`px-3 py-1 text-[10px] sm:text-xs font-medium rounded-md transition-all uppercase ${
-                            activeRange === range 
-                            ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm ring-1 ring-black/5' 
-                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
-                        }`}
+                        className={`px-3 py-1 text-[10px] sm:text-xs font-medium rounded-md transition-all uppercase ${activeRange === range ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                     >
                         {range}
                     </button>
@@ -120,13 +141,13 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
             </div>
         )}
         
-        {data.length === 0 && !isLoading ? (
+        {!isLoading && chartData.length === 0 ? (
             <div className="flex h-full items-center justify-center text-slate-400 text-sm">
                 No historical data found for {category === 'equity' ? 'Equity' : 'Commodities'}.
             </div>
         ) : (
             <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <defs>
                         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
@@ -168,7 +189,7 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
                     />
                     
                     <Area 
-                        type="step" 
+                        type="stepAfter" 
                         dataKey="invested" 
                         name="Invested" 
                         stroke="#94a3b8" 

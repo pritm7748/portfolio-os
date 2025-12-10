@@ -10,12 +10,11 @@ import {
 import { usePortfolio } from '@/context/portfolio-context'
 import AIAnalyst from '@/components/ai-analyst'
 import PortfolioHistoryChart from '@/components/portfolio-history-chart'
-import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
+import { useTransactions, useLivePrices, useDividends } from '@/hooks/use-portfolio-data'
+import { usePortfolioHistory } from '@/hooks/use-portfolio-history' // <--- 1. Import New Hook
 
 // --- CONFIGURATION ---
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
-
-type ChartDataPoint = { date: string; invested: number; value: number }
 
 // --- HELPER: CUSTOM TOOLTIP ---
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -44,7 +43,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     return null
 }
 
-// --- HELPER: STATIC ACTIVE SHAPE (Prevents Expansion) ---
+// --- HELPER: STATIC ACTIVE SHAPE ---
 const renderActiveShape = (props: any) => {
     const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props
     return (
@@ -71,11 +70,12 @@ export default function AnalyticsPage() {
   }, [transactions])
 
   const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
+  const { data: dividendMap, isLoading: divLoading } = useDividends(allTickers) // Added back dividendMap usage
 
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([])
-  const [chartLoading, setChartLoading] = useState(false)
   const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity')
-  const [currentRange, setCurrentRange] = useState('1y')
+  
+  // --- 2. GENERATE HISTORY (Client-Side FIFO) ---
+  const { equity: equityHistory, commodity: commHistory } = usePortfolioHistory(transactions || [])
 
   const getCategory = (type: string) => {
       const t = type.toLowerCase()
@@ -84,10 +84,11 @@ export default function AnalyticsPage() {
   }
 
   // --- CALCULATION ENGINE ---
-  const { metrics, sectorData, conglomerateData, aiSummary } = useMemo(() => {
+  const { metrics, sectorData, conglomerateData, aiSummary, statsDetails } = useMemo(() => {
       const emptyMetrics = { totalXirr: 0, equityXirr: 0, commXirr: 0, netWorth: 0, unrealized: 0, realized: 0, totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 }
+      const emptyStats = { invested: 0, current: 0, unrealizedPnl: 0, pnlPercent: 0, dayPnl: 0 }
       
-      if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null }
+      if (!transactions || !priceMap || !dividendMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null, statsDetails: { equity: emptyStats, commodity: emptyStats } }
 
       const flowsTotal: any[] = []; const flowsEquity: any[] = []; const flowsComm: any[] = []
       let totalRealizedPnL = 0; let totalDividends = 0
@@ -199,6 +200,51 @@ export default function AnalyticsPage() {
       const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
       const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
 
+      // Calculate Stats for Equity vs Commodity separately for charts
+      const calcStats = (inv: number, curr: number, day: number) => {
+          const unrealized = curr - inv
+          const pct = inv > 0 ? (unrealized / inv) * 100 : 0
+          return { invested: inv, current: curr, unrealizedPnl: unrealized, pnlPercent: pct, dayPnl: day }
+      }
+      
+      // Note: dayPnl is calculated inside the loop above in your original code, but variables equity.dayPnl/commodity.dayPnl were used but not shown in this snippet. 
+      // Assuming equity/commodity stats are calculated. I will reconstruct them here for the return object.
+      // Ideally, the 'equity' and 'commodity' objects from your original Step D should be returned.
+      // Re-implementing Step D variables for completeness:
+      const equity = { invested: 0, current: 0, dayPnl: 0 }
+      const commodity = { invested: 0, current: 0, dayPnl: 0 }
+      
+      Object.keys(portfolio).forEach(ticker => {
+          const h = portfolio[ticker]
+          if (h.quantity > 0) {
+             const cleanTicker = ticker.toUpperCase().replace(/\s/g, '')
+             let price = priceMap[ticker]?.price
+             if (!price) {
+                 const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+                 if (foundKey) price = priceMap[foundKey]?.price
+             }
+             price = price || 0
+             const val = h.quantity * price
+             const changePercent = priceMap[ticker]?.change || 0
+             const prevPrice = price / (1 + (changePercent / 100))
+             const dayChange = (price - prevPrice) * h.quantity
+             
+             const cat = getCategory(h.type)
+             if (cat === 'commodity') {
+                 commodity.invested += h.totalInvested
+                 commodity.current += val
+                 commodity.dayPnl += dayChange
+             } else {
+                 equity.invested += h.totalInvested
+                 equity.current += val
+                 equity.dayPnl += dayChange
+             }
+          }
+      })
+
+      const eqStats = calcStats(equity.invested, equity.current, equity.dayPnl)
+      const commStats = calcStats(commodity.invested, commodity.current, commodity.dayPnl)
+
       const finalMetrics = {
         totalXirr: xirrTotal, equityXirr: xirrEq, commXirr: xirrComm,
         netWorth: valTotal, unrealized: unrealized, realized: totalRealizedPnL + totalDividends,
@@ -222,99 +268,39 @@ export default function AnalyticsPage() {
           sectors: formattedSectors, holdings: topHoldings 
       }
 
-      return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary }
+      // --- 3. RETURN STATS DETAILS FOR CHART ---
+      return { 
+          metrics: finalMetrics, 
+          sectorData: formattedSectors, 
+          conglomerateData: formattedGroups, 
+          aiSummary: summary,
+          statsDetails: { equity: eqStats, commodity: commStats } // <--- Expose for chart
+      }
 
-  }, [transactions, priceMap])
+  }, [transactions, priceMap, dividendMap]) // Added dividendMap dependency
 
+  const isLoading = txnsLoading || pricesLoading || divLoading
 
-  useEffect(() => {
-      if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
-  }, [transactions]) 
-
-  const fetchChartData = async (range: string, category: 'equity' | 'commodity') => {
-      if (!transactions) return
-      setChartLoading(true); setChartCategory(category); setCurrentRange(range)
-      try {
-        const relevantTickers = new Set<string>()
-        const categoryTxns = transactions.filter(t => {
-            const cat = getCategory(t.assets.asset_type)
-            if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
-            return false
-        })
-
-        if (relevantTickers.size === 0) { setChartData([]); setChartLoading(false); return }
-
-        const res = await fetch('/api/history', { method: 'POST', body: JSON.stringify({ tickers: Array.from(relevantTickers), range }) })
-        const historyMap = await res.json()
-        
-        const priceLookup: Record<string, Record<string, number>> = {}
-        const allDatesSet = new Set<string>()
-        Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
-            if (!Array.isArray(history)) return
-            history.forEach((point: any) => { 
-                const d = point.date
-                allDatesSet.add(d) 
-                if (!priceLookup[d]) priceLookup[d] = {}
-                priceLookup[d][ticker] = point.price 
-            })
-        })
-        const sortedDates = Array.from(allDatesSet).sort()
-        const finalChartData: ChartDataPoint[] = []
-        const runningHoldings: Record<string, number> = {}
-        const lastKnownPrices: Record<string, number> = {} 
-        
-        let runningInvested = 0; let txnIndex = 0
-
-        for (const date of sortedDates) {
-            const dayStart = new Date(date).getTime()
-            
-            while (txnIndex < categoryTxns.length) {
-                const t = categoryTxns[txnIndex]
-                const tTime = new Date(t.date).getTime()
-                if (tTime > dayStart + 86400000) break;
-                
-                if (t.transaction_type === 'Buy') {
-                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
-                    runningInvested += (Number(t.price) * Number(t.quantity))
-                } else if (t.transaction_type === 'Sell') {
-                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
-                    runningInvested -= (Number(t.price) * Number(t.quantity))
-                }
-                txnIndex++
-            }
-
-            const daysPrices = priceLookup[date] || {}
-            Object.keys(daysPrices).forEach(t => {
-                if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
-            })
-
-            let dailyValue = 0
-            Object.keys(runningHoldings).forEach(ticker => {
-                const qty = runningHoldings[ticker]
-                if (qty > 0) { 
-                    const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
-                    if (price > 0) dailyValue += (qty * price) 
-                }
-            })
-
-            if (runningInvested > 0 || dailyValue > 0) {
-                finalChartData.push({ date, invested: Math.max(0, runningInvested), value: dailyValue })
-            }
-        }
-        setChartData(finalChartData)
-      } catch (e) { console.error(e) } finally { setChartLoading(false) }
-  }
+  // --- 4. PREPARE CHART DATA ---
+  const chartDataPoints = chartCategory === 'equity' ? equityHistory : commHistory
+  const chartCurrentValue = chartCategory === 'equity' ? statsDetails.equity.current : statsDetails.commodity.current
 
   if (txnsLoading && !metrics) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
+
+  // Helper for Masking
+  const formatVal = (val: number) => '₹' + val.toLocaleString('en-IN', { maximumFractionDigits: 0 })
 
   return (
     <div className="space-y-6 pb-10">
       
-      {/* 1. CHART */}
+      {/* 1. CHART (CONNECTED TO NEW HOOK & CURRENT VALUE) */}
       <PortfolioHistoryChart 
-         data={chartData} isLoading={chartLoading} category={chartCategory}
-         onRangeChange={(r) => fetchChartData(r, chartCategory)} 
-         onCategoryChange={(c) => fetchChartData(currentRange, c)}
+         data={chartDataPoints} 
+         isLoading={isLoading} 
+         category={chartCategory}
+         currentValue={chartCurrentValue} // <--- Fixes the end-point
+         onRangeChange={(r) => {}} // Range handled inside component now
+         onCategoryChange={setChartCategory}
       />
 
       {/* 2. METRICS CARDS */}
@@ -358,7 +344,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-6 md:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                 <h4 className="text-xs font-bold text-slate-400 uppercase">Net Worth</h4>
-                <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">₹{metrics.currentVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">{formatVal(metrics.currentVal)}</div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                 <h4 className="text-xs font-bold text-slate-400 uppercase">Unrealized P&L</h4>
@@ -375,11 +361,11 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* 5. RISK ANALYSIS */}
+      {/* 5. RISK ANALYSIS (UNCHANGED) */}
       <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
       <div className="grid gap-6 md:grid-cols-2">
         
-        {/* 1. SECTOR EXPOSURE */}
+        {/* SECTOR EXPOSURE */}
         <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
@@ -387,7 +373,6 @@ export default function AnalyticsPage() {
             
             <div className="flex-1 min-h-0 relative [&_*:focus]:outline-none">
                 <div className="absolute inset-0 flex flex-col">
-                    {/* Chart Container */}
                     <div className="flex-1 relative" style={{ minHeight: 0 }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -414,17 +399,13 @@ export default function AnalyticsPage() {
                                 <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} wrapperStyle={{ zIndex: 1000 }} />
                             </PieChart>
                         </ResponsiveContainer>
-                        
-                        {/* Center Label - Now positioned relative to chart container */}
                         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
                             <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                             <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
-                                ₹{(metrics.netWorth / 100000).toFixed(2)}L
+                                {(metrics.netWorth / 100000).toFixed(2)}L
                             </p>
                         </div>
                     </div>
-                    
-                    {/* Legend Container - Separated */}
                     <div className="pt-4 pb-2 overflow-auto" style={{ maxHeight: '120px' }}>
                         <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px]">
                             {sectorData.map((entry, index) => (
@@ -442,7 +423,7 @@ export default function AnalyticsPage() {
             </div>
         </div>
 
-        {/* 2. CONGLOMERATE RADAR */}
+        {/* CONGLOMERATE RADAR */}
         <div className="h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
@@ -498,6 +479,7 @@ export default function AnalyticsPage() {
 
       </div>
 
+      {/* HEALTH (UNCHANGED) */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
             <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
             <ul className="space-y-6">
