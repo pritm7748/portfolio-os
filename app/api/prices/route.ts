@@ -34,7 +34,7 @@ export async function POST(request: Request) {
             ])
             
             const OUNCE_TO_GRAM = 31.1035
-            const INDIAN_MARKET_PREMIUM = 1.05 // 5% Buffer
+            const INDIAN_MARKET_PREMIUM = 1.075 // 5% Buffer
 
             let current = 0
             let prev = 0
