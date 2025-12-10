@@ -2,54 +2,66 @@
 
 import { useMemo, useState } from 'react'
 import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
-import { Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock } from 'lucide-react'
+import { 
+    Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, 
+    HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock, 
+    AlertTriangle, ShieldCheck 
+} from 'lucide-react'
 
-// --- 1. ADVANCED TRANSACTION CLASSIFIER ---
+// --- 1. THE ULTIMATE CLASSIFIER (SEBI / Indian Context Optimized) ---
 const getTransactionType = (txn: any) => {
-    // Normalize text: combine action + any raw text available, lowercased
+    // 1. Clean the text: Remove noise like dates or "via market" for pure matching
     const raw = (txn.action || '').toLowerCase().trim()
     const shares = Number(txn.shares) || 0
+    const value = Number(txn.value) || 0
 
-    // Helper for regex matching
-    const matches = (regex: RegExp) => regex.test(raw)
+    // Helper: Regex Match
+    const is = (pattern: RegExp) => pattern.test(raw)
 
-    // A. MARKET TRADES (The most common, explicit ones)
-    if (matches(/(open market|market purchase|creeping acquisition)/)) 
-        return { label: 'Market Buy', color: 'text-green-600', icon: TrendingUp }
+    // --- TIER 1: HIGH PRIORITY (Pledges & Corp Actions) ---
     
-    if (matches(/(open market sale|market sale|market disposal)/)) 
-        return { label: 'Market Sell', color: 'text-red-600', icon: TrendingDown }
+    // Pledges (Critical for Indian Promoters)
+    if (is(/invok/)) return { label: 'Pledge Invoked', color: 'text-red-700 bg-red-50', icon: AlertTriangle } // Bad
+    if (is(/revok|release|clos/)) return { label: 'Pledge Revoked', color: 'text-green-600 bg-green-50', icon: Unlock } // Good
+    if (is(/creat|pledge/)) return { label: 'Pledge Created', color: 'text-orange-600 bg-orange-50', icon: Lock } // Caution
 
-    // B. PLEDGE ACTIVITIES (Promoter Funding)
-    if (matches(/pledge.*creat/)) return { label: 'Pledge Created', color: 'text-red-500', icon: Lock }
-    if (matches(/pledge.*(revok|release|clos)/)) return { label: 'Pledge Revoked', color: 'text-green-500', icon: Unlock }
-    if (matches(/pledge.*invo/)) return { label: 'Pledge Invoked', color: 'text-red-700', icon: TrendingDown }
+    // ESOPs / Employee Shares
+    if (is(/esop|exercise|vest|employee/)) return { label: 'ESOP Exercise', color: 'text-blue-600 bg-blue-50', icon: FileText }
 
-    // C. OFF-MARKET & TRANSFERS
-    // Catches "Other at price..." which usually means non-open-market allotment
-    if (matches(/other at price/)) return { label: 'Off-Market / Allotment', color: 'text-indigo-600', icon: FileText }
-    if (matches(/(inter-se|inter se|transfer)/)) return { label: 'Inter-se Transfer', color: 'text-slate-500', icon: ArrowRightLeft }
-    if (matches(/(gift|donation)/)) return { label: 'Gift', color: 'text-pink-500', icon: Gift }
-    if (matches(/off market/)) return { label: 'Off-Market Trade', color: 'text-slate-600', icon: ArrowRightLeft }
+    // Corporate Actions
+    if (is(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600 bg-indigo-50', icon: Gift }
+    if (is(/rights/)) return { label: 'Rights Issue', color: 'text-indigo-600 bg-indigo-50', icon: FileText }
+    if (is(/allotment|preferential|conversion|warrant/)) return { label: 'Pref. Allotment', color: 'text-indigo-600 bg-indigo-50', icon: ShieldCheck }
 
-    // D. CORPORATE ACTIONS
-    if (matches(/(allotment|preferential|warrant)/)) return { label: 'Pref. Allotment', color: 'text-indigo-600', icon: FileText }
-    if (matches(/(esop|exercise|vest)/)) return { label: 'ESOP Exercise', color: 'text-amber-600', icon: FileText }
-    if (matches(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600', icon: Gift }
-    if (matches(/rights/)) return { label: 'Rights Issue', color: 'text-indigo-600', icon: FileText }
+    // --- TIER 2: TRANSFERS & NON-MARKET ---
+    
+    if (is(/gift|donat/)) return { label: 'Gift / Donation', color: 'text-pink-600 bg-pink-50', icon: Gift }
+    if (is(/inter-se|inter se/)) return { label: 'Inter-se Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
+    if (is(/off market|off-market/)) return { label: 'Off-Market Deal', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
+    if (is(/transfer|transmission/)) return { label: 'Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
 
-    // E. GENERIC FALLBACKS (If no specific context found)
-    if (matches(/(buy|bought|purchase|acqui)/)) return { label: 'Buy', color: 'text-green-600', icon: TrendingUp }
-    if (matches(/(sell|sold|sale|dispos)/)) return { label: 'Sell', color: 'text-red-600', icon: TrendingDown }
+    // --- TIER 3: EXPLICIT BUY/SELL (Market & Strategic) ---
 
-    // F. UNKNOWN / EMPTY / "Other"
-    // If we have shares direction, assume Accumulate/Dispose
-    if (shares > 0) return { label: 'Accumulate', color: 'text-green-600', icon: TrendingUp }
-    if (shares < 0) return { label: 'Dispose', color: 'text-red-600', icon: TrendingDown }
+    // Buys
+    if (is(/creeping/)) return { label: 'Creeping Acq.', color: 'text-green-700 bg-green-50', icon: TrendingUp }
+    if (is(/market purchase|open market/)) return { label: 'Market Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
+    if (is(/acqui|buy|bought|purchase|subscri/)) return { label: 'Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
 
+    // Sells
+    if (is(/market sale|open market sale/)) return { label: 'Market Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
+    if (is(/dispos|sell|sold|sale|divest/)) return { label: 'Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
+
+    // --- TIER 4: FALLBACKS (Smart Guessing) ---
+    
+    // If text is "Other" or empty, infer from share direction
+    if (shares > 0) return { label: 'Strategic Add', color: 'text-teal-600 bg-teal-50', icon: TrendingUp }
+    if (shares < 0) return { label: 'Strategic Sell', color: 'text-orange-600 bg-orange-50', icon: TrendingDown }
+
+    // Last Resort: Truncate raw text
+    const cleanText = txn.action.replace(/acquisition|disposal|shares|of/gi, '').trim()
     return { 
-        label: 'Update', 
-        color: 'text-slate-500', 
+        label: cleanText.length > 20 ? 'Update' : (cleanText || 'Reporting'), 
+        color: 'text-slate-500 bg-slate-50', 
         icon: HelpCircle 
     }
 }
@@ -59,7 +71,7 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
     return (
         <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 overflow-hidden shadow-sm h-fit">
             
-            {/* MOBILE HEADER (Collapsible) - Hidden on Desktop */}
+            {/* MOBILE: Clickable Header (Accordion) */}
             <button 
                 onClick={onToggle}
                 className="md:hidden w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50"
@@ -70,15 +82,19 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
                 {isOpen ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
             </button>
 
-            {/* DESKTOP HEADER (Static) - Hidden on Mobile */}
-            <div className="hidden md:flex p-4 pb-0 items-center gap-2 mb-4 border-b-0">
+            {/* DESKTOP: Static Header (Always Visible) */}
+            <div className="hidden md:flex p-4 pb-3 items-center gap-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900">
                 <Icon className="h-5 w-5 text-indigo-500" /> 
                 <h3 className="font-bold text-slate-800 dark:text-white">{title}</h3>
             </div>
             
-            {/* CONTENT AREA */}
-            {/* On Mobile: Hidden unless 'isOpen'. On Desktop: Always 'block' */}
-            <div className={`${isOpen ? 'block' : 'hidden'} md:block p-4 pt-0 border-t border-slate-100 md:border-0 dark:border-slate-800 animate-in slide-in-from-top-1`}>
+            {/* CONTENT: Hidden on Mobile if closed, Always visible on Desktop */}
+            <div className={`
+                ${isOpen ? 'block' : 'hidden'} 
+                md:block 
+                p-4 
+                animate-in slide-in-from-top-2 md:animate-none
+            `}>
                 {children}
             </div>
         </div>
@@ -88,7 +104,7 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
 export default function PulsePage() {
   const { data: transactions } = useTransactions()
   
-  // Mobile Accordion State (Open 'radar' by default)
+  // Mobile Accordion State
   const [openSection, setOpenSection] = useState<string | null>('radar')
 
   const toggleSection = (id: string) => {
@@ -107,7 +123,7 @@ export default function PulsePage() {
   return (
     <div className="space-y-8 pb-20">
       
-      {/* 1. MACRO DASHBOARD (Grid on all screens) */}
+      {/* 1. MACRO DASHBOARD */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -127,7 +143,7 @@ export default function PulsePage() {
           ))}
       </div>
 
-      {/* 2. CONTENT SECTIONS (Column on Mobile, Grid on Desktop) */}
+      {/* 2. CONTENT SECTIONS */}
       <div className="flex flex-col md:grid md:grid-cols-3 gap-6">
           
           {/* SECTION 1: BIG MONEY RADAR */}
@@ -139,7 +155,9 @@ export default function PulsePage() {
           >
               <div className="space-y-3">
                   {!data?.shockers || data.shockers.length === 0 ? (
-                      <p className="text-sm text-slate-400 text-center py-4">No unusual volume detected.</p>
+                      <div className="text-center py-8">
+                          <p className="text-sm text-slate-400">No unusual volume detected.</p>
+                      </div>
                   ) : (
                       data.shockers.map((s: any, i: number) => (
                           <div key={i} className="flex items-center justify-between rounded-lg border border-amber-100 bg-amber-50/50 p-3 dark:bg-amber-900/10 dark:border-amber-900/30">
@@ -168,15 +186,17 @@ export default function PulsePage() {
           >
               <div className="space-y-3">
                   {!data?.events || data.events.length === 0 ? (
-                      <p className="text-sm text-slate-400 text-center py-4">No upcoming events.</p>
+                      <div className="text-center py-8">
+                          <p className="text-sm text-slate-400">No upcoming events.</p>
+                      </div>
                   ) : (
                       data.events.map((event: any, i: number) => (
-                          <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3 dark:bg-slate-800/30 dark:border-slate-800">
-                              <div className="flex flex-col items-center justify-center rounded bg-white p-1.5 min-w-[45px] shadow-sm dark:bg-slate-900">
+                          <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-3 dark:bg-slate-900 dark:border-slate-800">
+                              <div className="flex flex-col items-center justify-center rounded-md bg-indigo-50 p-2 min-w-[48px] dark:bg-indigo-900/20">
                                   <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase">
                                       {new Date(event.date).toLocaleString('default', { month: 'short' })}
                                   </span>
-                                  <span className="text-sm font-bold text-slate-900 dark:text-white">
+                                  <span className="text-lg font-bold text-slate-900 dark:text-white leading-none">
                                       {new Date(event.date).getDate()}
                                   </span>
                               </div>
@@ -190,7 +210,7 @@ export default function PulsePage() {
               </div>
           </Section>
 
-          {/* SECTION 3: INSIDER ACTIVITY */}
+          {/* SECTION 3: INSIDER ACTIVITY (Smart Display) */}
           <Section 
             title="Insider Activity" 
             icon={Briefcase} 
@@ -199,41 +219,47 @@ export default function PulsePage() {
           >
               <div className="space-y-3">
                   {!data?.insiders || data.insiders.length === 0 ? (
-                      <p className="text-sm text-slate-400 text-center py-4">No recent insider trades.</p>
+                      <div className="text-center py-8">
+                          <p className="text-sm text-slate-400">No recent insider trades.</p>
+                      </div>
                   ) : (
                       data.insiders.map((txn: any, i: number) => {
                           const { label, color, icon: Icon } = getTransactionType(txn)
                           return (
                               <div key={i} className="rounded-lg border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                                  {/* Header: Stock & Date */}
                                   <div className="flex justify-between items-start mb-2">
-                                      <div>
-                                          <h4 className="font-bold text-sm text-slate-900 dark:text-white">{txn.ticker}</h4>
-                                          <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1 max-w-[150px]" title={txn.holder}>
-                                              {txn.holder} ({txn.relation})
+                                      <div className="flex-1 min-w-0 mr-2">
+                                          <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{txn.ticker}</h4>
+                                          <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1" title={txn.holder}>
+                                              {txn.holder} <span className="opacity-70">({txn.relation})</span>
                                           </p>
                                       </div>
-                                      <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
+                                      <span className="shrink-0 text-[10px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
                                           {new Date(txn.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
                                       </span>
                                   </div>
                                   
+                                  {/* Footer: Action & Value */}
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
-                                      <div className="flex flex-col">
-                                          <span className={`flex items-center gap-1 text-xs font-bold ${color}`}>
+                                      <div className="flex items-center gap-2">
+                                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${color}`}>
                                               <Icon className="h-3 w-3" /> {label}
-                                          </span>
-                                          <span className="text-[10px] text-slate-400 font-medium mt-0.5">
-                                              {Math.abs(txn.shares) > 1000 ? (Math.abs(txn.shares) / 1000).toFixed(1) + 'k' : Math.abs(txn.shares)} Shares
                                           </span>
                                       </div>
                                       
-                                      {txn.value > 0 ? (
-                                          <span className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
-                                              {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
+                                      <div className="text-right">
+                                          {txn.value > 0 ? (
+                                              <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
+                                                  {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
+                                              </span>
+                                          ) : (
+                                              <span className="block text-[10px] text-slate-400 italic">Reported</span>
+                                          )}
+                                          <span className="block text-[9px] text-slate-400 font-medium">
+                                              {Math.abs(txn.shares) > 1000 ? (Math.abs(txn.shares) / 1000).toFixed(1) + 'k' : Math.abs(txn.shares)} Shares
                                           </span>
-                                      ) : (
-                                          <span className="text-[10px] text-slate-400 italic">-</span>
-                                      )}
+                                      </div>
                                   </div>
                               </div>
                           )
