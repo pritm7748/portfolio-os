@@ -46,41 +46,50 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         } else if (portfolios.length > 0) {
             setTargetPortfolioId(portfolios[0].id as number)
         }
-        // Reset states on open
         setExistingHolding(null)
         setOtherCharges('')
     }
   }, [isOpen, selectedPortfolio, portfolios])
 
-  // --- NEW: Fetch Existing Holding for Averaging ---
+  // --- SMART AVERAGING LOGIC (Exchange Agnostic) ---
   useEffect(() => {
       if (!ticker || !targetPortfolioId || !isOpen) return
 
       const fetchHolding = async () => {
-          // 1. Get Asset ID
-          const { data: asset } = await supabase.from('assets').select('id').eq('ticker', ticker).single()
-          if (!asset) {
+          // 1. Identify Root Symbol (e.g. "TCS.BO" -> "TCS")
+          const root = ticker.split('.')[0].toUpperCase()
+          
+          // 2. Search for ALL variants (TCS, TCS.NS, TCS.BO)
+          // This ensures we find your existing holding even if you used a different exchange before
+          const searchTickers = [root, `${root}.NS`, `${root}.BO`]
+
+          const { data: assets } = await supabase
+              .from('assets')
+              .select('id')
+              .in('ticker', searchTickers)
+          
+          if (!assets || assets.length === 0) {
               setExistingHolding(null)
               return
           }
 
-          // 2. Fetch Transactions
+          // 3. Get Transaction History for ALL matched IDs
+          const assetIds = assets.map(a => a.id)
           const { data: txns } = await supabase
               .from('transactions')
               .select('transaction_type, quantity, price')
               .eq('portfolio_id', targetPortfolioId)
-              .eq('asset_id', asset.id)
+              .in('asset_id', assetIds) 
           
           if (!txns || txns.length === 0) {
               setExistingHolding(null)
               return
           }
 
-          // 3. Calculate Current Avg (FIFO/Weighted logic simplified for Avg)
+          // 4. Calculate Weighted Average
           let totalQty = 0
           let totalCost = 0
           
-          // Simple Weighted Average Logic for Display
           txns.forEach(t => {
               const q = Number(t.quantity)
               const p = Number(t.price)
@@ -88,7 +97,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                   totalCost += (q * p)
                   totalQty += q
               } else if (t.transaction_type === 'Sell') {
-                  // Reduce cost proportionally
                   if (totalQty > 0) {
                       const avg = totalCost / totalQty
                       totalCost -= (q * avg)
@@ -104,12 +112,12 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      const timer = setTimeout(fetchHolding, 500) // Debounce
+      const timer = setTimeout(fetchHolding, 500)
       return () => clearTimeout(timer)
   }, [ticker, targetPortfolioId, isOpen])
 
 
-  // --- CALCULATOR LOGIC ---
+  // --- CALCULATOR PREVIEW ---
   const projectedStats = useMemo(() => {
       if (action !== 'Buy') return null
       
@@ -123,6 +131,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       const currentAvg = existingHolding?.avg || 0
       const currentTotal = currentQty * currentAvg
 
+      // Logic: (Old Cost + New Cost + Extras) / (Old Qty + New Qty)
       const newInvested = (newQty * newPrice) + extra
       const finalQty = currentQty + newQty
       const finalAvg = (currentTotal + newInvested) / finalQty
@@ -135,7 +144,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   }, [quantity, price, otherCharges, existingHolding, action])
 
 
-  // Search Logic (Skip for Commodities)
+  // Search Logic
   useEffect(() => {
     if (type === 'Commodity') return 
 
@@ -226,13 +235,11 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
       let calculatedPnL = 0
-
-      // Add other charges to price for data accuracy? 
-      // Option A: Just store raw price. 
-      // Option B: Store effective price. (Let's stick to raw price for history accuracy, user P&L will adjust naturally if we tracked fees, but for now we just track raw)
+      
+      // Note: We currently DO NOT store 'otherCharges' in the DB because the schema might not have a 'fees' column yet.
+      // But we use it here to adjust the Realized PnL calculation if it's a Sell.
       
       if (action === 'Sell') {
-        // Recalculate cost basis logic... (same as before)
         const { data: history } = await supabase
             .from('transactions')
             .select('*')
@@ -264,7 +271,8 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             costBasis += (take * lot.price)
             qtyToSell -= take
         }
-        // Deduct "Other Charges" from Profit on Sell?
+        
+        // PnL = (Sell Value - Fees) - Cost Basis
         const sellValue = (Number(price) * Number(quantity)) - Number(otherCharges)
         calculatedPnL = sellValue - costBasis
       }
@@ -278,8 +286,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         quantity: finalQty,
         price: finalPrice,
         realised_pnl: calculatedPnL
-        // Note: We aren't saving 'fees' column yet as schema doesn't have it, 
-        // but it was used for P&L calc above and Averaging display.
       })
 
       if (txnError) throw txnError
@@ -446,7 +452,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           </div>
 
-          {/* --- AVERAGING CALCULATOR PREVIEW --- */}
+          {/* --- CALCULATOR PREVIEW --- */}
           {projectedStats && (
               <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3 dark:border-indigo-900/30 dark:bg-indigo-900/10">
                   <div className="flex items-center gap-2 mb-2">
