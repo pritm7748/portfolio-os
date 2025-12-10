@@ -14,11 +14,11 @@ export function usePortfolioHistory(transactions: any[]) {
     const today = new Date()
     
     // 3. Initialize Tracking Variables
+    // We track the "Cost Basis" (Invested Amount) separately for Equity and Commodity
     let currentEqInvested = 0
     let currentCommInvested = 0
     
-    // Map to quickly find transactions for a specific date
-    // Key: "YYYY-MM-DD", Value: Transaction[]
+    // Group transactions by date for fast lookup
     const txnMap: Record<string, any[]> = {}
     sortedTxns.forEach(t => {
         const d = new Date(t.date).toISOString().split('T')[0]
@@ -39,14 +39,15 @@ export function usePortfolioHistory(transactions: any[]) {
         return 'equity'
     }
 
-    // 4. DAY-BY-DAY REPLAY (The Fix)
-    // Loop from Start Date -> Today to create a seamless line chart
+    // 4. DAY-BY-DAY REPLAY LOOP
+    // We walk from the first trade date to today.
+    // If no trade happened on a day, we carry forward the previous day's invested amount.
     for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
         const dateStr = d.toISOString().split('T')[0]
         const dayTxns = txnMap[dateStr]
 
         if (dayTxns) {
-            // Apply all transactions that happened on this specific date
+            // Apply all transactions for this specific date
             dayTxns.forEach(txn => {
                 const amount = Number(txn.quantity) * Number(txn.price)
                 const category = getCategory(txn)
@@ -56,21 +57,20 @@ export function usePortfolioHistory(transactions: any[]) {
                     else currentEqInvested += amount
                 } 
                 else if (txn.transaction_type === 'Sell') {
-                    // Simple deduction for invested amount tracking
-                    // (For precise FIFO cost-basis reduction, we'd need the full engine, 
-                    // but for an "Invested vs Value" chart, subtracting the sell value is the standard approximation)
+                    // Reduce invested amount proportionally
+                    // (Simplified for history chart: remove the value sold from cost basis)
                     if (category === 'commodity') currentCommInvested -= amount
                     else currentEqInvested -= amount
                 }
             })
         }
 
-        // Record the snapshot for THIS day (Carrying forward previous values if no trade occurred)
-        // Note: We clamp at 0 to avoid negative spikes from data anomalies
+        // Push Snapshot for this day
+        // Note: 'value' initially tracks 'invested'. The Chart Component will scale this to Net Worth.
         historyEquity.push({ 
             date: dateStr, 
             invested: Math.max(0, currentEqInvested), 
-            value: Math.max(0, currentEqInvested) // Placeholder for Value (patched by chart)
+            value: Math.max(0, currentEqInvested) 
         })
         
         historyCommodity.push({ 
