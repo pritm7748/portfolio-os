@@ -102,7 +102,7 @@ export async function POST(request: Request) {
                 })
             }
             if (cal?.exDividendDate) {
-                if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 5)) {
+                if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 15)) {
                     events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend' })
                 }
             }
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
             // Insiders (FIXED VALUE LOGIC)
             const txns = result.insiderTransactions?.transactions || []
             txns.forEach((t: any) => {
-                 if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 90)) {
+                 if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 60)) {
                      
                      // Safe Access for Shares
                      const shares = t.shares?.raw || t.shares || 0
