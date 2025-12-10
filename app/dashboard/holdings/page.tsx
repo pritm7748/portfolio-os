@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info, TrendingUp, TrendingDown } from 'lucide-react'
+import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
@@ -48,6 +48,7 @@ export default function HoldingsPage() {
 
   const loading = txnsLoading || pricesLoading
 
+  // --- SMART MERGE LOGIC ---
   const holdings = useMemo(() => {
       if (!transactions) return []
 
@@ -56,41 +57,55 @@ export default function HoldingsPage() {
 
       transactions.forEach(txn => {
           const t = txn.assets
-          const ticker = t.ticker
+          const originalTicker = t.ticker
           
-          if (!assetLots[ticker]) assetLots[ticker] = []
+          // FIX: Group by Root Symbol (e.g. "TCS.BO" -> "TCS")
+          // This merges NSE/BSE holdings into one row
+          const root = originalTicker.split('.')[0] 
+          const key = root
+
+          if (!assetLots[key]) assetLots[key] = []
           
           if (txn.transaction_type === 'Buy') {
-              assetLots[ticker].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
+              assetLots[key].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
           } else if (txn.transaction_type === 'Sell') {
               let qtyToSell = Number(txn.quantity)
-              while (qtyToSell > 0 && assetLots[ticker].length > 0) {
-                  if (assetLots[ticker][0].quantity > qtyToSell) {
-                      assetLots[ticker][0].quantity -= qtyToSell; qtyToSell = 0
+              while (qtyToSell > 0 && assetLots[key].length > 0) {
+                  if (assetLots[key][0].quantity > qtyToSell) {
+                      assetLots[key][0].quantity -= qtyToSell; qtyToSell = 0
                   } else {
-                      qtyToSell -= assetLots[ticker][0].quantity; assetLots[ticker].shift()
+                      qtyToSell -= assetLots[key][0].quantity; assetLots[key].shift()
                   }
               }
           }
 
-          if (!map[ticker]) {
-              map[ticker] = {
-                  ticker, rootSymbol: ticker.split('.')[0], name: t.name, type: t.asset_type,
+          if (!map[key]) {
+              map[key] = {
+                  ticker: originalTicker, // Default to first seen ticker for display
+                  rootSymbol: root,
+                  name: t.name,
+                  type: t.asset_type,
                   quantity: 0, avgPrice: 0, totalInvested: 0,
                   currentPrice: 0, currentValue: 0, dayChangePercent: 0, dayChangeValue: 0,
                   pnl: 0, pnlPercent: 0, assetIds: []
               }
           }
           
-          if (!map[ticker].assetIds.includes(txn.asset_id)) {
-             map[ticker].assetIds.push(txn.asset_id)
+          // Accumulate all Asset IDs (NSE + BSE ids) for the drawer
+          if (!map[key].assetIds.includes(txn.asset_id)) {
+             map[key].assetIds.push(txn.asset_id)
+          }
+          // Update display ticker if we encounter NSE (preferred)
+          if (originalTicker.includes('.NS')) {
+              map[key].ticker = originalTicker
           }
       })
 
       return Object.values(map).map(h => {
           let q = 0, c = 0
-          if (assetLots[h.ticker]) {
-              assetLots[h.ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
+          // Calculate totals from the merged lots
+          if (assetLots[h.rootSymbol]) {
+              assetLots[h.rootSymbol].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
           }
           
           if (q <= 0.000001) return null
@@ -99,12 +114,10 @@ export default function HoldingsPage() {
           h.totalInvested = c
           h.avgPrice = c / q
 
-          const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
-          let priceData = priceMap?.[h.ticker]
-          
-          if (!priceData && priceMap) {
-              const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
-              if (foundKey) priceData = priceMap[foundKey]
+          // Price Lookup: Try NSE first, then BSE, then Raw
+          let priceData = null
+          if (priceMap) {
+              priceData = priceMap[h.rootSymbol + '.NS'] || priceMap[h.rootSymbol + '.BO'] || priceMap[h.ticker]
           }
 
           h.currentPrice = priceData?.price || h.avgPrice
@@ -200,7 +213,7 @@ export default function HoldingsPage() {
           </div>
       ) : (
         <>
-            {/* --- MOBILE VIEW: CARDS (Visible on SM, Hidden on MD) --- */}
+            {/* --- MOBILE VIEW: CARDS (Updated for Percentages) --- */}
             <div className="block md:hidden space-y-3">
                 {filteredHoldings.map((holding) => (
                     <div 
@@ -220,8 +233,6 @@ export default function HoldingsPage() {
                             </div>
                             <div className={`text-right ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 <p className="font-bold text-indigo-600 dark:text-indigo-400">₹{holding.currentPrice.toLocaleString('en-IN')}</p>
-                                
-                                {/* NEW: Showing both Amount AND Percent for Day Change */}
                                 <div className="text-xs font-medium">
                                     <span className="block">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
                                     <span className="block opacity-80">({Math.abs(holding.dayChangePercent).toFixed(2)}%)</span>
@@ -244,8 +255,6 @@ export default function HoldingsPage() {
                             </div>
                             <div className="text-right">
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Total P&L</p>
-                                
-                                {/* NEW: Showing both Amount AND Percent for Total P&L */}
                                 <div className={`font-bold ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                     <p>{holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
                                     <p className="text-xs opacity-80">({holding.pnlPercent.toFixed(2)}%)</p>
@@ -256,7 +265,7 @@ export default function HoldingsPage() {
                 ))}
             </div>
 
-            {/* --- DESKTOP VIEW: TABLE (Hidden on SM, Visible on MD) --- */}
+            {/* --- DESKTOP VIEW: TABLE --- */}
             <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm whitespace-nowrap">

@@ -25,7 +25,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
   const [action, setAction] = useState('Buy')
   const [quantity, setQuantity] = useState('')
   const [price, setPrice] = useState('')
-  const [otherCharges, setOtherCharges] = useState('') // <--- NEW: Brokerage/Taxes
+  const [otherCharges, setOtherCharges] = useState('') // Brokerage/Taxes
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   
   // Search States
@@ -38,7 +38,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
   const supabase = createClient()
 
-  // Initialize Target Portfolio
+  // Initialize
   useEffect(() => {
     if (isOpen) {
         if (selectedPortfolio.id !== 'all') {
@@ -56,11 +56,8 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       if (!ticker || !targetPortfolioId || !isOpen) return
 
       const fetchHolding = async () => {
-          // 1. Identify Root Symbol (e.g. "TCS.BO" -> "TCS")
+          // 1. Identify Root (TCS.BO -> TCS) to find matches across exchanges
           const root = ticker.split('.')[0].toUpperCase()
-          
-          // 2. Search for ALL variants (TCS, TCS.NS, TCS.BO)
-          // This ensures we find your existing holding even if you used a different exchange before
           const searchTickers = [root, `${root}.NS`, `${root}.BO`]
 
           const { data: assets } = await supabase
@@ -73,7 +70,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               return
           }
 
-          // 3. Get Transaction History for ALL matched IDs
           const assetIds = assets.map(a => a.id)
           const { data: txns } = await supabase
               .from('transactions')
@@ -86,7 +82,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               return
           }
 
-          // 4. Calculate Weighted Average
           let totalQty = 0
           let totalCost = 0
           
@@ -131,7 +126,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
       const currentAvg = existingHolding?.avg || 0
       const currentTotal = currentQty * currentAvg
 
-      // Logic: (Old Cost + New Cost + Extras) / (Old Qty + New Qty)
+      // Logic: (Old Cost + New Cost + Fees) / (Old Qty + New Qty)
       const newInvested = (newQty * newPrice) + extra
       const finalQty = currentQty + newQty
       const finalAvg = (currentTotal + newInvested) / finalQty
@@ -164,7 +159,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     return () => clearTimeout(timer)
   }, [ticker, showResults, type])
 
-  // Handle Commodity Defaults
+  // Handle Defaults
   useEffect(() => {
       if (type === 'Commodity') {
           if (!ticker.startsWith('COMMODITY:')) {
@@ -211,7 +206,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
           }
       }
 
-      // Fetch Sector
+      // Fetch Meta
       let sector = 'Unknown'
       let industry = 'Unknown'
       if (ticker) {
@@ -231,13 +226,17 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
       if (assetError) throw assetError
 
-      // 2. Logic based on Action
+      // 2. Prepare Price & Qty
       let finalQty = Number(quantity)
       let finalPrice = Number(price)
       let calculatedPnL = 0
-      
-      // Note: We currently DO NOT store 'otherCharges' in the DB because the schema might not have a 'fees' column yet.
-      // But we use it here to adjust the Realized PnL calculation if it's a Sell.
+      const fees = Number(otherCharges) || 0
+
+      // FIX: For Buy, we add fees to the price so Avg Price in dashboard is accurate
+      if (action === 'Buy' && finalQty > 0) {
+          // Effective Price = (Raw Price * Qty + Fees) / Qty
+          finalPrice = ((finalPrice * finalQty) + fees) / finalQty
+      }
       
       if (action === 'Sell') {
         const { data: history } = await supabase
@@ -273,7 +272,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         }
         
         // PnL = (Sell Value - Fees) - Cost Basis
-        const sellValue = (Number(price) * Number(quantity)) - Number(otherCharges)
+        const sellValue = (Number(price) * Number(quantity)) - fees
         calculatedPnL = sellValue - costBasis
       }
 
@@ -284,7 +283,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         transaction_type: action,
         date: date,
         quantity: finalQty,
-        price: finalPrice,
+        price: finalPrice, // This now includes fees for Buy
         realised_pnl: calculatedPnL
       })
 
@@ -320,7 +319,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Portfolio Select */}
           {portfolios.length > 1 && (
              <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Target Portfolio</label>
@@ -330,7 +328,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
              </div>
           )}
 
-          {/* 1. Asset Type */}
           <div>
                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
                <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
@@ -341,7 +338,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </select>
           </div>
 
-          {/* 2. Asset Selection */}
           {type === 'Commodity' ? (
               <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -405,7 +401,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           )}
 
-          {/* Action Buttons */}
           <div>
               <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>
               <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
@@ -422,7 +417,6 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           </div>
 
-          {/* Qty & Price */}
           <div className="grid grid-cols-2 gap-4">
             {!isIncome && (
                 <div>
@@ -440,10 +434,10 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             </div>
           </div>
 
-          {/* NEW: Other Charges & Date */}
+          {/* NEW: Other Charges */}
           <div className="grid grid-cols-2 gap-4">
               <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Other (Brokerage/Tax)</label>
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Other (Fees/Tax)</label>
                   <input type="number" step="any" placeholder="0.00" value={otherCharges} onChange={(e) => setOtherCharges(e.target.value)} className={inputClass} />
               </div>
               <div>
@@ -452,7 +446,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
               </div>
           </div>
 
-          {/* --- CALCULATOR PREVIEW --- */}
+          {/* PREVIEW CARD */}
           {projectedStats && (
               <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3 dark:border-indigo-900/30 dark:bg-indigo-900/10">
                   <div className="flex items-center gap-2 mb-2">
@@ -472,7 +466,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                   </div>
                   <div className="mt-1 text-right">
                       <span className={`text-[10px] font-medium ${projectedStats.change < 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                          {projectedStats.change < 0 ? 'Average reducing by ' : 'Average increasing by '}
+                          {projectedStats.change < 0 ? 'Reducing by ' : 'Increasing by '}
                           ₹{Math.abs(projectedStats.change).toFixed(2)}
                       </span>
                   </div>
