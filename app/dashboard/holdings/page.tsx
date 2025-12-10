@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info } from 'lucide-react'
+import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info, TrendingUp, TrendingDown } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
@@ -181,7 +181,7 @@ export default function HoldingsPage() {
                 className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-4 text-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
             />
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+        <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide">
             {['All', 'Stock', 'Mutual Fund', 'Commodity', 'Currency'].map(type => (
                 <button 
                     key={type} 
@@ -194,82 +194,130 @@ export default function HoldingsPage() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
-        <div className="overflow-x-auto">
-            {filteredHoldings.length === 0 ? (
-                <div className="flex h-60 flex-col items-center justify-center text-slate-400">
-                    <p>No holdings found matching your criteria.</p>
-                </div>
-            ) : (
-            
-            // --- UPDATED TABLE ---
-            // Added min-w-[1000px] to force scrolling on mobile
-            // Removed 'hidden' classes from columns to show all data
-            <table className="w-full text-left text-sm min-w-[1000px] whitespace-nowrap">
-                <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                    <tr>
-                        <th className="px-6 py-4 sticky left-0 bg-slate-50 dark:bg-slate-800 z-10">Asset Name</th>
-                        <th className="px-4 py-4">Type</th>
-                        <th className="px-4 py-4 text-right">Qty</th>
-                        <th className="px-4 py-4 text-right">Avg. Price</th>
-                        <th className="px-4 py-4 text-right">Live Price</th>
-                        <th className="px-4 py-4 text-right">Day Change</th>
-                        <th className="px-4 py-4 text-right">Total Value</th>
-                        <th className="px-4 py-4 text-right">Total P&L</th>
-                        <th className="px-4 py-4"></th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {filteredHoldings.map((holding) => (
-                    <tr 
-                        key={holding.ticker} 
+      {filteredHoldings.length === 0 ? (
+          <div className="flex h-60 flex-col items-center justify-center text-slate-400">
+              <p>No holdings found matching your criteria.</p>
+          </div>
+      ) : (
+        <>
+            {/* --- MOBILE VIEW: CARDS (Visible on SM, Hidden on MD) --- */}
+            <div className="block md:hidden space-y-3">
+                {filteredHoldings.map((holding) => (
+                    <div 
+                        key={holding.ticker}
                         onClick={() => handleAssetClick(holding)}
-                        className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800 active:scale-[0.98] transition-transform"
                     >
-                        {/* Sticky Name Column for better scrolling UX */}
-                        <td className="px-6 py-4 sticky left-0 bg-white group-hover:bg-slate-50 dark:bg-slate-900 dark:group-hover:bg-slate-800/50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                            <div className="font-bold text-slate-900 dark:text-white">{holding.name}</div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400">{holding.ticker}</div>
-                        </td>
-                        <td className="px-4 py-4">
-                            <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                {holding.type}
-                            </span>
-                        </td>
-                        <td className="px-4 py-4 text-right font-medium text-slate-700 dark:text-slate-300">
-                            {holding.quantity}
-                        </td>
-                        <td className="px-4 py-4 text-right text-slate-600 dark:text-slate-400">
-                            ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                            ₹{holding.currentPrice.toLocaleString('en-IN')}
-                        </td>
-                        <td className="px-4 py-4 text-right">
-                            <div className={`flex flex-col items-end ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                <span className="font-medium">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
-                                <span className="text-xs opacity-80">{Math.abs(holding.dayChangePercent).toFixed(2)}%</span>
+                        <div className="flex justify-between items-start mb-3">
+                            <div>
+                                <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{holding.name}</h3>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs text-slate-500 dark:text-slate-400">{holding.ticker}</span>
+                                    <span className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                        {holding.type}
+                                    </span>
+                                </div>
                             </div>
-                        </td>
-                        <td className="px-4 py-4 text-right font-semibold text-slate-900 dark:text-white">
-                            ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </td>
-                        <td className="px-4 py-4 text-right">
-                            <div className={`flex flex-col items-end ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                <span className="font-bold">{holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                                <span className="text-xs opacity-80">{holding.pnlPercent.toFixed(2)}%</span>
+                            <div className="text-right">
+                                <p className="font-bold text-indigo-600 dark:text-indigo-400">₹{holding.currentPrice.toLocaleString('en-IN')}</p>
+                                <p className={`text-xs ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {holding.dayChangeValue >= 0 ? '+' : ''}{Math.abs(holding.dayChangePercent).toFixed(2)}%
+                                </p>
                             </div>
-                        </td>
-                        <td className="px-4 py-4 text-right">
-                            <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
-                        </td>
-                    </tr>
-                    ))}
-                </tbody>
-            </table>
-            )}
-        </div>
-      </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm mb-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Invested</p>
+                                <p className="font-medium text-slate-900 dark:text-white">₹{holding.totalInvested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Current Value</p>
+                                <p className="font-medium text-slate-900 dark:text-white">₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Qty / Avg</p>
+                                <p className="font-medium text-slate-900 dark:text-white">{holding.quantity} @ ₹{holding.avgPrice.toFixed(1)}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Total P&L</p>
+                                <p className={`font-bold ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* --- DESKTOP VIEW: TABLE (Hidden on SM, Visible on MD) --- */}
+            <div className="hidden md:block overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                            <tr>
+                                <th className="px-6 py-4">Asset Name</th>
+                                <th className="px-4 py-4">Type</th>
+                                <th className="px-4 py-4 text-right">Qty</th>
+                                <th className="px-4 py-4 text-right">Avg. Price</th>
+                                <th className="px-4 py-4 text-right">Live Price</th>
+                                <th className="px-4 py-4 text-right">Day Change</th>
+                                <th className="px-4 py-4 text-right">Total Value</th>
+                                <th className="px-4 py-4 text-right">Total P&L</th>
+                                <th className="px-4 py-4"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {filteredHoldings.map((holding) => (
+                            <tr 
+                                key={holding.ticker} 
+                                onClick={() => handleAssetClick(holding)}
+                                className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                            >
+                                <td className="px-6 py-4">
+                                    <div className="font-bold text-slate-900 dark:text-white">{holding.name}</div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">{holding.ticker}</div>
+                                </td>
+                                <td className="px-4 py-4">
+                                    <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                        {holding.type}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-4 text-right font-medium text-slate-700 dark:text-slate-300">
+                                    {holding.quantity}
+                                </td>
+                                <td className="px-4 py-4 text-right text-slate-600 dark:text-slate-400">
+                                    ₹{holding.avgPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="px-4 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                                    ₹{holding.currentPrice.toLocaleString('en-IN')}
+                                </td>
+                                <td className="px-4 py-4 text-right">
+                                    <div className={`flex flex-col items-end ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <span className="font-medium">{holding.dayChangeValue >= 0 ? '+' : ''}₹{Math.abs(holding.dayChangeValue).toFixed(0)}</span>
+                                        <span className="text-xs opacity-80">{Math.abs(holding.dayChangePercent).toFixed(2)}%</span>
+                                    </div>
+                                </td>
+                                <td className="px-4 py-4 text-right font-semibold text-slate-900 dark:text-white">
+                                    ₹{holding.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                </td>
+                                <td className="px-4 py-4 text-right">
+                                    <div className={`flex flex-col items-end ${holding.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <span className="font-bold">{holding.pnl >= 0 ? '+' : ''}₹{Math.abs(holding.pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                                        <span className="text-xs opacity-80">{holding.pnlPercent.toFixed(2)}%</span>
+                                    </div>
+                                </td>
+                                <td className="px-4 py-4 text-right">
+                                    <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                                </td>
+                            </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </>
+      )}
 
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
         <Info className="h-4 w-4" />
