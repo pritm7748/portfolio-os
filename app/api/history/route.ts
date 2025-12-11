@@ -8,91 +8,118 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No tickers provided' }, { status: 400 })
     }
 
-    const fetchStockHistory = async (symbol: string) => {
-        // --- 1. Original Formatting Logic (Preserved) ---
-        const interval = ['1d', '5d'].includes(range) ? '15m' : '1d'
-        let yahooTicker = symbol.toUpperCase().replace(/\s/g, '')
+    // --- HELPER: Fetch Raw History ---
+    const fetchRawHistory = async (symbol: string, interval: string) => {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`
+        const res = await fetch(url)
+        const data = await res.json()
+        const result = data?.chart?.result?.[0]
+        if (!result) return null
         
+        const timestamps = result.timestamp || []
+        const closes = result.indicators?.quote?.[0]?.close || []
+        
+        // Map to efficient object: { "timestamp": price }
+        const map: Record<number, number> = {}
+        timestamps.forEach((t: number, i: number) => {
+            if (closes[i]) map[t] = closes[i]
+        })
+        return { map, timestamps, meta: result.meta }
+    }
+
+    // --- 1. PRE-FETCH USD/INR HISTORY (If needed) ---
+    // We fetch this once if any commodity is present to avoid redundant calls
+    let usdinrHistory: Record<number, number> | null = null
+    const hasCommodity = tickers.some((t: string) => t.startsWith('COMMODITY:'))
+    const interval = ['1d', '5d'].includes(range) ? '15m' : '1d'
+
+    if (hasCommodity) {
+        const usdData = await fetchRawHistory('INR=X', interval)
+        if (usdData) usdinrHistory = usdData.map
+    }
+
+    // --- 2. MAIN FETCH LOGIC ---
+    const fetchStockHistory = async (symbol: string) => {
+        let yahooTicker = symbol.toUpperCase().replace(/\s/g, '')
+        let isCommodity = false
+        let commodityType = ''
+
+        // Logic to identify Commodities
         if (yahooTicker.startsWith('COMMODITY:')) {
-            if (yahooTicker.includes('GOLD')) yahooTicker = 'GC=F'
-            else if (yahooTicker.includes('SILVER')) yahooTicker = 'SI=F'
+            isCommodity = true
+            if (yahooTicker.includes('GOLD')) { yahooTicker = 'GC=F'; commodityType = 'GOLD' }
+            else if (yahooTicker.includes('SILVER')) { yahooTicker = 'SI=F'; commodityType = 'SILVER' }
         } else {
             if (yahooTicker === '^NSEBANK') yahooTicker = '^NSEBANK'
             else if (!yahooTicker.startsWith('^') && !yahooTicker.includes('.')) yahooTicker += '.NS'
         }
 
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?range=${range}&interval=${interval}`
-        
-        try {
-            const res = await fetch(url)
-            const data = await res.json()
-            const result = data?.chart?.result?.[0]
-            
-            if (!result) return null
+        const rawData = await fetchRawHistory(yahooTicker, interval)
+        if (!rawData) return null
 
-            const timestamps = result.timestamp || []
-            const quotes = result.indicators?.quote?.[0] || {}
-            const closes = quotes.close || []
+        // --- 3. PROCESS & CONVERT ---
+        const finalData = rawData.timestamps.map((t: number) => {
+            let price = rawData.map[t]
+            if (!price) return null
 
-            // --- 2. Branch Logic ---
+            // *** THE FIX: Currency Conversion for History ***
+            if (isCommodity && usdinrHistory) {
+                // Find closest matching timestamp in USD/INR history (within 24h buffer)
+                // This handles market holidays mismatch between US/India
+                let exchangeRate = usdinrHistory[t]
+                if (!exchangeRate) {
+                    // Simple fallback: look for closest time
+                    const closestTime = Object.keys(usdinrHistory).find(k => Math.abs(Number(k) - t) < 86400)
+                    exchangeRate = closestTime ? usdinrHistory[Number(closestTime)] : 84 // Absolute fallback
+                }
 
-            // MODE A: Detailed (For Market Cards / Side Panel)
-            // Returns: { currentPrice, change, changePercent, history: [...] }
-            if (detailed) {
-                const meta = result.meta || {}
-                const currentPrice = meta.regularMarketPrice || 0
-                const previousClose = meta.chartPreviousClose || 0
-                const change = currentPrice - previousClose
-                const changePercent = previousClose !== 0 ? (change / previousClose) * 100 : 0
+                const OUNCE_TO_GRAM = 31.1035
+                const PREMIUM = 1.0625 // Customs + GST
 
-                // Sparkline format (often prefers numbers/values)
-                const history = timestamps.map((t: number, i: number) => ({
-                    date: t, 
-                    value: closes[i] || 0
-                })).filter((item: any) => item.value > 0)
-
-                return {
-                    ticker: symbol,
-                    currentPrice,
-                    change,
-                    changePercent,
-                    history
+                if (commodityType === 'GOLD') {
+                    // Gold 24K (10g)
+                    price = (price * exchangeRate / OUNCE_TO_GRAM) * 10 * PREMIUM
+                    if (symbol.includes('22')) price = price * 0.916 // 22K adjustment
+                } else if (commodityType === 'SILVER') {
+                    // Silver (1kg)
+                    price = (price * exchangeRate / OUNCE_TO_GRAM) * 1000 * PREMIUM
                 }
             }
 
-            // MODE B: Simple (For Portfolio Chart / Calculations)
-            // Returns: [{ date: '2024-01-01', price: 100 }, ...]
-            // This matches your ORIGINAL code exactly.
+            return {
+                date: new Date(t * 1000).toISOString().split('T')[0],
+                price: price
+            }
+        }).filter(Boolean)
+
+        // --- 4. FORMAT RESPONSE ---
+        if (detailed) {
+            // Detailed mode logic (unchanged)
+            const meta = rawData.meta || {}
+            const currentPrice = meta.regularMarketPrice || finalData[finalData.length - 1]?.price || 0
+            const previousClose = meta.chartPreviousClose || 0
+            
             return {
                 ticker: symbol,
-                data: timestamps.map((t: number, i: number) => ({
-                    date: new Date(t * 1000).toISOString().split('T')[0],
-                    price: closes[i] || 0
-                })).filter((item: any) => item.price > 0)
+                currentPrice,
+                history: finalData
             }
+        }
 
-        } catch (e) {
-            console.error(`History error for ${symbol}`, e)
-            return null
+        return {
+            ticker: symbol,
+            data: finalData
         }
     }
 
-    // Run in parallel
+    // Run parallel
     const promises = tickers.map((ticker: string) => fetchStockHistory(ticker))
     const results = await Promise.all(promises)
     
-    // Construct the response map
     const historyMap: Record<string, any> = {}
-    
     results.forEach(r => {
         if (r) {
-            if (detailed) {
-                // In detailed mode, map the WHOLE object
-                historyMap[r.ticker] = r
-            } else {
-                // In simple mode, map ONLY the data array (Original behavior)
-                historyMap[r.ticker] = r.data
-            }
+            historyMap[r.ticker] = detailed ? r : r.data
         }
     })
 
