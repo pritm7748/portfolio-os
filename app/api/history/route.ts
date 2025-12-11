@@ -1,3 +1,4 @@
+// app/api/history/route.ts
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
@@ -10,7 +11,11 @@ export async function POST(request: Request) {
 
     // --- HELPER: Fetch Raw History ---
     const fetchRawHistory = async (symbol: string, interval: string) => {
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`
+        // Handle special Yahoo tickers (Gold/Silver/USDINR)
+        let querySymbol = symbol
+        if (symbol === 'GC=F' || symbol === 'SI=F' || symbol === 'INR=X') querySymbol = symbol 
+        
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${querySymbol}?range=${range}&interval=${interval}`
         const res = await fetch(url)
         const data = await res.json()
         const result = data?.chart?.result?.[0]
@@ -44,7 +49,7 @@ export async function POST(request: Request) {
         let isCommodity = false
         let commodityType = ''
 
-        // Logic to identify Commodities
+        // Logic to identify Commodities and map to Yahoo Futures
         if (yahooTicker.startsWith('COMMODITY:')) {
             isCommodity = true
             if (yahooTicker.includes('GOLD')) { yahooTicker = 'GC=F'; commodityType = 'GOLD' }
@@ -68,20 +73,24 @@ export async function POST(request: Request) {
                 // This handles market holidays mismatch between US/India
                 let exchangeRate = usdinrHistory[t]
                 if (!exchangeRate) {
-                    // Simple fallback: look for closest time
+                    // Simple fallback: look for closest time in the map
                     const closestTime = Object.keys(usdinrHistory).find(k => Math.abs(Number(k) - t) < 86400)
                     exchangeRate = closestTime ? usdinrHistory[Number(closestTime)] : 84 // Absolute fallback
                 }
 
                 const OUNCE_TO_GRAM = 31.1035
-                const PREMIUM = 1.0625 // Customs + GST
+                const PREMIUM = 1.0625 // Customs + GST + Local Premium
 
                 if (commodityType === 'GOLD') {
-                    // Gold 24K (10g)
+                    // Gold 24K (Price per 10g)
+                    // Formula: (USD_Price * INR_Rate / 31.1035) * 10 * Premium
                     price = (price * exchangeRate / OUNCE_TO_GRAM) * 10 * PREMIUM
-                    if (symbol.includes('22')) price = price * 0.916 // 22K adjustment
+                    
+                    // 22K Adjustment
+                    if (symbol.includes('22')) price = price * 0.916 
                 } else if (commodityType === 'SILVER') {
-                    // Silver (1kg)
+                    // Silver (Price per 1kg)
+                    // Formula: (USD_Price * INR_Rate / 31.1035) * 1000 * Premium
                     price = (price * exchangeRate / OUNCE_TO_GRAM) * 1000 * PREMIUM
                 }
             }
@@ -94,10 +103,8 @@ export async function POST(request: Request) {
 
         // --- 4. FORMAT RESPONSE ---
         if (detailed) {
-            // Detailed mode logic (unchanged)
             const meta = rawData.meta || {}
             const currentPrice = meta.regularMarketPrice || finalData[finalData.length - 1]?.price || 0
-            const previousClose = meta.chartPreviousClose || 0
             
             return {
                 ticker: symbol,
