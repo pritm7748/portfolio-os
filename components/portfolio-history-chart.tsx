@@ -32,6 +32,13 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      // --- THE FIX: Robust Lookup instead of hardcoded indices ---
+      const netWorthItem = payload.find((p: any) => p.dataKey === 'value')
+      const investedItem = payload.find((p: any) => p.dataKey === 'invested')
+
+      const netWorthValue = netWorthItem ? netWorthItem.value : 0
+      const investedValue = investedItem ? investedItem.value : 0
+
       return (
         <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg text-sm min-w-[150px]">
           <p className="font-medium text-slate-600 dark:text-slate-400 mb-2 border-b border-slate-100 dark:border-slate-800 pb-1">
@@ -41,13 +48,13 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
               <div className="flex items-center justify-between gap-4">
                 <span className="text-slate-500 text-xs">Net Worth:</span>
                 <span className="font-bold text-slate-900 dark:text-white" style={{ color: color }}>
-                    ₹{payload[0].value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    ₹{netWorthValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-slate-500 text-xs">Invested:</span>
                 <span className="font-medium text-slate-600 dark:text-slate-300">
-                    ₹{payload[1].value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    ₹{investedValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
               </div>
           </div>
@@ -93,7 +100,7 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
             </div>
           </div>
 
-          {/* Time Range Selector (Moved below or separate line for better mobile fit) */}
+          {/* Time Range Selector */}
           <div className="flex justify-end">
             <div className="flex bg-slate-50 dark:bg-slate-800/50 rounded-lg p-1">
                 {['1mo', '6mo', '1y', '5y', 'all'].map((range) => (
@@ -157,6 +164,10 @@ export default function PortfolioHistoryChart({ data, onRangeChange, onCategoryC
                     />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '0px' }}/>
+                    
+                    {/* ORDER MATTERS: Put Net Worth FIRST so it's behind Invested if they overlap? 
+                        Usually you want the biggest area first if using opacity, or vice versa. 
+                        Let's keep your original order but fix the tooltip lookup. */}
                     
                     <Area 
                         type="monotone" 
