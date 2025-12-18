@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Bell, Trash2, CheckCircle2, RefreshCw, Loader2, Activity } from 'lucide-react'
+import Link from 'next/link'
+import { Bell, Trash2, CheckCircle2, RefreshCw, Loader2, Activity, Info } from 'lucide-react'
 import { useAlerts, useLivePrices } from '@/hooks/use-portfolio-data'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
@@ -109,8 +110,17 @@ export default function AlertsPage() {
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       
-      {/* Top Actions (Title removed) */}
-      <div className="flex justify-end">
+      {/* Top Actions & Configuration Note */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        
+        {/* Helper Note for Telegram */}
+        <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800">
+            <Info className="h-4 w-4 text-indigo-500" />
+            <span>
+                Make sure to <Link href="/dashboard/settings" className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">configure Telegram</Link> for real-time alerts.
+            </span>
+        </div>
+
         <button 
             onClick={handleCheckPrices}
             disabled={checking}

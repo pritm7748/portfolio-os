@@ -147,7 +147,7 @@ export default function SettingsPage() {
                 <div className="bg-sky-50 border border-sky-100 rounded-lg p-3 text-sm text-sky-800 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300">
                     <p className="font-medium mb-1">How to get your Chat ID:</p>
                     <ol className="list-decimal list-inside space-y-1 opacity-90 text-xs">
-                        <li>Start a chat with our bot <strong>@YourBotName_bot</strong></li>
+                        <li>Start a chat with our bot <strong>@my_portfolio_os_bot</strong></li>
                         <li>Search for <strong>@userinfobot</strong> and click Start</li>
                         <li>Copy the numeric ID it sends you and paste it below.</li>
                     </ol>
