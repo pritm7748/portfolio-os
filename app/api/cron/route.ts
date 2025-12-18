@@ -1,7 +1,5 @@
-// app/api/cron/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { Resend } from 'resend'
 
 // Initialize Admin Client
 const supabase = createClient(
@@ -9,13 +7,18 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
 )
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 
 export async function GET(request: Request) {
   // 1. Security Check
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response('Unauthorized', { status: 401 })
+  }
+
+  if (!TELEGRAM_BOT_TOKEN) {
+      console.error("TELEGRAM_BOT_TOKEN is missing")
+      return NextResponse.json({ error: "Configuration Error" }, { status: 500 })
   }
 
   try {
@@ -34,6 +37,7 @@ export async function GET(request: Request) {
     const uniqueTickers = [...new Set(alerts.map(a => a.ticker))]
     const appUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
     
+    // Self-call to reuse your existing price logic
     const priceRes = await fetch(`${appUrl}/api/prices`, {
         method: 'POST',
         body: JSON.stringify({ tickers: uniqueTickers })
@@ -41,7 +45,7 @@ export async function GET(request: Request) {
     const priceMap = await priceRes.json()
 
     const triggeredList = []
-    const emailLogs = []
+    const logs = []
 
     // 4. Check Logic
     for (const alert of alerts) {
@@ -53,41 +57,61 @@ export async function GET(request: Request) {
       if (alert.condition === 'below' && currentPrice <= alert.target_price) isTriggered = true
 
       if (isTriggered) {
-        // 5. Fetch User Email
-        const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(alert.user_id)
+        // 5. Fetch User Profile to get Chat ID
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('telegram_chat_id')
+            .eq('id', alert.user_id)
+            .single()
         
-        if (user && user.email) {
-            console.log(`Attempting to send email to ${user.email} for ${alert.ticker}`)
+        // Only send if user has configured Telegram
+        // @ts-ignore
+        if (profile && profile.telegram_chat_id) {
             
-            // 6. Send Email with Error Handling
-            const { data: emailData, error: emailError } = await resend.emails.send({
-              from: 'PortfolioOS <onboarding@resend.dev>',
-              to: user.email, // MUST be your verified email on Free Tier
-              subject: `🚨 Alert: ${alert.ticker} is ${alert.condition} target!`,
-              html: `
-                <h2>Price Alert Triggered</h2>
-                <p><strong>${alert.ticker}</strong> has moved ${alert.condition} your target.</p>
-                <p>Target: <strong>₹${alert.target_price}</strong></p>
-                <p>Current Price: <strong>₹${currentPrice}</strong></p>
-                <p>Time: ${new Date().toLocaleString()}</p>
-              `
-            })
+            const message = `
+🚨 <b>Price Alert: ${alert.ticker}</b>
 
-            if (emailError) {
-                console.error("Resend Error:", emailError)
-                emailLogs.push({ id: alert.id, status: 'failed', error: emailError })
-            } else {
-                console.log("Email Sent:", emailData)
-                emailLogs.push({ id: alert.id, status: 'sent' })
-                
-                // 7. Mark as Triggered ONLY if email didn't fail completely
-                await supabase
-                  .from('price_alerts')
-                  .update({ triggered_at: new Date().toISOString() })
-                  .eq('id', alert.id)
-                
-                triggeredList.push(alert.id)
+Asset has moved <b>${alert.condition}</b> your target.
+
+🎯 Target: <b>₹${alert.target_price.toLocaleString('en-IN')}</b>
+💰 Current: <b>₹${currentPrice.toLocaleString('en-IN')}</b>
+
+<i>Check your portfolio for details.</i>
+            `
+
+            // 6. Send Telegram Message
+            try {
+                const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        // @ts-ignore
+                        chat_id: profile.telegram_chat_id,
+                        text: message,
+                        parse_mode: 'HTML'
+                    })
+                })
+
+                if (tgRes.ok) {
+                    logs.push({ id: alert.id, status: 'sent', channel: 'telegram' })
+                    
+                    // 7. Mark as Triggered
+                    await supabase
+                      .from('price_alerts')
+                      .update({ triggered_at: new Date().toISOString() })
+                      .eq('id', alert.id)
+                    
+                    triggeredList.push(alert.id)
+                } else {
+                    const err = await tgRes.json()
+                    console.error("Telegram API Error:", err)
+                    logs.push({ id: alert.id, status: 'failed', error: err })
+                }
+            } catch (e) {
+                console.error("Fetch Error:", e)
             }
+        } else {
+            logs.push({ id: alert.id, status: 'skipped', reason: 'No Chat ID found' })
         }
       }
     }
@@ -95,7 +119,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ 
         success: true, 
         triggered: triggeredList.length, 
-        details: emailLogs 
+        details: logs 
     })
 
   } catch (error: any) {
