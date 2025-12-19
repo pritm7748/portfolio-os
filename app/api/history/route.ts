@@ -1,4 +1,3 @@
-// app/api/history/route.ts
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
@@ -11,7 +10,6 @@ export async function POST(request: Request) {
 
     // --- HELPER: Fetch Raw History ---
     const fetchRawHistory = async (symbol: string, interval: string) => {
-        // Handle special Yahoo tickers (Gold/Silver/USDINR)
         let querySymbol = symbol
         if (symbol === 'GC=F' || symbol === 'SI=F' || symbol === 'INR=X') querySymbol = symbol 
         
@@ -24,7 +22,6 @@ export async function POST(request: Request) {
         const timestamps = result.timestamp || []
         const closes = result.indicators?.quote?.[0]?.close || []
         
-        // Map to efficient object: { "timestamp": price }
         const map: Record<number, number> = {}
         timestamps.forEach((t: number, i: number) => {
             if (closes[i]) map[t] = closes[i]
@@ -32,8 +29,7 @@ export async function POST(request: Request) {
         return { map, timestamps, meta: result.meta }
     }
 
-    // --- 1. PRE-FETCH USD/INR HISTORY (If needed) ---
-    // We fetch this once if any commodity is present to avoid redundant calls
+    // --- 1. PRE-FETCH USD/INR HISTORY ---
     let usdinrHistory: Record<number, number> | null = null
     const hasCommodity = tickers.some((t: string) => t.startsWith('COMMODITY:'))
     const interval = ['1d', '5d'].includes(range) ? '15m' : '1d'
@@ -49,7 +45,6 @@ export async function POST(request: Request) {
         let isCommodity = false
         let commodityType = ''
 
-        // Logic to identify Commodities and map to Yahoo Futures
         if (yahooTicker.startsWith('COMMODITY:')) {
             isCommodity = true
             if (yahooTicker.includes('GOLD')) { yahooTicker = 'GC=F'; commodityType = 'GOLD' }
@@ -67,30 +62,21 @@ export async function POST(request: Request) {
             let price = rawData.map[t]
             if (!price) return null
 
-            // *** THE FIX: Currency Conversion for History ***
+            // Currency Conversion for Commodities
             if (isCommodity && usdinrHistory) {
-                // Find closest matching timestamp in USD/INR history (within 24h buffer)
-                // This handles market holidays mismatch between US/India
                 let exchangeRate = usdinrHistory[t]
                 if (!exchangeRate) {
-                    // Simple fallback: look for closest time in the map
                     const closestTime = Object.keys(usdinrHistory).find(k => Math.abs(Number(k) - t) < 86400)
-                    exchangeRate = closestTime ? usdinrHistory[Number(closestTime)] : 84 // Absolute fallback
+                    exchangeRate = closestTime ? usdinrHistory[Number(closestTime)] : 84 
                 }
 
                 const OUNCE_TO_GRAM = 31.1035
-                const PREMIUM = 1.0625 // Customs + GST + Local Premium
+                const PREMIUM = 1.0625 
 
                 if (commodityType === 'GOLD') {
-                    // Gold 24K (Price per 10g)
-                    // Formula: (USD_Price * INR_Rate / 31.1035) * 10 * Premium
                     price = (price * exchangeRate / OUNCE_TO_GRAM) * 10 * PREMIUM
-                    
-                    // 22K Adjustment
                     if (symbol.includes('22')) price = price * 0.916 
                 } else if (commodityType === 'SILVER') {
-                    // Silver (Price per 1kg)
-                    // Formula: (USD_Price * INR_Rate / 31.1035) * 1000 * Premium
                     price = (price * exchangeRate / OUNCE_TO_GRAM) * 1000 * PREMIUM
                 }
             }
@@ -101,14 +87,35 @@ export async function POST(request: Request) {
             }
         }).filter(Boolean)
 
-        // --- 4. FORMAT RESPONSE ---
+        // --- 4. FORMAT RESPONSE (FIXED NAN BUG) ---
         if (detailed) {
             const meta = rawData.meta || {}
-            const currentPrice = meta.regularMarketPrice || finalData[finalData.length - 1]?.price || 0
+            
+            // 1. Get Current Price (Prefer calculation to ensure currency match)
+            const currentPrice = finalData.length > 0 ? finalData[finalData.length - 1].price : (meta.regularMarketPrice || 0)
+            
+            // 2. Get Previous Close
+            // For Commodities: We must use the 2nd last data point because 'meta.chartPreviousClose' is in USD
+            // For Indices: We use meta.chartPreviousClose, but if missing (common with Yahoo), fallback to 2nd last point
+            let previousClose = 0
+            
+            if (isCommodity) {
+                 // Use history for consistency
+                 if (finalData.length > 1) previousClose = finalData[finalData.length - 2].price
+            } else {
+                 // Use Meta, fallback to history
+                 previousClose = meta.chartPreviousClose || meta.previousClose || (finalData.length > 1 ? finalData[finalData.length - 2].price : 0)
+            }
+
+            // 3. Calculate Change
+            const change = currentPrice - previousClose
+            const changePercent = previousClose !== 0 ? (change / previousClose) * 100 : 0
             
             return {
                 ticker: symbol,
                 currentPrice,
+                change,
+                changePercent, // <--- This was missing!
                 history: finalData
             }
         }
