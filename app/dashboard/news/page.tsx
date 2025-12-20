@@ -23,8 +23,8 @@ export default function NewsPage() {
   const supabase = createClient()
   const queryClient = useQueryClient()
 
-  // 1. Fetch Data using NEW Unified Hook
-  const activeAssets = useActiveAssets() // <--- REPLACED useTransactions logic
+  // 1. Fetch Data using NEW Unified Hook (De-duped)
+  const activeAssets = useActiveAssets() 
   const { data: prefs } = useNewsPreferences()
 
   // 2. Query Logic

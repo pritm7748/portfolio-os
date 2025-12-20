@@ -267,7 +267,11 @@ export function useActiveAssets() {
     const { data: watchlist } = useWatchlist()
 
     return useMemo(() => {
+        // Map Key = Root Symbol (e.g. "TCS") to prevent exchange duplicates
         const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
+
+        // Helper to get root symbol (strips .NS, .BO)
+        const getRoot = (t: string) => t.toUpperCase().replace('.NS', '').replace('.BO', '')
 
         // 1. Process Holdings (Net Quantity > 0)
         if (transactions) {
@@ -288,9 +292,10 @@ export function useActiveAssets() {
             })
 
             Object.entries(qtyMap).forEach(([ticker, netQty]) => {
-                // Only add if user still owns it (tolerance for float errors)
+                // Only add if user still owns it
                 if (netQty > 0.0001) {
-                    uniqueMap.set(ticker, { 
+                    const root = getRoot(ticker)
+                    uniqueMap.set(root, { 
                         ticker, 
                         name: metaMap[ticker].name, 
                         type: 'Holding' 
@@ -299,11 +304,13 @@ export function useActiveAssets() {
             })
         }
 
-        // 2. Merge Watchlist (Avoid Duplicates)
+        // 2. Merge Watchlist (Check against Root Symbol)
         if (watchlist) {
             watchlist.forEach(w => {
-                if (!uniqueMap.has(w.ticker)) {
-                    uniqueMap.set(w.ticker, { 
+                const root = getRoot(w.ticker)
+                // Only add if NOT already present (Holding takes priority)
+                if (!uniqueMap.has(root)) {
+                    uniqueMap.set(root, { 
                         ticker: w.ticker, 
                         name: w.name, 
                         type: 'Watchlist' 
