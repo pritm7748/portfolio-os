@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { useTransactions, usePulse } from '@/hooks/use-portfolio-data'
+// FIX: Imported useActiveAssets instead of useTransactions
+import { useActiveAssets, usePulse } from '@/hooks/use-portfolio-data'
 import { 
     Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity, 
     HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock, 
@@ -32,14 +33,12 @@ const getTransactionType = (txn: any) => {
     if (is(/creat|pledge/)) return { label: 'Pledge Created', color: 'text-orange-600 bg-orange-50', icon: Lock }
 
     // --- PRIORITY 3: TRANSFERS (Must check before Buy/Sell) ---
-    // Fixes "SBI sold to Sumitomo" appearing as generic buy if mapped incorrectly
     if (is(/inter-se|inter se/)) return { label: 'Inter-se Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
     if (is(/off market|off-market/)) return { label: 'Off-Market Deal', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
     if (is(/gift|donat/)) return { label: 'Gift / Donation', color: 'text-pink-600 bg-pink-50', icon: Gift }
     if (is(/transfer|transmission/)) return { label: 'Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
 
     // --- PRIORITY 4: NEGATIVE ACTIONS (Sell/Disposal) ---
-    // We check this BEFORE "Buy" to catch "Disposal" correctly
     if (is(/dispos|sell|sold|sale|divest/)) return { label: 'Strategic Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
     
     // --- PRIORITY 5: POSITIVE ACTIONS (Buy/Acquisition) ---
@@ -54,13 +53,8 @@ const getTransactionType = (txn: any) => {
     if (is(/allotment|preferential|conversion|warrant/)) return { label: 'Pref. Allotment', color: 'text-indigo-600 bg-indigo-50', icon: ShieldCheck }
 
     // --- PRIORITY 7: FALLBACKS ---
-    // If text is vague ("Other"), look at price/direction
     if (price < 0.5 && shares > 0) return { label: 'Non-Market Add', color: 'text-slate-500 bg-slate-100', icon: Activity }
-    
-    // Strict fallback: If shares are negative, it IS a sell.
     if (shares < 0) return { label: 'Strategic Sell', color: 'text-orange-600 bg-orange-50', icon: TrendingDown }
-    
-    // Default positive
     if (shares > 0) return { label: 'Strategic Add', color: 'text-teal-600 bg-teal-50', icon: TrendingUp }
 
     const cleanText = txn.action.replace(/acquisition|disposal|shares|of/gi, '').trim()
@@ -101,23 +95,26 @@ const Section = ({ title, icon: Icon, children, isOpen, onToggle }: any) => {
 }
 
 export default function PulsePage() {
-  const { data: transactions } = useTransactions()
+  // FIX: Use new Unified Hook (Filtered & Unique)
+  const activeAssets = useActiveAssets()
   const [openSection, setOpenSection] = useState<string | null>('radar')
 
   const toggleSection = (id: string) => setOpenSection(current => current === id ? null : id)
   
-  const allTickers = useMemo(() => {
-      if (!transactions) return []
-      return Array.from(new Set(transactions.map(t => t.assets.ticker)))
-  }, [transactions])
+  // Extract Tickers from the clean list
+  const activeTickers = useMemo(() => {
+      return activeAssets.map(asset => asset.ticker)
+  }, [activeAssets])
 
-  const { data, isLoading } = usePulse(allTickers)
+  // Pass CLEAN ticker list to Pulse API
+  const { data, isLoading } = usePulse(activeTickers)
 
   if (isLoading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
 
   return (
     <div className="space-y-8 pb-20">
       
+      {/* MACRO DECK */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           {data?.macro?.map((m: any, i: number) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -143,7 +140,7 @@ export default function PulsePage() {
           <Section title="Big Money Radar" icon={Zap} isOpen={openSection === 'radar'} onToggle={() => toggleSection('radar')}>
               <div className="space-y-3">
                   {!data?.shockers || data.shockers.length === 0 ? (
-                      <div className="text-center py-8"><p className="text-sm text-slate-400">No unusual volume.</p></div>
+                      <div className="text-center py-8"><p className="text-sm text-slate-400">No unusual volume detected in your watchlist.</p></div>
                   ) : (
                       data.shockers.map((s: any, i: number) => (
                           <div key={i} className="flex items-center justify-between rounded-lg border border-amber-100 bg-amber-50/50 p-3 dark:bg-amber-900/10 dark:border-amber-900/30">
@@ -167,7 +164,7 @@ export default function PulsePage() {
           <Section title="Upcoming Events" icon={Calendar} isOpen={openSection === 'events'} onToggle={() => toggleSection('events')}>
               <div className="space-y-3">
                   {!data?.events || data.events.length === 0 ? (
-                      <div className="text-center py-8"><p className="text-sm text-slate-400">No events found.</p></div>
+                      <div className="text-center py-8"><p className="text-sm text-slate-400">No upcoming events.</p></div>
                   ) : (
                       data.events.map((event: any, i: number) => (
                           <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-3 dark:bg-slate-900 dark:border-slate-800">
@@ -193,7 +190,7 @@ export default function PulsePage() {
           <Section title="Insider Activity" icon={Briefcase} isOpen={openSection === 'insiders'} onToggle={() => toggleSection('insiders')}>
               <div className="space-y-3">
                   {!data?.insiders || data.insiders.length === 0 ? (
-                      <div className="text-center py-8"><p className="text-sm text-slate-400">No recent trades.</p></div>
+                      <div className="text-center py-8"><p className="text-sm text-slate-400">No recent insider trades.</p></div>
                   ) : (
                       data.insiders.map((txn: any, i: number) => {
                           const { label, color, icon: Icon } = getTransactionType(txn)
