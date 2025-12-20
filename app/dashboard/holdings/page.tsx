@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info } from 'lucide-react'
+import { Plus, Search, Download, Loader2, ChevronRight, Scissors, Info, Bell } from 'lucide-react'
 import TransactionModal from '@/components/transaction-modal'
 import AssetDetailsDrawer from '@/components/asset-details-drawer'
 import CorporateActionModal from '@/components/corporate-action-modal'
+import AlertModal from '@/components/alert-modal' // Added Alert Modal
 import { usePortfolio } from '@/context/portfolio-context'
 import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 
@@ -27,8 +28,13 @@ type Holding = {
 
 export default function HoldingsPage() {
   const { selectedPortfolio } = usePortfolio()
+  
+  // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false)
+  const [isAlertModalOpen, setIsAlertModalOpen] = useState(false) // New Alert State
+  const [alertTicker, setAlertTicker] = useState('') // New Alert Ticker State
+  
   const [selectedAsset, setSelectedAsset] = useState<{ids: number[], name: string, ticker: string} | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   
@@ -58,9 +64,6 @@ export default function HoldingsPage() {
       transactions.forEach(txn => {
           const t = txn.assets
           const originalTicker = t.ticker
-          
-          // FIX: Group by Root Symbol (e.g. "TCS.BO" -> "TCS")
-          // This merges NSE/BSE holdings into one row
           const root = originalTicker.split('.')[0] 
           const key = root
 
@@ -81,7 +84,7 @@ export default function HoldingsPage() {
 
           if (!map[key]) {
               map[key] = {
-                  ticker: originalTicker, // Default to first seen ticker for display
+                  ticker: originalTicker,
                   rootSymbol: root,
                   name: t.name,
                   type: t.asset_type,
@@ -91,11 +94,9 @@ export default function HoldingsPage() {
               }
           }
           
-          // Accumulate all Asset IDs (NSE + BSE ids) for the drawer
           if (!map[key].assetIds.includes(txn.asset_id)) {
              map[key].assetIds.push(txn.asset_id)
           }
-          // Update display ticker if we encounter NSE (preferred)
           if (originalTicker.includes('.NS')) {
               map[key].ticker = originalTicker
           }
@@ -103,7 +104,6 @@ export default function HoldingsPage() {
 
       return Object.values(map).map(h => {
           let q = 0, c = 0
-          // Calculate totals from the merged lots
           if (assetLots[h.rootSymbol]) {
               assetLots[h.rootSymbol].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
           }
@@ -114,7 +114,6 @@ export default function HoldingsPage() {
           h.totalInvested = c
           h.avgPrice = c / q
 
-          // Price Lookup: Try NSE first, then BSE, then Raw
           let priceData = null
           if (priceMap) {
               priceData = priceMap[h.rootSymbol + '.NS'] || priceMap[h.rootSymbol + '.BO'] || priceMap[h.ticker]
@@ -150,6 +149,13 @@ export default function HoldingsPage() {
   const handleAssetClick = (h: Holding) => {
       setSelectedAsset({ ids: h.assetIds, name: h.name, ticker: h.ticker })
       setIsDrawerOpen(true)
+  }
+
+  // --- NEW: Handle Alert Click ---
+  const handleAlertClick = (e: React.MouseEvent, ticker: string) => {
+      e.stopPropagation() // Stop drawer from opening
+      setAlertTicker(ticker)
+      setIsAlertModalOpen(true)
   }
 
   const handleExport = () => {
@@ -213,7 +219,7 @@ export default function HoldingsPage() {
           </div>
       ) : (
         <>
-            {/* --- MOBILE VIEW: CARDS (Updated for Percentages) --- */}
+            {/* --- MOBILE VIEW: CARDS --- */}
             <div className="block md:hidden space-y-3">
                 {filteredHoldings.map((holding) => (
                     <div 
@@ -229,6 +235,13 @@ export default function HoldingsPage() {
                                     <span className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                         {holding.type}
                                     </span>
+                                    {/* MOBILE BELL BUTTON */}
+                                    <button 
+                                        onClick={(e) => handleAlertClick(e, holding.ticker)}
+                                        className="ml-1 p-1 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors"
+                                    >
+                                        <Bell className="h-3.5 w-3.5" />
+                                    </button>
                                 </div>
                             </div>
                             <div className={`text-right ${holding.dayChangeValue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -323,7 +336,17 @@ export default function HoldingsPage() {
                                     </div>
                                 </td>
                                 <td className="px-4 py-4 text-right">
-                                    <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                                    {/* DESKTOP BELL + CHEVRON */}
+                                    <div className="flex items-center justify-end gap-2">
+                                        <button 
+                                            onClick={(e) => handleAlertClick(e, holding.ticker)}
+                                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors group/btn"
+                                            title="Create Alert"
+                                        >
+                                            <Bell className="h-4 w-4" />
+                                        </button>
+                                        <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                                    </div>
                                 </td>
                             </tr>
                             ))}
@@ -356,6 +379,14 @@ export default function HoldingsPage() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onUpdate={() => refetchTxns()}
+      />
+
+      {/* ALERT MODAL */}
+      <AlertModal 
+        isOpen={isAlertModalOpen} 
+        onClose={() => setIsAlertModalOpen(false)}
+        ticker={alertTicker}
+        onSuccess={() => {}} 
       />
     </div>
   )
