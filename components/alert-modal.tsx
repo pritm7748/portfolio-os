@@ -9,25 +9,32 @@ type AlertModalProps = {
   isOpen: boolean
   onClose: () => void
   ticker: string
+  currentPrice?: number // Made OPTIONAL to support both Watchlist (passed) and Holdings (fetched)
   onSuccess?: () => void
 }
 
-export default function AlertModal({ isOpen, onClose, ticker, onSuccess }: AlertModalProps) {
+export default function AlertModal({ isOpen, onClose, ticker, currentPrice: initialPrice, onSuccess }: AlertModalProps) {
   const [targetPrice, setTargetPrice] = useState('')
   const [loading, setLoading] = useState(false)
-  const [currentPrice, setCurrentPrice] = useState<number | null>(null)
+  const [currentPrice, setCurrentPrice] = useState<number | null>(initialPrice || null)
   const [fetchingPrice, setFetchingPrice] = useState(false)
   
   const supabase = createClient()
   const queryClient = useQueryClient()
 
-  // Reset and Fetch Price when opening
+  // Reset and Fetch Price logic
   useEffect(() => {
     if (isOpen && ticker) {
       setTargetPrice('')
-      fetchPrice()
+      
+      // If parent provided price, use it. Otherwise fetch.
+      if (initialPrice) {
+          setCurrentPrice(initialPrice)
+      } else {
+          fetchPrice()
+      }
     }
-  }, [isOpen, ticker])
+  }, [isOpen, ticker, initialPrice])
 
   const fetchPrice = async () => {
       setFetchingPrice(true)
@@ -49,8 +56,8 @@ export default function AlertModal({ isOpen, onClose, ticker, onSuccess }: Alert
 
   // Auto-determine condition based on target vs current
   const target = Number(targetPrice)
-  // Default to 'above' if price isn't loaded yet, otherwise calculate
-  const condition = (currentPrice && target < currentPrice) ? 'below' : 'above'
+  const priceToCompare = currentPrice || 0
+  const condition = (priceToCompare && target < priceToCompare) ? 'below' : 'above'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
