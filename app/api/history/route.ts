@@ -81,30 +81,32 @@ export async function POST(request: Request) {
                 }
             }
 
+            // FIX: Handle Date Formatting based on Range
+            const dateObj = new Date(t * 1000)
+            const isIntraday = ['1d', '5d'].includes(range)
+            
             return {
-                date: new Date(t * 1000).toISOString().split('T')[0],
-                price: price
+                // If 1d/5d, preserve time (ISO String). If longer, just Date is fine.
+                date: isIntraday ? dateObj.toISOString() : dateObj.toISOString().split('T')[0],
+                // FIX: Rename 'price' to 'value' so Recharts can see it
+                value: price 
             }
         }).filter(Boolean)
 
-        // --- 4. FORMAT RESPONSE (FIXED NAN BUG) ---
+        // --- 4. FORMAT RESPONSE ---
         if (detailed) {
             const meta = rawData.meta || {}
             
-            // 1. Get Current Price (Prefer calculation to ensure currency match)
-            const currentPrice = finalData.length > 0 ? finalData[finalData.length - 1].price : (meta.regularMarketPrice || 0)
+            // 1. Get Current Price (Use .value from finalData)
+            const currentPrice = finalData.length > 0 ? finalData[finalData.length - 1].value : (meta.regularMarketPrice || 0)
             
             // 2. Get Previous Close
-            // For Commodities: We must use the 2nd last data point because 'meta.chartPreviousClose' is in USD
-            // For Indices: We use meta.chartPreviousClose, but if missing (common with Yahoo), fallback to 2nd last point
             let previousClose = 0
-            
             if (isCommodity) {
-                 // Use history for consistency
-                 if (finalData.length > 1) previousClose = finalData[finalData.length - 2].price
+                 if (finalData.length > 1) previousClose = finalData[finalData.length - 2].value
             } else {
-                 // Use Meta, fallback to history
-                 previousClose = meta.chartPreviousClose || meta.previousClose || (finalData.length > 1 ? finalData[finalData.length - 2].price : 0)
+                 // Use Meta, fallback to history (.value)
+                 previousClose = meta.chartPreviousClose || meta.previousClose || (finalData.length > 1 ? finalData[finalData.length - 2].value : 0)
             }
 
             // 3. Calculate Change
@@ -115,7 +117,7 @@ export async function POST(request: Request) {
                 ticker: symbol,
                 currentPrice,
                 change,
-                changePercent, // <--- This was missing!
+                changePercent,
                 history: finalData
             }
         }
