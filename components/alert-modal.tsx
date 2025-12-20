@@ -9,7 +9,7 @@ type AlertModalProps = {
   isOpen: boolean
   onClose: () => void
   ticker: string
-  currentPrice?: number // Made OPTIONAL to support both Watchlist (passed) and Holdings (fetched)
+  currentPrice?: number // Optional: Passed from Watchlist, Fetched for Holdings
   onSuccess?: () => void
 }
 
@@ -39,13 +39,17 @@ export default function AlertModal({ isOpen, onClose, ticker, currentPrice: init
   const fetchPrice = async () => {
       setFetchingPrice(true)
       try {
+          // FIX: Added 'detailed: true' so the API returns an object with .price
           const res = await fetch('/api/prices', {
               method: 'POST',
-              body: JSON.stringify({ tickers: [ticker] })
+              body: JSON.stringify({ tickers: [ticker], detailed: true })
           })
           const data = await res.json()
+          
+          // Handle both Number and Object responses safely
           if (data[ticker]) {
-              setCurrentPrice(data[ticker].price)
+              const price = typeof data[ticker] === 'number' ? data[ticker] : data[ticker].price
+              setCurrentPrice(price)
           }
       } catch (e) {
           console.error("Price fetch failed", e)
