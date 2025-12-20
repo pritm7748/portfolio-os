@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
+import { useMemo } from 'react'
 
 // --- Type Definitions ---
 export type Transaction = {
@@ -259,4 +260,58 @@ export function usePulse(tickers: string[]) {
         staleTime: 6 * 60 * 60 * 1000, // Cache for 6 hours
         refetchOnWindowFocus: false
     })
+}
+
+export function useActiveAssets() {
+    const { data: transactions } = useTransactions()
+    const { data: watchlist } = useWatchlist()
+
+    return useMemo(() => {
+        const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
+
+        // 1. Process Holdings (Net Quantity > 0)
+        if (transactions) {
+            const qtyMap: Record<string, number> = {}
+            const metaMap: Record<string, any> = {}
+
+            transactions.forEach(t => {
+                const ticker = t.assets.ticker
+                const q = Number(t.quantity)
+                
+                if (!qtyMap[ticker]) {
+                    qtyMap[ticker] = 0
+                    metaMap[ticker] = t.assets
+                }
+
+                if (t.transaction_type === 'Buy') qtyMap[ticker] += q
+                else if (t.transaction_type === 'Sell') qtyMap[ticker] -= q
+            })
+
+            Object.entries(qtyMap).forEach(([ticker, netQty]) => {
+                // Only add if user still owns it (tolerance for float errors)
+                if (netQty > 0.0001) {
+                    uniqueMap.set(ticker, { 
+                        ticker, 
+                        name: metaMap[ticker].name, 
+                        type: 'Holding' 
+                    })
+                }
+            })
+        }
+
+        // 2. Merge Watchlist (Avoid Duplicates)
+        if (watchlist) {
+            watchlist.forEach(w => {
+                if (!uniqueMap.has(w.ticker)) {
+                    uniqueMap.set(w.ticker, { 
+                        ticker: w.ticker, 
+                        name: w.name, 
+                        type: 'Watchlist' 
+                    })
+                }
+            })
+        }
+
+        return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+    }, [transactions, watchlist])
 }

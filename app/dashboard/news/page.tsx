@@ -3,82 +3,50 @@
 import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
-import { useTransactions, useNewsPreferences, useNews } from '@/hooks/use-portfolio-data'
-import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search, X, ArrowLeft } from 'lucide-react'
+import { useNewsPreferences, useNews, useActiveAssets } from '@/hooks/use-portfolio-data'
+import { Loader2, Star, BellOff, ExternalLink, Newspaper, Filter, Globe, Search, X, ArrowLeft, Eye } from 'lucide-react'
 
-// --- OPTIMIZED MACRO TOPICS (Interleaved for better balance) ---
+// --- OPTIMIZED MACRO TOPICS ---
 const GENERAL_TOPICS = [
-    // Tier 1: Major Global & Indian Movers (Mixed)
-    "US Federal Reserve",
-    "RBI Monetary Policy",
-    "Brent Crude Oil",
-    "Nifty 50 Sensex",
-    "Gold Price USD",
-    "Indian Rupee vs Dollar",
-    "US Inflation CPI",
-    "India Inflation CPI",
-    
-    // Tier 2: Macro Indicators
-    "Global Recession",
-    "India GDP Growth",
-    "US 10 Year Bond Yield",
-    "FII DII Activity India",
-    "China Economic Stimulus",
-    "India GST Collections",
-    
-    // Tier 3: Geopolitics & Sectors
-    "Geopolitical Tensions",
-    "Bank of Japan Policy",
-    "Silver Price Trends",
-    "Eurozone ECB",
-    "OPEC Oil Production"
+    "US Federal Reserve", "RBI Monetary Policy", "Brent Crude Oil", "Nifty 50 Sensex",
+    "Gold Price USD", "Indian Rupee vs Dollar", "US Inflation CPI", "India Inflation CPI",
+    "Global Recession", "India GDP Growth", "US 10 Year Bond Yield", "FII DII Activity India",
+    "China Economic Stimulus", "India GST Collections", "Geopolitical Tensions",
+    "Bank of Japan Policy", "Silver Price Trends", "Eurozone ECB", "OPEC Oil Production"
 ]
 
 export default function NewsPage() {
   const [selectedTicker, setSelectedTicker] = useState<string>('ALL')
   const [customSearch, setCustomSearch] = useState('')
-  
-  // MOBILE NAV: false = List, true = Feed
   const [showFeed, setShowFeed] = useState(false) 
   
   const supabase = createClient()
   const queryClient = useQueryClient()
 
-  // 1. Fetch Data
-  const { data: transactions } = useTransactions()
+  // 1. Fetch Data using NEW Unified Hook
+  const activeAssets = useActiveAssets() // <--- REPLACED useTransactions logic
   const { data: prefs } = useNewsPreferences()
 
-  // 2. Process Holdings
-  const holdings = useMemo(() => {
-      if (!transactions) return []
-      const map: Record<string, { name: string, value: number }> = {}
-      transactions.forEach(t => {
-          const val = Math.abs(t.price * t.quantity)
-          if (!map[t.assets.ticker]) map[t.assets.ticker] = { name: t.assets.name, value: 0 }
-          map[t.assets.ticker].value += val
-      })
-      return Object.entries(map).map(([ticker, data]) => ({ ticker, ...data }))
-        .sort((a, b) => b.value - a.value)
-  }, [transactions])
-
-  // 3. Query Logic
+  // 2. Query Logic
   const searchQueries = useMemo(() => {
       if (selectedTicker.startsWith('SEARCH:')) return [selectedTicker.replace('SEARCH:', '')]
       if (selectedTicker === 'GENERAL') return GENERAL_TOPICS
+      
       if (selectedTicker !== 'ALL') {
-          const asset = holdings.find(h => h.ticker === selectedTicker)
+          const asset = activeAssets.find(h => h.ticker === selectedTicker)
           return asset ? [asset.name] : []
       }
-      return holdings
+
+      // Default 'ALL' feed: Top 15 active assets (unmuted)
+      return activeAssets
         .filter(h => {
             const p = prefs?.[h.ticker]
             if (p?.is_muted) return false 
-            if (p?.is_favorite) return true 
             return true 
         })
         .slice(0, 15)
         .map(h => h.name)
-  }, [holdings, selectedTicker, prefs])
+  }, [activeAssets, selectedTicker, prefs])
 
   const { data: newsData, isLoading: newsLoading } = useNews(searchQueries)
 
@@ -86,14 +54,14 @@ export default function NewsPage() {
   const handleSelect = (ticker: string) => {
       setSelectedTicker(ticker)
       setCustomSearch('')
-      setShowFeed(true) // Open Feed on Mobile
+      setShowFeed(true)
   }
 
   const handleSearch = (e: React.FormEvent) => {
       e.preventDefault()
       if (customSearch.trim()) {
           setSelectedTicker(`SEARCH:${customSearch}`)
-          setShowFeed(true) // Open Feed on Mobile
+          setShowFeed(true)
       }
   }
 
@@ -111,12 +79,14 @@ export default function NewsPage() {
   }
 
   const getHeader = () => {
-      if (selectedTicker === 'ALL') return { title: 'Smart Feed', subtitle: 'Curated updates for your portfolio.' }
+      if (selectedTicker === 'ALL') return { title: 'Smart Feed', subtitle: 'News for your Holdings & Watchlist.' }
       if (selectedTicker === 'GENERAL') return { title: 'General Markets', subtitle: 'Global Economy & Policy.' }
       if (selectedTicker.startsWith('SEARCH:')) return { title: `Results: "${selectedTicker.replace('SEARCH:', '')}"`, subtitle: 'Custom search feed.' }
+      
+      const asset = activeAssets.find(h => h.ticker === selectedTicker)
       return { 
-          title: holdings.find(h => h.ticker === selectedTicker)?.name || 'Asset News', 
-          subtitle: 'Specific news for this asset.' 
+          title: asset?.name || 'Asset News', 
+          subtitle: asset?.type === 'Watchlist' ? 'From your Watchlist.' : 'From your Holdings.' 
       }
   }
   const headerInfo = getHeader()
@@ -124,7 +94,7 @@ export default function NewsPage() {
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-100px)] gap-6 relative">
         
-        {/* --- LEFT: FILTER LIST (Hidden on mobile if viewing feed) --- */}
+        {/* --- LEFT: FILTER LIST --- */}
         <div className={`
             w-full lg:w-80 flex-shrink-0 flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm h-full
             ${showFeed ? 'hidden lg:flex' : 'flex'}
@@ -145,13 +115,28 @@ export default function NewsPage() {
                 
                 <div className="my-2 h-px bg-slate-100 dark:bg-slate-800 mx-2"></div>
                 
-                {holdings.map(h => {
+                {/* Active Assets List */}
+                {activeAssets.length === 0 && (
+                    <div className="px-4 py-4 text-xs text-center text-slate-400">
+                        No active holdings or watchlist items.
+                    </div>
+                )}
+
+                {activeAssets.map(h => {
                     const p = prefs?.[h.ticker] || { is_muted: false, is_favorite: false }
                     return (
-                        <div key={h.ticker} className={`group flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${selectedTicker === h.ticker ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
-                            <button onClick={() => handleSelect(h.ticker)} className={`flex-1 text-left truncate text-sm ${p.is_muted ? 'text-slate-400 line-through' : 'text-slate-700 dark:text-slate-300'}`}>
-                                {h.name}
-                            </button>
+                        <div key={h.ticker} className={`group flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer ${selectedTicker === h.ticker ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`} onClick={() => handleSelect(h.ticker)}>
+                            <div className="flex-1 min-w-0">
+                                <div className={`truncate text-sm font-medium ${p.is_muted ? 'text-slate-400 line-through' : 'text-slate-700 dark:text-slate-300'}`}>
+                                    {h.name}
+                                </div>
+                                {h.type === 'Watchlist' && (
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
+                                        <Eye className="h-3 w-3" /> Watchlist
+                                    </div>
+                                )}
+                            </div>
+                            
                             <div className="flex items-center gap-1">
                                 <button onClick={(e) => { e.stopPropagation(); togglePreference(h.ticker, 'is_favorite'); }} className={`p-1.5 rounded-md ${p.is_favorite ? 'text-amber-400' : 'text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'}`}><Star className={`h-3.5 w-3.5 ${p.is_favorite ? 'fill-current' : ''}`} /></button>
                                 <button onClick={(e) => { e.stopPropagation(); togglePreference(h.ticker, 'is_muted'); }} className={`p-1.5 rounded-md ${p.is_muted ? 'text-red-500' : 'text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'}`}><BellOff className="h-3.5 w-3.5" /></button>
@@ -162,7 +147,7 @@ export default function NewsPage() {
             </div>
         </div>
 
-        {/* --- RIGHT: NEWS FEED (Hidden on mobile unless active) --- */}
+        {/* --- RIGHT: NEWS FEED --- */}
         <div className={`
             flex-1 flex-col min-w-0 h-full
             ${!showFeed ? 'hidden lg:flex' : 'flex'}
@@ -170,7 +155,6 @@ export default function NewsPage() {
             
             {/* Header + Search */}
             <div className="flex flex-col gap-4 mb-4">
-                {/* Mobile Back Button */}
                 <button 
                     onClick={() => setShowFeed(false)}
                     className="lg:hidden flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 mb-1 dark:text-indigo-400"
