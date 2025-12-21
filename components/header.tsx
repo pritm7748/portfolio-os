@@ -49,6 +49,7 @@ export default function Header({ onMenuClick }: { onMenuClick: () => void }) {
   const getTitle = () => {
     if (pathname === '/dashboard') return 'Dashboard'
     if (pathname.includes('/holdings')) return 'Holdings'
+    if (pathname.includes('/charts')) return 'Advanced Charts'
     if (pathname.includes('/market')) return 'Market Status'
     if (pathname.includes('/analytics')) return 'Analytics'
     if (pathname.includes('/reports')) return 'Reports'
