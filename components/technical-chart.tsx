@@ -31,7 +31,7 @@ function TechnicalChart({ symbol }: Props) {
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
 
-  // 1. UPDATED DEFAULTS: 15m / 60d
+  // Default to 15m
   const [interval, setIntervalState] = useState('15m')
   const [range, setRange] = useState('60d')
   const [activeLabel, setActiveLabel] = useState('15m')
@@ -136,7 +136,7 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
-    // 2. OPTIMIZATION: ResizeObserver instead of window listener
+    // ResizeObserver for performance
     const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length === 0 || !entries[0].contentRect) return
         if (chartRef.current) {
@@ -152,7 +152,7 @@ function TechnicalChart({ symbol }: Props) {
     }
   }, [])
 
-  // 3. Data Fetch
+  // 2. Data Fetch
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)
@@ -212,29 +212,32 @@ function TechnicalChart({ symbol }: Props) {
   return (
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
-      {/* TOOLBAR */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4 overflow-x-auto scrollbar-hide">
+      {/* TOOLBAR - FIXED LAYOUT (No Scrollbars on Desktop) */}
+      <div className="flex flex-wrap md:flex-nowrap items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-y-3 gap-x-4">
         
-        {/* Symbol Info (Fixed) */}
-        <div className="flex flex-col min-w-[180px] shrink-0">
+        {/* Symbol Info (Left Side) - Allowed to shrink slightly on tight desktops */}
+        <div className="flex flex-col shrink min-w-0">
             <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
-                {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
+                <h3 className="font-bold text-slate-900 dark:text-white text-lg truncate">{symbol}</h3>
+                {legendData && <span className="text-xs font-mono text-slate-500 whitespace-nowrap">{legendData.date}</span>}
             </div>
             
-            <div className="flex items-center gap-3 text-xs font-mono mt-1 h-4 overflow-hidden">
+            <div className="flex items-center gap-3 text-xs font-mono mt-1 h-4 overflow-hidden truncate min-w-0">
                 {legendData ? (
                     <>
                         <span className="text-slate-600 dark:text-slate-300">O:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.open}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">H:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">L:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">C:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
+                        
+                        {showSMA && legendData.sma && <span className="text-blue-500 ml-2">SMA:{legendData.sma.toFixed(2)}</span>}
+                        {showEMA && legendData.ema && <span className="text-amber-500 ml-2">EMA:{legendData.ema.toFixed(2)}</span>}
                     </>
                 ) : <span className="text-slate-400 italic">Hover for details</span>}
             </div>
         </div>
         
-        {/* SCROLLABLE CONTROLS (Desktop & Mobile) */}
+        {/* CONTROLS (Right Side) - Rigid, wraps on mobile */}
         <div className="flex items-center gap-3 shrink-0">
             {/* Timeframe Buttons */}
             <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
@@ -242,7 +245,7 @@ function TechnicalChart({ symbol }: Props) {
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-3 py-1.5 text-[11px] font-bold rounded uppercase transition-colors whitespace-nowrap
+                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors whitespace-nowrap
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
@@ -262,7 +265,7 @@ function TechnicalChart({ symbol }: Props) {
         </div>
       </div>
 
-      {/* CHART CANVAS */}
+      {/* CHART CANVAS - Native panning allows backwards navigation */}
       <div className="relative flex-1 w-full bg-white dark:bg-slate-900 min-h-[500px]">
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
@@ -270,7 +273,8 @@ function TechnicalChart({ symbol }: Props) {
             <span className="text-xs text-slate-500 font-medium animate-pulse">Loading market data...</span>
           </div>
         )}
-        <div ref={chartContainerRef} className="w-full h-full" />
+        {/* Added cursor-crosshair to hint at interaction */}
+        <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
     </div>
   )
