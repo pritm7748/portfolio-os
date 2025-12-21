@@ -1,11 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, memo } from 'react'
+import { useEffect, useRef, useState, memo, useCallback } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Loader2, TrendingUp, BarChart2, Activity } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { calculateSMA, calculateEMA } from '@/lib/indicators'
 
-// Exact Timeframes Requested
 const INTERVALS = [
   { label: '1m', value: '1m', range: '7d' },
   { label: '5m', value: '5m', range: '60d' },
@@ -32,12 +31,14 @@ function TechnicalChart({ symbol }: Props) {
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
 
-  const [interval, setIntervalState] = useState('1D')
-  const [range, setRange] = useState('10y')
-  const [activeLabel, setActiveLabel] = useState('1D')
+  // 1. UPDATED DEFAULTS: 15m / 60d
+  const [interval, setIntervalState] = useState('15m')
+  const [range, setRange] = useState('60d')
+  const [activeLabel, setActiveLabel] = useState('15m')
+  
   const [loading, setLoading] = useState(true)
   
-  // Indicators (Default: TRUE)
+  // Indicators
   const [showSMA, setShowSMA] = useState(true)
   const [showEMA, setShowEMA] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
@@ -67,11 +68,10 @@ function TechnicalChart({ symbol }: Props) {
       },
       rightPriceScale: {
         borderColor: '#e5e7eb',
-        scaleMargins: { top: 0.1, bottom: 0.2 } // Leave space for volume
+        scaleMargins: { top: 0.1, bottom: 0.2 } // Space for volume
       }
     }
 
-    // Dark Mode Support
     if (document.documentElement.classList.contains('dark')) {
         Object.assign(chartOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
@@ -83,17 +83,17 @@ function TechnicalChart({ symbol }: Props) {
 
     const chart = createChart(chartContainerRef.current, chartOptions)
 
-    // A. Volume (Layer 0 - Bottom)
+    // A. Volume (Layer 0)
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: '', // Overlay mode
+        priceScaleId: '', 
     })
     volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 }
     })
     volumeSeriesRef.current = volumeSeries
 
-    // B. Candles (Layer 1 - Main)
+    // B. Candles (Layer 1)
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -103,7 +103,7 @@ function TechnicalChart({ symbol }: Props) {
     })
     candleSeriesRef.current = candleSeries
 
-    // C. Indicators (Layer 2 - Lines)
+    // C. Indicators (Layer 2)
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     smaSeriesRef.current = smaSeries
@@ -136,20 +136,23 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
-    const handleResize = () => {
-        if (chartContainerRef.current && chartRef.current) {
-            chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth })
+    // 2. OPTIMIZATION: ResizeObserver instead of window listener
+    const resizeObserver = new ResizeObserver((entries) => {
+        if (entries.length === 0 || !entries[0].contentRect) return
+        if (chartRef.current) {
+            chartRef.current.applyOptions({ width: entries[0].contentRect.width })
         }
-    }
-    window.addEventListener('resize', handleResize)
+    })
+    
+    resizeObserver.observe(chartContainerRef.current)
 
     return () => {
-        window.removeEventListener('resize', handleResize)
+        resizeObserver.disconnect()
         chart.remove()
     }
-  }, []) // Init once
+  }, [])
 
-  // 2. Fetch Data
+  // 3. Data Fetch
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)
@@ -162,10 +165,8 @@ function TechnicalChart({ symbol }: Props) {
         
         if (data.candles && data.candles.length > 0 && chartRef.current) {
             
-            // Set Data
             candleSeriesRef.current.setData(data.candles)
             
-            // Indicators
             if (showVolume) {
                 volumeSeriesRef.current.setData(data.volume)
                 volumeSeriesRef.current.applyOptions({ visible: true })
@@ -187,7 +188,7 @@ function TechnicalChart({ symbol }: Props) {
                 emaSeriesRef.current.applyOptions({ visible: false })
             }
 
-            // AUTO-FIT FIX: Small timeout to ensure chart renders correctly on first load
+            // AUTO-FIT: Ensures chart renders instantly
             setTimeout(() => {
                 chartRef.current?.timeScale().fitContent()
             }, 100)
@@ -202,20 +203,20 @@ function TechnicalChart({ symbol }: Props) {
     fetchData()
   }, [symbol, interval, range, showSMA, showEMA, showVolume])
 
-  const handleTimeframe = (lbl: string, val: string, rng: string) => {
+  const handleTimeframe = useCallback((lbl: string, val: string, rng: string) => {
       setActiveLabel(lbl)
       setIntervalState(val)
       setRange(rng)
-  }
+  }, [])
 
   return (
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
       {/* TOOLBAR */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4 overflow-x-auto scrollbar-hide">
         
-        {/* Symbol Info */}
-        <div className="flex flex-col min-w-[200px]">
+        {/* Symbol Info (Fixed) */}
+        <div className="flex flex-col min-w-[180px] shrink-0">
             <div className="flex items-center gap-2">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
                 {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
@@ -224,27 +225,24 @@ function TechnicalChart({ symbol }: Props) {
             <div className="flex items-center gap-3 text-xs font-mono mt-1 h-4 overflow-hidden">
                 {legendData ? (
                     <>
-                        <span className="text-slate-600 dark:text-slate-300">O: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.open}</span></span>
-                        <span className="text-slate-600 dark:text-slate-300">H: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
-                        <span className="text-slate-600 dark:text-slate-300">L: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
-                        <span className="text-slate-600 dark:text-slate-300">C: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
-                        
-                        {showSMA && legendData.sma && <span className="text-blue-500 ml-2">SMA: {legendData.sma.toFixed(2)}</span>}
-                        {showEMA && legendData.ema && <span className="text-amber-500 ml-2">EMA: {legendData.ema.toFixed(2)}</span>}
+                        <span className="text-slate-600 dark:text-slate-300">O:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.open}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">H:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">L:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">C:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
                     </>
                 ) : <span className="text-slate-400 italic">Hover for details</span>}
             </div>
         </div>
         
-        {/* CONTROLS (Scrollable on Mobile) */}
-        <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 w-full md:w-auto scrollbar-hide">
+        {/* SCROLLABLE CONTROLS (Desktop & Mobile) */}
+        <div className="flex items-center gap-3 shrink-0">
             {/* Timeframe Buttons */}
-            <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1 shrink-0">
+            <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
                 {INTERVALS.map((int) => (
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-2.5 py-1 text-[10px] font-bold rounded uppercase transition-colors whitespace-nowrap
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded uppercase transition-colors whitespace-nowrap
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
@@ -256,7 +254,7 @@ function TechnicalChart({ symbol }: Props) {
             </div>
 
             {/* Indicators */}
-            <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-800 pl-3 shrink-0">
+            <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-800 pl-3">
                 <button onClick={() => setShowSMA(!showSMA)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>SMA</button>
                 <button onClick={() => setShowEMA(!showEMA)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>EMA</button>
                 <button onClick={() => setShowVolume(!showVolume)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showVolume ? 'bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>VOL</button>
