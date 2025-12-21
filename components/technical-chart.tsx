@@ -47,7 +47,7 @@ function TechnicalChart({ symbol }: Props) {
   // Data Hook
   const { data, isLoading } = useChartData(symbol, interval, range)
 
-  // 1. Initialize Chart (Strictly Logic - No UI Changes here)
+  // 1. Initialize Chart
   useEffect(() => {
     if (!chartContainerRef.current) return
 
@@ -62,7 +62,7 @@ function TechnicalChart({ symbol }: Props) {
         horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 450,
+      height: 450, // Inner canvas height
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
         visible: true,
@@ -72,12 +72,13 @@ function TechnicalChart({ symbol }: Props) {
         rightOffset: 12,
         barSpacing: 6,
       },
+      // MAIN PRICE SCALE (Candles) - Top 80%
       rightPriceScale: {
         borderColor: 'rgba(197, 203, 206, 0.3)',
         visible: true,
         scaleMargins: {
             top: 0.1,    
-            bottom: 0.25 // Reserve bottom 25% for Volume
+            bottom: 0.20 // Reserve bottom 20% for Volume
         }
       },
       handleScale: { axisPressedMouseMove: true },
@@ -90,13 +91,14 @@ function TechnicalChart({ symbol }: Props) {
 
     const chart = createChart(chartContainerRef.current, chartOptions)
 
-    // A. VOLUME (Scale Margins: Top 80% empty, Bottom 20% filled)
+    // A. VOLUME (Bottom 20%)
     const volumeSeries = chart.addSeries(HistogramSeries, {
+        color: '#26a69a', // Fallback color
         priceFormat: { type: 'volume' },
         priceScaleId: 'vol_scale',
     })
     chart.priceScale('vol_scale').applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
+        scaleMargins: { top: 0.8, bottom: 0 }, // Strict bottom placement
         visible: false 
     })
     volumeSeriesRef.current = volumeSeries
@@ -119,7 +121,7 @@ function TechnicalChart({ symbol }: Props) {
 
     chartRef.current = chart
 
-    // --- LEGEND LOGIC (OHLCV) ---
+    // --- LEGEND LOGIC ---
     chart.subscribeCrosshairMove((param) => {
         if (param.time) {
             const data: any = {}
@@ -129,16 +131,13 @@ function TechnicalChart({ symbol }: Props) {
             if (candle) {
                 data.open = candle.open; data.high = candle.high; 
                 data.low = candle.low; data.close = candle.close;
-                data.isUp = candle.close >= candle.open; // Trend Direction
+                data.isUp = candle.close >= candle.open;
                 
                 const dateObj = new Date(Number(param.time) * 1000)
                 data.date = dateObj.toLocaleDateString(undefined, {day:'numeric', month:'short'}) + ', ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })
             }
+            if (volume) data.volume = volume.value
             
-            if (volume) {
-                data.volume = volume.value
-            }
-
             setLegendData(data)
         } else {
             setLegendData(null)
@@ -164,6 +163,7 @@ function TechnicalChart({ symbol }: Props) {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         candleSeriesRef.current.setData(data.candles)
         
+        // Ensure Volume visibility
         if (showVolume) {
             volumeSeriesRef.current.setData(data.volume)
             volumeSeriesRef.current.applyOptions({ visible: true })
@@ -185,7 +185,7 @@ function TechnicalChart({ symbol }: Props) {
             emaSeriesRef.current.applyOptions({ visible: false })
         }
 
-        // Zoom to last 80 candles
+        // Smart Zoom
         const total = data.candles.length
         if (total > 80) {
             chartRef.current.timeScale().setVisibleLogicalRange({ from: total - 80, to: total })
@@ -201,44 +201,70 @@ function TechnicalChart({ symbol }: Props) {
       setRange(rng)
   }, [])
 
-  // Helper to format Volume (e.g., 1.5M, 200k)
   const formatVol = (num: number) => {
       if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M'
       if (num >= 1000) return (num / 1000).toFixed(2) + 'k'
       return num.toString()
   }
 
-  // Helper for dynamic colors
   const valColor = (isUp: boolean) => isUp ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col">
+    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-[600px]">
       
-      {/* 1. TOP HEADER: Symbol & OHLCV Legend */}
-      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 min-h-[60px] flex flex-col justify-center">
-        <div className="flex flex-col">
-            <div className="flex items-baseline justify-between">
-                <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
-                {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
-            </div>
+      {/* 1. TOP HEADER (Desktop: Full Controls | Mobile: Symbol + Legend) */}
+      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-col justify-center min-h-[60px]">
+        
+        {/* Row 1: Flex Container */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
             
-            {/* OHLCV Legend */}
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
-                {legendData ? (
-                    <>
-                        <span>O:<span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
-                        <span>H:<span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
-                        <span>L:<span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
-                        <span>C:<span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
-                        {legendData.volume && <span>V:<span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
-                    </>
-                ) : <span className="italic opacity-50">Hover/Drag chart to view history</span>}
+            {/* Left: Symbol & Legend */}
+            <div className="flex flex-col">
+                <div className="flex items-baseline gap-3">
+                    <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
+                    {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
+                </div>
+                {/* OHLCV Data - Always Visible */}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
+                    {legendData ? (
+                        <>
+                            <span>O: <span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
+                            <span>H: <span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
+                            <span>L: <span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
+                            <span>C: <span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
+                            {legendData.volume && <span>V: <span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
+                        </>
+                    ) : <span className="italic opacity-50">Hover/Drag chart to view history</span>}
+                </div>
+            </div>
+
+            {/* Right: Controls (DESKTOP ONLY) */}
+            <div className="hidden md:flex items-center gap-4">
+                {/* Timeframes */}
+                <div className="flex gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+                    {INTERVALS.map((int) => (
+                        <button
+                            key={int.label}
+                            onClick={() => handleTimeframe(int.label, int.value, int.range)}
+                            className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors
+                                ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-white"}`}
+                        >
+                        {int.label}
+                        </button>
+                    ))}
+                </div>
+                {/* Indicators */}
+                <div className="flex gap-1">
+                    <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200'}`}>SMA</button>
+                    <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200'}`}>EMA</button>
+                    <button onClick={() => setShowVolume(!showVolume)} className={`px-2 py-1 text-xs font-bold rounded border ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'text-slate-400 border-slate-200'}`}>VOL</button>
+                </div>
             </div>
         </div>
       </div>
 
-      {/* 2. CHART CANVAS */}
-      <div className="relative w-full h-[450px] bg-white dark:bg-slate-900 touch-none">
+      {/* 2. CHART CANVAS (Flex-1 fills remaining space) */}
+      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 touch-none overflow-hidden">
         {isLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
             <Loader2 className="animate-spin text-indigo-500 mb-2" size={32} />
@@ -248,29 +274,8 @@ function TechnicalChart({ symbol }: Props) {
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
 
-      {/* 3. DESKTOP CONTROLS (Hidden on Mobile) */}
-      <div className="hidden md:flex items-center justify-between p-2 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <div className="flex gap-1">
-            {INTERVALS.map((int) => (
-                <button
-                    key={int.label}
-                    onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                    className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-colors
-                        ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"}`}
-                >
-                {int.label}
-                </button>
-            ))}
-        </div>
-        <div className="flex gap-2">
-            <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200'}`}>SMA</button>
-            <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200'}`}>EMA</button>
-            <button onClick={() => setShowVolume(!showVolume)} className={`px-2 py-1 text-xs font-bold rounded border ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'text-slate-400 border-slate-200'}`}>VOL</button>
-        </div>
-      </div>
-
-      {/* 4. MOBILE CONTROLS (Bottom Toolbar - App Style) */}
-      <div className="flex md:hidden items-center justify-between p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 safe-area-pb">
+      {/* 3. MOBILE FOOTER TOOLBAR (Visible ONLY on Mobile) */}
+      <div className="flex md:hidden items-center justify-between p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
         <div className="flex-1 mr-4">
             <select 
                 value={activeLabel} 
