@@ -64,10 +64,13 @@ function TechnicalChart({ symbol }: Props) {
       height: 500,
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
-        visible: true, // Force Visible
-        timeVisible: true, // Show Hours/Minutes
+        visible: true,
+        timeVisible: true,
         secondsVisible: false,
         borderColor: '#e5e7eb',
+        rightOffset: 10, // Breathing room for latest candle
+        fixLeftEdge: true,
+        fixRightEdge: true,
       },
       rightPriceScale: {
         borderColor: '#e5e7eb',
@@ -79,7 +82,7 @@ function TechnicalChart({ symbol }: Props) {
         Object.assign(chartOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-            timeScale: { borderColor: '#334155', visible: true, timeVisible: true },
+            timeScale: { borderColor: '#334155', visible: true, timeVisible: true, rightOffset: 10 },
             rightPriceScale: { borderColor: '#334155' }
         })
     }
@@ -139,7 +142,7 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
-    // Performance: ResizeObserver
+    // ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length === 0 || !entries[0].contentRect) return
         if (chartRef.current) {
@@ -184,10 +187,18 @@ function TechnicalChart({ symbol }: Props) {
             emaSeriesRef.current.applyOptions({ visible: false })
         }
 
-        // Auto-Fit: Ensures candles and X-axis dates appear instantly
-        requestAnimationFrame(() => {
-            chartRef.current?.timeScale().fitContent()
-        })
+        // SMART ZOOM FIX: 
+        // Instead of fitContent() (which zooms out 100%), we manually set the range
+        // to show the last ~100 candles. This mimics TradingView's default view.
+        const totalCandles = data.candles.length
+        if (totalCandles > 100) {
+            chartRef.current.timeScale().setVisibleLogicalRange({
+                from: totalCandles - 100,
+                to: totalCandles
+            })
+        } else {
+            chartRef.current.timeScale().fitContent()
+        }
     }
   }, [data, showSMA, showEMA, showVolume])
 
@@ -225,14 +236,14 @@ function TechnicalChart({ symbol }: Props) {
             </div>
         </div>
         
-        {/* CONTROLS (Clean Layout - No Scrollbar) */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* CONTROLS */}
+        <div className="flex items-center gap-3 shrink-0">
             <div className="flex flex-wrap bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
                 {INTERVALS.map((int) => (
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors
+                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors whitespace-nowrap
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
@@ -259,7 +270,6 @@ function TechnicalChart({ symbol }: Props) {
             <span className="text-xs text-slate-500 font-medium animate-pulse">Loading market data...</span>
           </div>
         )}
-        {/* Container for Lightweight Chart */}
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
     </div>
