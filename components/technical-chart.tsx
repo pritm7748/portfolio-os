@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, memo, useCallback } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
 import { Loader2 } from 'lucide-react'
 import { calculateSMA, calculateEMA } from '@/lib/indicators'
-import { useChartData } from '@/hooks/use-portfolio-data' // Imported new hook
+import { useChartData } from '@/hooks/use-portfolio-data'
 
 const INTERVALS = [
   { label: '1m', value: '1m', range: '7d' },
@@ -32,7 +32,7 @@ function TechnicalChart({ symbol }: Props) {
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
 
-  // Default to 15m as requested
+  // Default to 15m
   const [interval, setIntervalState] = useState('15m')
   const [range, setRange] = useState('60d')
   const [activeLabel, setActiveLabel] = useState('15m')
@@ -44,8 +44,8 @@ function TechnicalChart({ symbol }: Props) {
   
   const [legendData, setLegendData] = useState<any>(null)
 
-  // Use the Optimized Query Hook
-  const { data, isLoading, isError } = useChartData(symbol, interval, range)
+  // Performance Optimized Hook
+  const { data, isLoading } = useChartData(symbol, interval, range)
 
   // 1. Initialize Chart
   useEffect(() => {
@@ -64,13 +64,14 @@ function TechnicalChart({ symbol }: Props) {
       height: 500,
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
-        timeVisible: true,
+        visible: true, // Force Visible
+        timeVisible: true, // Show Hours/Minutes
         secondsVisible: false,
-        borderColor: '#e5e7eb'
+        borderColor: '#e5e7eb',
       },
       rightPriceScale: {
         borderColor: '#e5e7eb',
-        scaleMargins: { top: 0.1, bottom: 0.2 } // Main price scale margins
+        scaleMargins: { top: 0.1, bottom: 0.2 } // Leave bottom space for volume
       }
     }
 
@@ -78,28 +79,24 @@ function TechnicalChart({ symbol }: Props) {
         Object.assign(chartOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-            timeScale: { borderColor: '#334155' },
+            timeScale: { borderColor: '#334155', visible: true, timeVisible: true },
             rightPriceScale: { borderColor: '#334155' }
         })
     }
 
     const chart = createChart(chartContainerRef.current, chartOptions)
 
-    // A. Volume (Custom Scale to fix visibility)
+    // A. Volume (Layer 0)
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: 'volume', // Separate scale ID
+        priceScaleId: '', 
     })
-    
-    // Configure Volume Scale to sit at bottom 20%
-    chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-        visible: false // Hide axis numbers for volume
+    volumeSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 }
     })
-    
     volumeSeriesRef.current = volumeSeries
 
-    // B. Candles
+    // B. Candles (Layer 1)
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -109,7 +106,7 @@ function TechnicalChart({ symbol }: Props) {
     })
     candleSeriesRef.current = candleSeries
 
-    // C. Indicators
+    // C. Indicators (Layer 2)
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     smaSeriesRef.current = smaSeries
@@ -128,12 +125,12 @@ function TechnicalChart({ symbol }: Props) {
                 const dateObj = new Date(Number(param.time) * 1000)
                 data.date = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })
             }
-            if (showSMA && smaSeriesRef.current) {
-                const s = param.seriesData.get(smaSeriesRef.current) as any
+            if (showSMA) {
+                const s = param.seriesData.get(smaSeries) as any
                 if (s) data.sma = s.value
             }
-            if (showEMA && emaSeriesRef.current) {
-                const e = param.seriesData.get(emaSeriesRef.current) as any
+            if (showEMA) {
+                const e = param.seriesData.get(emaSeries) as any
                 if (e) data.ema = e.value
             }
             setLegendData(data)
@@ -142,6 +139,7 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
+    // Performance: ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length === 0 || !entries[0].contentRect) return
         if (chartRef.current) {
@@ -156,14 +154,13 @@ function TechnicalChart({ symbol }: Props) {
     }
   }, [])
 
-  // 2. Handle Data Updates (React Query)
+  // 2. Handle Data Updates
   useEffect(() => {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         
-        // Update Series
         candleSeriesRef.current.setData(data.candles)
         
-        // Visibility Handling
+        // Volume
         if (showVolume) {
             volumeSeriesRef.current.setData(data.volume)
             volumeSeriesRef.current.applyOptions({ visible: true })
@@ -171,6 +168,7 @@ function TechnicalChart({ symbol }: Props) {
             volumeSeriesRef.current.applyOptions({ visible: false })
         }
 
+        // SMA
         if (showSMA) {
             smaSeriesRef.current.setData(calculateSMA(data.candles, 20))
             smaSeriesRef.current.applyOptions({ visible: true })
@@ -178,6 +176,7 @@ function TechnicalChart({ symbol }: Props) {
             smaSeriesRef.current.applyOptions({ visible: false })
         }
 
+        // EMA
         if (showEMA) {
             emaSeriesRef.current.setData(calculateEMA(data.candles, 50))
             emaSeriesRef.current.applyOptions({ visible: true })
@@ -185,8 +184,7 @@ function TechnicalChart({ symbol }: Props) {
             emaSeriesRef.current.applyOptions({ visible: false })
         }
 
-        // Auto-Fit on Data Change
-        // Using requestAnimationFrame for smoother UI update
+        // Auto-Fit: Ensures candles and X-axis dates appear instantly
         requestAnimationFrame(() => {
             chartRef.current?.timeScale().fitContent()
         })
@@ -202,11 +200,11 @@ function TechnicalChart({ symbol }: Props) {
   return (
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
-      {/* TOOLBAR: SCROLLABLE ON DESKTOP & MOBILE */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4 overflow-x-auto whitespace-nowrap scrollbar-hide">
+      {/* TOOLBAR */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4">
         
         {/* Symbol Info */}
-        <div className="flex flex-col min-w-[180px] shrink-0">
+        <div className="flex flex-col min-w-[180px]">
             <div className="flex items-center gap-2">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
                 {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
@@ -219,19 +217,22 @@ function TechnicalChart({ symbol }: Props) {
                         <span className="text-slate-600 dark:text-slate-300">H:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">L:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">C:<span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
+                        
+                        {showSMA && legendData.sma && <span className="text-blue-500 ml-2">SMA:{legendData.sma.toFixed(2)}</span>}
+                        {showEMA && legendData.ema && <span className="text-amber-500 ml-2">EMA:{legendData.ema.toFixed(2)}</span>}
                     </>
                 ) : <span className="text-slate-400 italic">Hover for details</span>}
             </div>
         </div>
         
-        {/* SCROLLABLE CONTROLS */}
-        <div className="flex items-center gap-3 shrink-0">
-            <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
+        {/* CONTROLS (Clean Layout - No Scrollbar) */}
+        <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
                 {INTERVALS.map((int) => (
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-3 py-1.5 text-[11px] font-bold rounded uppercase transition-colors
+                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
@@ -258,6 +259,7 @@ function TechnicalChart({ symbol }: Props) {
             <span className="text-xs text-slate-500 font-medium animate-pulse">Loading market data...</span>
           </div>
         )}
+        {/* Container for Lightweight Chart */}
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
     </div>
