@@ -6,7 +6,8 @@ import {
   LayoutDashboard, PieChart, Wallet, TrendingUp, FileText, Settings, List, LogOut, 
   ChevronDown, Plus, Briefcase, X, Edit2, Trash2, Target,
   Newspaper,
-  Megaphone
+  Megaphone,
+  Activity // Used for Charts
 } from 'lucide-react'
 import { usePortfolio } from '@/context/portfolio-context' 
 import { useState, useEffect } from 'react'
@@ -15,6 +16,7 @@ import { createClient } from '@/lib/supabase/client'
 const mainLinks = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/dashboard/holdings', icon: Wallet, label: 'Holdings' },
+  { href: '/dashboard/charts', icon: Activity, label: 'Advanced Charts' }, // NEW
   { href: '/dashboard/analytics', icon: PieChart, label: 'Analytics' },
   { href: '/dashboard/goals', icon: Target, label: 'Goals & Planning' }, 
   { href: '/dashboard/market', icon: TrendingUp, label: 'Market' },
