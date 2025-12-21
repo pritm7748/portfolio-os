@@ -2,7 +2,6 @@
 
 export const calculateSMA = (data: any[], period: number) => {
     const sma = []
-    // Start loop from 'period - 1' so we have enough data
     for (let i = period - 1; i < data.length; i++) {
         let sum = 0
         for (let j = 0; j < period; j++) {
@@ -15,21 +14,18 @@ export const calculateSMA = (data: any[], period: number) => {
 
 export const calculateEMA = (data: any[], period: number) => {
     if (data.length < period) return []
-    
     const ema = []
     const k = 2 / (period + 1)
     
-    // First EMA is simple average
+    // Initial SMA
     let sum = 0
     for (let i = 0; i < period; i++) {
         sum += data[i].close
     }
     let prevEma = sum / period
-    
-    // Push first point
     ema.push({ time: data[period - 1].time, value: prevEma })
 
-    // Calculate rest
+    // EMA Calculation
     for (let i = period; i < data.length; i++) {
         const close = data[i].close
         const newEma = (close * k) + (prevEma * (1 - k))
@@ -41,12 +37,11 @@ export const calculateEMA = (data: any[], period: number) => {
 
 export const calculateRSI = (data: any[], period: number = 14) => {
     if (data.length <= period) return []
-
     const rsi = []
     let gains = 0
     let losses = 0
 
-    // 1. Initial Average
+    // Initial Avg Gain/Loss
     for (let i = 1; i <= period; i++) {
         const change = data[i].close - data[i - 1].close
         if (change > 0) gains += change
@@ -56,7 +51,7 @@ export const calculateRSI = (data: any[], period: number = 14) => {
     let avgGain = gains / period
     let avgLoss = losses / period
 
-    // 2. Smooth calculation
+    // Smoothed RSI
     for (let i = period + 1; i < data.length; i++) {
         const change = data[i].close - data[i - 1].close
         let gain = change > 0 ? change : 0
