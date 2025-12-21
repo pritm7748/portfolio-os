@@ -37,85 +37,107 @@ function TechnicalChart({ symbol }: Props) {
   const [range, setRange] = useState('60d')
   const [activeLabel, setActiveLabel] = useState('15m')
   
-  // Indicators
   const [showSMA, setShowSMA] = useState(true)
   const [showEMA, setShowEMA] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
   
   const [legendData, setLegendData] = useState<any>(null)
+  const [isMobile, setIsMobile] = useState(false)
 
   // Data Hook
   const { data, isLoading } = useChartData(symbol, interval, range)
 
-  // 1. Initialize Chart (Logic Shared, Layout Configured for visibility)
+  // 1. Detect Mobile
+  useEffect(() => {
+      const checkMobile = () => setIsMobile(window.innerWidth < 768)
+      checkMobile()
+      window.addEventListener('resize', checkMobile)
+      return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // 2. Initialize Chart (Strictly Separated Configs)
   useEffect(() => {
     if (!chartContainerRef.current) return
 
-    const chartOptions = {
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#64748b',
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: 'rgba(197, 203, 206, 0.1)' },
-        horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 450,
-      crosshair: { mode: CrosshairMode.Normal },
-      timeScale: {
-        visible: true,
-        timeVisible: true,
-        secondsVisible: false,
-        borderColor: 'rgba(197, 203, 206, 0.3)',
-        rightOffset: 12,
-        barSpacing: 6,
-      },
-      // MAIN PRICE SCALE (Candles) - Top 75%
-      rightPriceScale: {
-        borderColor: 'rgba(197, 203, 206, 0.3)',
-        visible: true,
-        scaleMargins: {
-            top: 0.05,    
-            bottom: 0.25 // Reserve strictly bottom 25% for Volume
-        }
-      },
-      handleScale: { axisPressedMouseMove: true },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+    // --- DESKTOP CONFIG ---
+    const desktopOptions = {
+        height: 500,
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#64748b', attributionLogo: false },
+        grid: { vertLines: { color: 'rgba(197, 203, 206, 0.1)' }, horzLines: { color: 'rgba(197, 203, 206, 0.1)' } },
+        crosshair: { mode: CrosshairMode.Normal },
+        timeScale: {
+            visible: true, timeVisible: true, secondsVisible: false,
+            borderColor: 'rgba(197, 203, 206, 0.3)',
+            rightOffset: 12,
+            fixRightEdge: true, // <--- FIXES WHITESPACE ON SCROLL OUT
+            barSpacing: 6,
+        },
+        rightPriceScale: {
+            borderColor: 'rgba(197, 203, 206, 0.3)', visible: true,
+            scaleMargins: { top: 0.1, bottom: 0.20 } // Desktop: 80% Price, 20% Volume
+        },
+        handleScale: { axisPressedMouseMove: true, mouseWheel: true },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
     }
 
+    // --- MOBILE CONFIG (Native Gestures) ---
+    const mobileOptions = {
+        height: 350, // Shorter for mobile
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8', attributionLogo: false },
+        grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.05)' } }, // Cleaner mobile grid
+        crosshair: { 
+            mode: CrosshairMode.Magnet, // Easier to snap on touch
+            vertLine: { labelVisible: false }, 
+            horzLine: { labelVisible: true } 
+        },
+        timeScale: {
+            visible: true, timeVisible: true, secondsVisible: false,
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            rightOffset: 5,
+            fixRightEdge: true,
+        },
+        rightPriceScale: {
+            visible: true,
+            scaleMargins: { top: 0.05, bottom: 0.25 } // Mobile: More space for Volume
+        },
+        // ENABLE TOUCH GESTURES
+        handleScale: { pinch: true, axisPressedMouseMove: true },
+        handleScroll: { horzTouchDrag: true, vertTouchDrag: false, pressedMouseMove: true },
+        kineticScroll: { touch: true, mouse: true }
+    }
+
+    const options = window.innerWidth < 768 ? mobileOptions : desktopOptions
+    
+    // Dark Mode check
     if (document.documentElement.classList.contains('dark')) {
-        chartOptions.layout.textColor = '#94a3b8'
+        options.layout.textColor = '#94a3b8'
     }
 
-    const chart = createChart(chartContainerRef.current, chartOptions)
+    const chart = createChart(chartContainerRef.current, options)
 
-    // A. VOLUME (Bottom 25%)
+    // --- SERIES SETUP (Shared Logic) ---
+    // A. VOLUME
     const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: '#26a69a', // Default Green
+        color: '#26a69a',
         priceFormat: { type: 'volume' },
         priceScaleId: 'vol_scale',
     })
     chart.priceScale('vol_scale').applyOptions({
-        scaleMargins: { top: 0.75, bottom: 0 }, // Starts at 75% height
+        scaleMargins: { top: 0.8, bottom: 0 }, // Strict Bottom Dock
         visible: false 
     })
     volumeSeriesRef.current = volumeSeries
 
     // B. CANDLES
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      upColor: '#22c55e', downColor: '#ef4444',
+      borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444',
     })
     candleSeriesRef.current = candleSeries
 
     // C. INDICATORS
-    const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20', lastValueVisible: false, priceLineVisible: false })
-    const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50', lastValueVisible: false, priceLineVisible: false })
+    const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20', lastValueVisible: !isMobile, priceLineVisible: false })
+    const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50', lastValueVisible: !isMobile, priceLineVisible: false })
     smaSeriesRef.current = smaSeries
     emaSeriesRef.current = emaSeries
 
@@ -133,18 +155,11 @@ function TechnicalChart({ symbol }: Props) {
                 data.low = candle.low; data.close = candle.close;
                 data.isUp = candle.close >= candle.open;
                 
-                // FIXED: Year Added
                 const dateObj = new Date(Number(param.time) * 1000)
-                data.date = dateObj.toLocaleDateString('en-GB', {
-                    day: 'numeric', 
-                    month: 'short', 
-                    year: 'numeric', // <--- Year added
-                    hour: '2-digit', 
-                    minute:'2-digit' 
-                })
+                data.date = dateObj.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + 
+                            ', ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })
             }
             if (volume) data.volume = volume.value
-            
             setLegendData(data)
         } else {
             setLegendData(null)
@@ -163,20 +178,15 @@ function TechnicalChart({ symbol }: Props) {
         resizeObserver.disconnect()
         chart.remove()
     }
-  }, [])
+  }, [isMobile]) // Re-run if mobile state changes
 
   // 2. Data Logic
   useEffect(() => {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         candleSeriesRef.current.setData(data.candles)
         
-        // Ensure Volume visibility with colors
         if (showVolume) {
-            // Apply volume data
-            volumeSeriesRef.current.setData(data.volume.map((v: any) => ({
-                ...v,
-                color: v.color || (v.close >= v.open ? '#26a69a' : '#ef5350') // Fallback colors
-            })))
+            volumeSeriesRef.current.setData(data.volume)
             volumeSeriesRef.current.applyOptions({ visible: true })
         } else {
             volumeSeriesRef.current.applyOptions({ visible: false })
@@ -196,6 +206,7 @@ function TechnicalChart({ symbol }: Props) {
             emaSeriesRef.current.applyOptions({ visible: false })
         }
 
+        // Fix Zoom
         const total = data.candles.length
         if (total > 80) {
             chartRef.current.timeScale().setVisibleLogicalRange({ from: total - 80, to: total })
@@ -221,48 +232,34 @@ function TechnicalChart({ symbol }: Props) {
   const valColor = (isUp: boolean) => isUp ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-[600px]">
+    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
-      {/* ----------------- DESKTOP HEADER ----------------- */}
-      {/* Hidden on Mobile, Flex on Desktop */}
+      {/* -------------------- 1. DESKTOP HEADER -------------------- */}
       <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
-        
-        {/* Left: Symbol & Legend */}
         <div className="flex flex-col">
             <div className="flex items-baseline gap-3">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
                 {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
             </div>
-            {/* Desktop OHLCV */}
             <div className="flex gap-4 text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
                 {legendData ? (
                     <>
-                        <span>O: <span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
-                        <span>H: <span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
-                        <span>L: <span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
-                        <span>C: <span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
+                        <span>O:<span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
+                        <span>H:<span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
+                        <span>L:<span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
+                        <span>C:<span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
                         {legendData.volume && <span>V: <span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
                     </>
                 ) : <span className="italic opacity-50">Hover chart</span>}
             </div>
         </div>
 
-        {/* Right: Desktop Controls */}
         <div className="flex items-center gap-4">
-            {/* Timeframes */}
             <div className="flex gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                 {INTERVALS.map((int) => (
-                    <button
-                        key={int.label}
-                        onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors
-                            ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-white"}`}
-                    >
-                    {int.label}
-                    </button>
+                    <button key={int.label} onClick={() => handleTimeframe(int.label, int.value, int.range)} className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-white"}`}>{int.label}</button>
                 ))}
             </div>
-            {/* Indicators */}
             <div className="flex gap-1">
                 <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200'}`}>SMA</button>
                 <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200'}`}>EMA</button>
@@ -271,28 +268,34 @@ function TechnicalChart({ symbol }: Props) {
         </div>
       </div>
 
-      {/* ----------------- MOBILE HEADER ----------------- */}
-      {/* Visible ONLY on Mobile */}
+      {/* -------------------- 2. MOBILE HEADER (Compact) -------------------- */}
       <div className="flex md:hidden flex-col px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
-         <div className="flex justify-between items-baseline mb-1">
+         <div className="flex justify-between items-baseline mb-2">
             <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
             {legendData && <span className="text-[10px] font-mono text-slate-500">{legendData.date}</span>}
          </div>
+         
+         {/* MOBILE SCROLLABLE TOOLBAR */}
+         <div className="flex items-center gap-3 overflow-x-auto scrollbar-hide pb-1 mb-2">
+            {INTERVALS.map((int) => (
+                <button key={int.label} onClick={() => handleTimeframe(int.label, int.value, int.range)} className={`px-3 py-1.5 text-[10px] font-bold rounded-full whitespace-nowrap transition-colors border ${activeLabel === int.label ? "bg-indigo-600 text-white border-indigo-600" : "bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700"}`}>{int.label}</button>
+            ))}
+         </div>
+
+         {/* Mobile Legend */}
          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-slate-600 dark:text-slate-400">
             {legendData ? (
                 <>
-                    <span>O:<span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
-                    <span>H:<span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
-                    <span>L:<span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
                     <span>C:<span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
-                    {legendData.volume && <span>V: <span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
+                    {legendData.volume && <span>V:<span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
+                    {/* Hiding O/H/L on mobile to save space unless explicitly needed */}
                 </>
             ) : <span>Live Data</span>}
          </div>
       </div>
 
-      {/* ----------------- CHART CANVAS ----------------- */}
-      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 touch-none overflow-hidden min-h-[350px]">
+      {/* -------------------- 3. CHART CANVAS -------------------- */}
+      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 touch-pan-x touch-pan-y min-h-[400px]">
         {isLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
             <Loader2 className="animate-spin text-indigo-500 mb-2" size={32} />
@@ -300,30 +303,12 @@ function TechnicalChart({ symbol }: Props) {
           </div>
         )}
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
-      </div>
-
-      {/* ----------------- MOBILE DOCK (Controls) ----------------- */}
-      {/* Fixed at bottom for Mobile, Hidden on Desktop */}
-      <div className="flex md:hidden items-center justify-between p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 safe-area-pb">
-        <div className="flex-1 mr-3">
-            <select 
-                value={activeLabel} 
-                onChange={(e) => {
-                    const found = INTERVALS.find(i => i.label === e.target.value)
-                    if(found) handleTimeframe(found.label, found.value, found.range)
-                }}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm rounded-lg p-2.5 outline-none font-bold"
-            >
-                {INTERVALS.map(int => (
-                    <option key={int.label} value={int.label}>{int.label}</option>
-                ))}
-            </select>
-        </div>
         
-        <div className="flex gap-2">
-            <button onClick={() => setShowSMA(!showSMA)} className={`p-2.5 rounded-lg border shadow-sm ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'}`}><Activity className="h-5 w-5"/></button>
-            <button onClick={() => setShowEMA(!showEMA)} className={`p-2.5 rounded-lg border shadow-sm ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'}`}><Activity className="h-5 w-5"/></button>
-            <button onClick={() => setShowVolume(!showVolume)} className={`p-2.5 rounded-lg border shadow-sm ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'}`}><BarChart2 className="h-5 w-5"/></button>
+        {/* MOBILE FLOATING INDICATORS (Bottom Right) */}
+        <div className="md:hidden absolute bottom-4 right-4 flex gap-2 z-10">
+            <button onClick={() => setShowSMA(!showSMA)} className={`h-8 w-8 rounded-full shadow-lg flex items-center justify-center text-[10px] font-bold ${showSMA ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-400'}`}>S</button>
+            <button onClick={() => setShowEMA(!showEMA)} className={`h-8 w-8 rounded-full shadow-lg flex items-center justify-center text-[10px] font-bold ${showEMA ? 'bg-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-400'}`}>E</button>
+            <button onClick={() => setShowVolume(!showVolume)} className={`h-8 w-8 rounded-full shadow-lg flex items-center justify-center text-[10px] font-bold ${showVolume ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-400'}`}>V</button>
         </div>
       </div>
 
