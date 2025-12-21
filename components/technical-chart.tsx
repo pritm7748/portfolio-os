@@ -32,30 +32,30 @@ function TechnicalChart({ symbol }: Props) {
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
 
-  // Default to 15m / 60d
+  // Default: 15m
   const [interval, setIntervalState] = useState('15m')
   const [range, setRange] = useState('60d')
   const [activeLabel, setActiveLabel] = useState('15m')
   
+  // Indicators
   const [showSMA, setShowSMA] = useState(true)
   const [showEMA, setShowEMA] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
   
   const [legendData, setLegendData] = useState<any>(null)
 
-  // Fetch Data Hook
+  // Data Hook
   const { data, isLoading } = useChartData(symbol, interval, range)
 
   // 1. Initialize Chart
   useEffect(() => {
     if (!chartContainerRef.current) return
 
-    // Chart Configuration
     const chartOptions = {
       layout: {
         background: { type: ColorType.Solid, color: '#ffffff' },
         textColor: '#333',
-        attributionLogo: true, // Ensure TradingView Logo is visible
+        attributionLogo: false, // Cleaner look
       },
       grid: {
         vertLines: { color: '#f0f0f0' },
@@ -70,21 +70,27 @@ function TechnicalChart({ symbol }: Props) {
         secondsVisible: false,
         borderColor: '#e5e7eb',
         rightOffset: 5,
-        barSpacing: 10, // Wider bars for better visibility
       },
       rightPriceScale: {
         borderColor: '#e5e7eb',
         visible: true,
-        scaleMargins: { top: 0.1, bottom: 0.2 } // Main price area (80% height)
-      }
+        // CRITICAL FIX: Reserve bottom 25% for volume so candles don't overlap it
+        scaleMargins: { top: 0.1, bottom: 0.25 } 
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+      },
     }
 
-    // Dark Mode Override
     if (document.documentElement.classList.contains('dark')) {
         Object.assign(chartOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-            timeScale: { borderColor: '#334155' },
+            timeScale: { borderColor: '#334155', visible: true, timeVisible: true, rightOffset: 5 },
             rightPriceScale: { borderColor: '#334155' }
         })
     }
@@ -92,14 +98,16 @@ function TechnicalChart({ symbol }: Props) {
     const chart = createChart(chartContainerRef.current, chartOptions)
 
     // --- A. VOLUME SERIES (Bottom Layer) ---
+    // We add volume FIRST so it sits behind everything else
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: 'volume_scale', // Dedicated Scale ID
+        priceScaleId: 'volume_scale', // Custom scale ID
     })
-    // Force Volume to sit in the bottom 20% of the chart
+    
+    // CRITICAL FIX: Configure the custom 'volume_scale' to stick to bottom 20%
     chart.priceScale('volume_scale').applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-        visible: false // Hide axis numbers for volume
+        scaleMargins: { top: 0.8, bottom: 0 }, 
+        visible: false // Don't show numbers for volume on Y-axis
     })
     volumeSeriesRef.current = volumeSeries
 
@@ -113,7 +121,7 @@ function TechnicalChart({ symbol }: Props) {
     })
     candleSeriesRef.current = candleSeries
 
-    // --- C. INDICATORS ---
+    // --- C. INDICATORS (Overlay) ---
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     smaSeriesRef.current = smaSeries
@@ -121,7 +129,7 @@ function TechnicalChart({ symbol }: Props) {
 
     chartRef.current = chart
 
-    // --- CROSSHAIR LEGEND LOGIC ---
+    // --- LEGEND LOGIC ---
     chart.subscribeCrosshairMove((param) => {
         if (param.time) {
             const data: any = {}
@@ -146,7 +154,7 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
-    // Resize Handler
+    // Resize
     const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length === 0 || !entries[0].contentRect) return
         if (chartRef.current) {
@@ -165,9 +173,9 @@ function TechnicalChart({ symbol }: Props) {
   useEffect(() => {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         
+        // Update Series
         candleSeriesRef.current.setData(data.candles)
         
-        // Update Volume
         if (showVolume) {
             volumeSeriesRef.current.setData(data.volume)
             volumeSeriesRef.current.applyOptions({ visible: true })
@@ -175,7 +183,6 @@ function TechnicalChart({ symbol }: Props) {
             volumeSeriesRef.current.applyOptions({ visible: false })
         }
 
-        // Update Indicators
         if (showSMA) {
             smaSeriesRef.current.setData(calculateSMA(data.candles, 20))
             smaSeriesRef.current.applyOptions({ visible: true })
@@ -191,12 +198,11 @@ function TechnicalChart({ symbol }: Props) {
         }
 
         // --- SMART INITIAL ZOOM ---
-        // Instead of fitContent() (which shows EVERYTHING including 10 years of data),
-        // we set the logical range to the last 100 candles.
+        // Shows the last 100 candles by default, allowing user to scroll back
         const total = data.candles.length
-        if (total > 80) {
+        if (total > 100) {
             chartRef.current.timeScale().setVisibleLogicalRange({
-                from: total - 80,
+                from: total - 100,
                 to: total
             })
         } else {
@@ -231,6 +237,7 @@ function TechnicalChart({ symbol }: Props) {
                         <span className="text-slate-600 dark:text-slate-300">H: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">L: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
                         <span className="text-slate-600 dark:text-slate-300">C: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
+                        
                         {showSMA && legendData.sma && <span className="text-blue-500 ml-2">SMA: {legendData.sma.toFixed(2)}</span>}
                         {showEMA && legendData.ema && <span className="text-amber-500 ml-2">EMA: {legendData.ema.toFixed(2)}</span>}
                     </>
@@ -238,14 +245,14 @@ function TechnicalChart({ symbol }: Props) {
             </div>
         </div>
         
-        {/* Controls */}
+        {/* CONTROLS */}
         <div className="flex flex-wrap items-center gap-3">
             <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
                 {INTERVALS.map((int) => (
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors
+                        className={`px-2.5 py-1.5 text-[11px] font-bold rounded uppercase transition-colors whitespace-nowrap
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
