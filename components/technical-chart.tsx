@@ -133,8 +133,15 @@ function TechnicalChart({ symbol }: Props) {
                 data.low = candle.low; data.close = candle.close;
                 data.isUp = candle.close >= candle.open;
                 
+                // FIXED: Include Year in Date Format
                 const dateObj = new Date(Number(param.time) * 1000)
-                data.date = dateObj.toLocaleDateString(undefined, {day:'numeric', month:'short'}) + ', ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })
+                data.date = dateObj.toLocaleDateString(undefined, {
+                    day: 'numeric', 
+                    month: 'short', 
+                    year: 'numeric',
+                    hour: '2-digit', 
+                    minute:'2-digit' 
+                })
             }
             if (volume) data.volume = volume.value
             
@@ -212,53 +219,52 @@ function TechnicalChart({ symbol }: Props) {
   return (
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-[600px]">
       
-      {/* 1. TOP HEADER (Desktop: Full Controls | Mobile: Symbol + Legend) */}
-      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-col justify-center min-h-[60px]">
+      {/* 1. TOP HEADER (Unified for Desktop & Mobile) */}
+      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-col gap-3">
         
-        {/* Row 1: Flex Container */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+        {/* Row 1: Symbol & Legend */}
+        <div className="flex flex-col">
+            <div className="flex flex-wrap items-baseline gap-3">
+                <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
+                {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
+            </div>
             
-            {/* Left: Symbol & Legend */}
-            <div className="flex flex-col">
-                <div className="flex items-baseline gap-3">
-                    <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
-                    {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
-                </div>
-                {/* OHLCV Data - Always Visible */}
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
-                    {legendData ? (
-                        <>
-                            <span>O: <span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
-                            <span>H: <span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
-                            <span>L: <span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
-                            <span>C: <span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
-                            {legendData.volume && <span>V: <span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
-                        </>
-                    ) : <span className="italic opacity-50">Hover/Drag chart to view history</span>}
-                </div>
+            {/* OHLCV Data */}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
+                {legendData ? (
+                    <>
+                        <span>O:<span className={valColor(legendData.isUp)}>{legendData.open}</span></span>
+                        <span>H:<span className={valColor(legendData.isUp)}>{legendData.high}</span></span>
+                        <span>L:<span className={valColor(legendData.isUp)}>{legendData.low}</span></span>
+                        <span>C:<span className={valColor(legendData.isUp)}>{legendData.close}</span></span>
+                        {legendData.volume && <span>V: <span className="text-slate-900 dark:text-white">{formatVol(legendData.volume)}</span></span>}
+                    </>
+                ) : <span className="italic opacity-50">Hover/Drag chart to view history</span>}
+            </div>
+        </div>
+
+        {/* Row 2: Controls (Scrollable on Mobile, Wrap on Desktop) */}
+        <div className="flex items-center justify-between gap-4 overflow-x-auto scrollbar-hide pb-1">
+            
+            {/* Timeframes */}
+            <div className="flex gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700 shrink-0">
+                {INTERVALS.map((int) => (
+                    <button
+                        key={int.label}
+                        onClick={() => handleTimeframe(int.label, int.value, int.range)}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded-md transition-colors whitespace-nowrap
+                            ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-white"}`}
+                    >
+                    {int.label}
+                    </button>
+                ))}
             </div>
 
-            {/* Right: Controls (DESKTOP ONLY) */}
-            <div className="hidden md:flex items-center gap-4">
-                {/* Timeframes */}
-                <div className="flex gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
-                    {INTERVALS.map((int) => (
-                        <button
-                            key={int.label}
-                            onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                            className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors
-                                ${activeLabel === int.label ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:dark:text-white"}`}
-                        >
-                        {int.label}
-                        </button>
-                    ))}
-                </div>
-                {/* Indicators */}
-                <div className="flex gap-1">
-                    <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200'}`}>SMA</button>
-                    <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200'}`}>EMA</button>
-                    <button onClick={() => setShowVolume(!showVolume)} className={`px-2 py-1 text-xs font-bold rounded border ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'text-slate-400 border-slate-200'}`}>VOL</button>
-                </div>
+            {/* Indicators */}
+            <div className="flex gap-1 shrink-0">
+                <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1.5 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700'}`}>SMA</button>
+                <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1.5 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700'}`}>EMA</button>
+                <button onClick={() => setShowVolume(!showVolume)} className={`px-2 py-1.5 text-xs font-bold rounded border ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'text-slate-400 border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700'}`}>VOL</button>
             </div>
         </div>
       </div>
@@ -272,30 +278,6 @@ function TechnicalChart({ symbol }: Props) {
           </div>
         )}
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
-      </div>
-
-      {/* 3. MOBILE FOOTER TOOLBAR (Visible ONLY on Mobile) */}
-      <div className="flex md:hidden items-center justify-between p-3 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <div className="flex-1 mr-4">
-            <select 
-                value={activeLabel} 
-                onChange={(e) => {
-                    const found = INTERVALS.find(i => i.label === e.target.value)
-                    if(found) handleTimeframe(found.label, found.value, found.range)
-                }}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm rounded-lg p-2.5 outline-none font-medium"
-            >
-                {INTERVALS.map(int => (
-                    <option key={int.label} value={int.label}>{int.label}</option>
-                ))}
-            </select>
-        </div>
-        
-        <div className="flex gap-2">
-            <button onClick={() => setShowSMA(!showSMA)} className={`p-2.5 rounded-lg border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}><Activity className="h-4 w-4"/></button>
-            <button onClick={() => setShowEMA(!showEMA)} className={`p-2.5 rounded-lg border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}><Activity className="h-4 w-4"/></button>
-            <button onClick={() => setShowVolume(!showVolume)} className={`p-2.5 rounded-lg border ${showVolume ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}><BarChart2 className="h-4 w-4"/></button>
-        </div>
       </div>
 
     </div>
