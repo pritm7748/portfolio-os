@@ -55,7 +55,7 @@ function TechnicalChart({ symbol }: Props) {
       layout: {
         background: { type: ColorType.Solid, color: '#ffffff' },
         textColor: '#333',
-        attributionLogo: false, // Cleaner look
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: '#f0f0f0' },
@@ -74,7 +74,6 @@ function TechnicalChart({ symbol }: Props) {
       rightPriceScale: {
         borderColor: '#e5e7eb',
         visible: true,
-        // CRITICAL FIX: Reserve bottom 25% for volume so candles don't overlap it
         scaleMargins: { top: 0.1, bottom: 0.25 } 
       },
       handleScale: {
@@ -98,16 +97,15 @@ function TechnicalChart({ symbol }: Props) {
     const chart = createChart(chartContainerRef.current, chartOptions)
 
     // --- A. VOLUME SERIES (Bottom Layer) ---
-    // We add volume FIRST so it sits behind everything else
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: 'volume_scale', // Custom scale ID
+        priceScaleId: 'volume_scale',
+        color: '#94a3b8',
     })
     
-    // CRITICAL FIX: Configure the custom 'volume_scale' to stick to bottom 20%
     chart.priceScale('volume_scale').applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 }, 
-        visible: false // Don't show numbers for volume on Y-axis
+        visible: false
     })
     volumeSeriesRef.current = volumeSeries
 
@@ -173,11 +171,20 @@ function TechnicalChart({ symbol }: Props) {
   useEffect(() => {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         
-        // Update Series
         candleSeriesRef.current.setData(data.candles)
         
         if (showVolume) {
-            volumeSeriesRef.current.setData(data.volume)
+            // Color-code volume bars based on price movement
+            const volumeData = data.volume.map((v: any, i: number) => {
+                const candle = data.candles[i]
+                return {
+                    ...v,
+                    color: candle.close >= candle.open 
+                        ? 'rgba(34, 197, 94, 0.4)'
+                        : 'rgba(239, 68, 68, 0.4)'
+                }
+            })
+            volumeSeriesRef.current.setData(volumeData)
             volumeSeriesRef.current.applyOptions({ visible: true })
         } else {
             volumeSeriesRef.current.applyOptions({ visible: false })
@@ -197,8 +204,7 @@ function TechnicalChart({ symbol }: Props) {
             emaSeriesRef.current.applyOptions({ visible: false })
         }
 
-        // --- SMART INITIAL ZOOM ---
-        // Shows the last 100 candles by default, allowing user to scroll back
+        // Smart initial zoom
         const total = data.candles.length
         if (total > 100) {
             chartRef.current.timeScale().setVisibleLogicalRange({
@@ -216,6 +222,49 @@ function TechnicalChart({ symbol }: Props) {
       setIntervalState(val)
       setRange(rng)
   }, [])
+
+  // Mobile zoom controls
+  const handleZoomIn = useCallback(() => {
+    if (chartRef.current) {
+      const timeScale = chartRef.current.timeScale()
+      const range = timeScale.getVisibleLogicalRange()
+      if (range) {
+        const delta = (range.to - range.from) * 0.2
+        timeScale.setVisibleLogicalRange({
+          from: range.from + delta,
+          to: range.to - delta
+        })
+      }
+    }
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    if (chartRef.current) {
+      const timeScale = chartRef.current.timeScale()
+      const range = timeScale.getVisibleLogicalRange()
+      if (range) {
+        const delta = (range.to - range.from) * 0.2
+        timeScale.setVisibleLogicalRange({
+          from: range.from - delta,
+          to: range.to + delta
+        })
+      }
+    }
+  }, [])
+
+  const handleResetZoom = useCallback(() => {
+    if (chartRef.current && data?.candles) {
+      const total = data.candles.length
+      if (total > 100) {
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: total - 100,
+          to: total
+        })
+      } else {
+        chartRef.current.timeScale().fitContent()
+      }
+    }
+  }, [data])
 
   return (
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
@@ -279,6 +328,38 @@ function TechnicalChart({ symbol }: Props) {
             <span className="text-xs text-slate-500 font-medium animate-pulse">Loading market data...</span>
           </div>
         )}
+        
+        {/* Mobile Zoom Controls */}
+        <div className="md:hidden absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+          <button
+            onClick={handleZoomIn}
+            className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg p-3 shadow-lg active:scale-95 transition-transform"
+            aria-label="Zoom in"
+          >
+            <svg className="w-5 h-5 text-slate-700 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg p-3 shadow-lg active:scale-95 transition-transform"
+            aria-label="Zoom out"
+          >
+            <svg className="w-5 h-5 text-slate-700 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+            </svg>
+          </button>
+          <button
+            onClick={handleResetZoom}
+            className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg p-3 shadow-lg active:scale-95 transition-transform"
+            aria-label="Reset zoom"
+          >
+            <svg className="w-5 h-5 text-slate-700 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+        </div>
+
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
     </div>
