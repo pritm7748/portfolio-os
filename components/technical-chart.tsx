@@ -2,17 +2,16 @@
 
 import { useEffect, useRef, useState, memo } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Loader2, TrendingUp, BarChart2, Activity, Zap, Clock } from 'lucide-react'
+import { Loader2, TrendingUp, BarChart2, Activity, Zap } from 'lucide-react'
 import { calculateSMA, calculateEMA, calculateRSI } from '@/lib/indicators'
 
-// Optimized Interval Mapping for Maximum History
 const INTERVALS = [
-  { label: '1m', value: '1m', range: '7d' },   // Max ~7 days for 1m
-  { label: '5m', value: '5m', range: '60d' },  // Max ~60 days for 5m
+  { label: '1m', value: '1m', range: '7d' },
+  { label: '5m', value: '5m', range: '60d' },
   { label: '15m', value: '15m', range: '60d' },
   { label: '30m', value: '30m', range: '60d' },
-  { label: '1H', value: '60m', range: '730d' }, // 2 years
-  { label: '4H', value: '60m', range: '730d' }, // Yahoo doesn't support 4h native, using 1h
+  { label: '1H', value: '60m', range: '730d' },
+  { label: '4H', value: '60m', range: '730d' },
   { label: '1D', value: '1d', range: '10y' },
   { label: '1W', value: '1wk', range: '10y' },
   { label: '1M', value: '1mo', range: 'max' },
@@ -23,6 +22,7 @@ type Props = {
 }
 
 function TechnicalChart({ symbol }: Props) {
+  // Two separate container refs for the two charts
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const rsiContainerRef = useRef<HTMLDivElement>(null)
   
@@ -41,20 +41,20 @@ function TechnicalChart({ symbol }: Props) {
   const [activeLabel, setActiveLabel] = useState('15m')
   const [loading, setLoading] = useState(true)
   
-  // Toggles
-  const [showSMA, setShowSMA] = useState(false)
-  const [showEMA, setShowEMA] = useState(false)
-  const [showRSI, setShowRSI] = useState(true) // Default to true since we have a dedicated pane
+  // Indicators: Enabled by Default now
+  const [showSMA, setShowSMA] = useState(true)
+  const [showEMA, setShowEMA] = useState(true)
+  const [showRSI, setShowRSI] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
   
   const [legendData, setLegendData] = useState<any>(null)
 
-  // 1. Initialize Charts (Main + RSI)
+  // 1. Initialize Both Charts
   useEffect(() => {
     if (!mainContainerRef.current || !rsiContainerRef.current) return
 
-    // --- COMMON OPTIONS ---
-    const chartOptions = {
+    // Common Layout Options
+    const commonOptions = {
       layout: {
         background: { type: ColorType.Solid, color: '#ffffff' },
         textColor: '#333',
@@ -74,9 +74,9 @@ function TechnicalChart({ symbol }: Props) {
       }
     }
 
-    // Dark Mode Handling
+    // Dark Mode Override
     if (document.documentElement.classList.contains('dark')) {
-        Object.assign(chartOptions, {
+        Object.assign(commonOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
             timeScale: { borderColor: '#334155' },
@@ -84,20 +84,20 @@ function TechnicalChart({ symbol }: Props) {
         })
     }
 
-    // --- MAIN CHART ---
+    // --- A. MAIN CHART (Price + Vol + MA) ---
     const mainChart = createChart(mainContainerRef.current, {
-        ...chartOptions,
+        ...commonOptions,
         width: mainContainerRef.current.clientWidth,
-        height: 400, // Main height
+        height: 400, // Taller main section
     })
 
-    // Volume (Histogram)
+    // Volume (Overlay at bottom of main chart)
     const volumeSeries = mainChart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: '', // Overlay
+        priceScaleId: '', // Same scale as price but pushed down
     })
     volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 } // Push to bottom
+        scaleMargins: { top: 0.85, bottom: 0 }
     })
     volumeSeriesRef.current = volumeSeries
 
@@ -111,27 +111,25 @@ function TechnicalChart({ symbol }: Props) {
     })
     candleSeriesRef.current = candleSeries
 
-    // Indicators (Overlay)
+    // Moving Averages
     const smaSeries = mainChart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = mainChart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     smaSeriesRef.current = smaSeries
     emaSeriesRef.current = emaSeries
 
-    // --- RSI CHART (Separate Pane) ---
+    // --- B. RSI CHART (Separate Bottom Pane) ---
     const rsiChart = createChart(rsiContainerRef.current, {
-        ...chartOptions,
+        ...commonOptions,
         width: rsiContainerRef.current.clientWidth,
-        height: 150, // Small height
-        timeScale: { visible: true, timeVisible: true, borderColor: '#e5e7eb' },
+        height: 150, // Shorter dedicated pane
     })
     
-    // RSI Line
     const rsiSeries = rsiChart.addSeries(LineSeries, { 
         color: '#8b5cf6', 
         lineWidth: 2,
         title: 'RSI 14'
     })
-    // RSI Reference Lines (70/30)
+    // Add 70/30 Reference Lines
     rsiSeries.createPriceLine({ price: 70, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' })
     rsiSeries.createPriceLine({ price: 30, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' })
     
@@ -140,8 +138,7 @@ function TechnicalChart({ symbol }: Props) {
     mainChartRef.current = mainChart
     rsiChartRef.current = rsiChart
 
-    // --- SYNCHRONIZATION LOGIC ---
-    // Sync Time Scale (Scrolling)
+    // --- C. SYNC SCROLLING (Critical for "One Chart" feel) ---
     const mainTimeScale = mainChart.timeScale()
     const rsiTimeScale = rsiChart.timeScale()
 
@@ -153,7 +150,7 @@ function TechnicalChart({ symbol }: Props) {
         if (range) mainTimeScale.setVisibleRange(range)
     })
 
-    // Sync Crosshair (Hover)
+    // --- D. SYNC CROSSHAIR (Hover effect) ---
     mainChart.subscribeCrosshairMove((param) => {
         if (param.time) {
             rsiChart.setCrosshairPosition(0, param.time, rsiSeries)
@@ -185,7 +182,6 @@ function TechnicalChart({ symbol }: Props) {
     rsiChart.subscribeCrosshairMove((param) => {
         if (param.time) {
             mainChart.setCrosshairPosition(0, param.time, candleSeries)
-            // RSI Legend Update
             const r = param.seriesData.get(rsiSeries) as any
             if (r) {
                 setLegendData((prev: any) => ({ ...prev, rsi: r.value }))
@@ -195,6 +191,7 @@ function TechnicalChart({ symbol }: Props) {
         }
     })
 
+    // Resize Handler
     const handleResize = () => {
       if (mainContainerRef.current && mainChartRef.current && rsiContainerRef.current && rsiChartRef.current) {
         const w = mainContainerRef.current.clientWidth
@@ -209,9 +206,9 @@ function TechnicalChart({ symbol }: Props) {
       mainChart.remove()
       rsiChart.remove()
     }
-  }, []) // Initialize once
+  }, [])
 
-  // 2. Data Fetch & Update
+  // 2. Fetch Data
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)
@@ -272,7 +269,7 @@ function TechnicalChart({ symbol }: Props) {
     fetchData()
   }, [symbol, interval, range, showSMA, showEMA, showRSI, showVolume])
 
-  // Helper to handle Timeframe Click
+  // Helper
   const handleTimeframe = (lbl: string, val: string, rng: string) => {
       setActiveLabel(lbl)
       setIntervalState(val)
@@ -284,8 +281,6 @@ function TechnicalChart({ symbol }: Props) {
       
       {/* TOOLBAR */}
       <div className="flex flex-wrap items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-2">
-        
-        {/* Symbol & Legend */}
         <div className="flex flex-col min-w-[200px]">
             <div className="flex items-center gap-2">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
@@ -306,7 +301,6 @@ function TechnicalChart({ symbol }: Props) {
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
-            {/* Timeframe Buttons */}
             <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
                 {INTERVALS.map((int) => (
                     <button
@@ -323,7 +317,6 @@ function TechnicalChart({ symbol }: Props) {
                 ))}
             </div>
 
-            {/* Indicators */}
             <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-800 pl-3">
                 <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 rounded text-[10px] font-bold border ${showSMA ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>SMA</button>
                 <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 rounded text-[10px] font-bold border ${showEMA ? 'bg-amber-100 border-amber-300 text-amber-700' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>EMA</button>
@@ -333,7 +326,7 @@ function TechnicalChart({ symbol }: Props) {
         </div>
       </div>
 
-      {/* CHARTS CONTAINER */}
+      {/* CHARTS WRAPPER */}
       <div className="relative flex-1 w-full bg-white dark:bg-slate-900 flex flex-col">
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
@@ -345,7 +338,7 @@ function TechnicalChart({ symbol }: Props) {
         {/* Main Price Chart */}
         <div ref={mainContainerRef} className="w-full flex-1 min-h-[350px]" />
         
-        {/* RSI Chart (Conditional Render via CSS to keep instance alive) */}
+        {/* RSI Chart (Physically separate below) */}
         <div 
             ref={rsiContainerRef} 
             className={`w-full h-[150px] border-t border-slate-100 dark:border-slate-800 transition-all ${!showRSI ? 'hidden' : 'block'}`} 
