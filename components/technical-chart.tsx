@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, memo } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Loader2, TrendingUp, BarChart2, Activity, Zap } from 'lucide-react'
+import { Loader2, TrendingUp, BarChart2, Activity } from 'lucide-react'
 import { calculateSMA, calculateEMA } from '@/lib/indicators'
 
 // Exact Timeframes Requested
@@ -37,7 +37,7 @@ function TechnicalChart({ symbol }: Props) {
   const [activeLabel, setActiveLabel] = useState('1D')
   const [loading, setLoading] = useState(true)
   
-  // Indicators
+  // Indicators (Default: TRUE)
   const [showSMA, setShowSMA] = useState(true)
   const [showEMA, setShowEMA] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
@@ -67,10 +67,11 @@ function TechnicalChart({ symbol }: Props) {
       },
       rightPriceScale: {
         borderColor: '#e5e7eb',
-        scaleMargins: { top: 0.1, bottom: 0.2 } // Space for volume
+        scaleMargins: { top: 0.1, bottom: 0.2 } // Leave space for volume
       }
     }
 
+    // Dark Mode Support
     if (document.documentElement.classList.contains('dark')) {
         Object.assign(chartOptions, {
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
@@ -82,17 +83,17 @@ function TechnicalChart({ symbol }: Props) {
 
     const chart = createChart(chartContainerRef.current, chartOptions)
 
-    // A. Volume (Added first to be behind candles)
+    // A. Volume (Layer 0 - Bottom)
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: '', 
+        priceScaleId: '', // Overlay mode
     })
     volumeSeries.priceScale().applyOptions({
         scaleMargins: { top: 0.8, bottom: 0 }
     })
     volumeSeriesRef.current = volumeSeries
 
-    // B. Candles
+    // B. Candles (Layer 1 - Main)
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -102,7 +103,7 @@ function TechnicalChart({ symbol }: Props) {
     })
     candleSeriesRef.current = candleSeries
 
-    // C. Indicators
+    // C. Indicators (Layer 2 - Lines)
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     smaSeriesRef.current = smaSeries
@@ -146,7 +147,7 @@ function TechnicalChart({ symbol }: Props) {
         window.removeEventListener('resize', handleResize)
         chart.remove()
     }
-  }, [])
+  }, []) // Init once
 
   // 2. Fetch Data
   useEffect(() => {
@@ -186,10 +187,10 @@ function TechnicalChart({ symbol }: Props) {
                 emaSeriesRef.current.applyOptions({ visible: false })
             }
 
-            // Force Fit (Timeout ensures DOM is ready)
+            // AUTO-FIT FIX: Small timeout to ensure chart renders correctly on first load
             setTimeout(() => {
                 chartRef.current?.timeScale().fitContent()
-            }, 50)
+            }, 100)
         }
       } catch (err) {
         console.error("Chart fetch error", err)
@@ -211,8 +212,9 @@ function TechnicalChart({ symbol }: Props) {
     <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
       {/* TOOLBAR */}
-      <div className="flex flex-wrap items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4">
         
+        {/* Symbol Info */}
         <div className="flex flex-col min-w-[200px]">
             <div className="flex items-center gap-2">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
@@ -234,13 +236,15 @@ function TechnicalChart({ symbol }: Props) {
             </div>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3">
-            <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
+        {/* CONTROLS (Scrollable on Mobile) */}
+        <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 w-full md:w-auto scrollbar-hide">
+            {/* Timeframe Buttons */}
+            <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1 shrink-0">
                 {INTERVALS.map((int) => (
                     <button
                         key={int.label}
                         onClick={() => handleTimeframe(int.label, int.value, int.range)}
-                        className={`px-2 py-1 text-[10px] font-bold rounded uppercase transition-colors
+                        className={`px-2.5 py-1 text-[10px] font-bold rounded uppercase transition-colors whitespace-nowrap
                             ${activeLabel === int.label
                             ? "bg-indigo-600 text-white shadow-sm" 
                             : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
@@ -251,16 +255,17 @@ function TechnicalChart({ symbol }: Props) {
                 ))}
             </div>
 
-            <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-800 pl-3">
-                <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 rounded text-[10px] font-bold border ${showSMA ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>SMA</button>
-                <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 rounded text-[10px] font-bold border ${showEMA ? 'bg-amber-100 border-amber-300 text-amber-700' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>EMA</button>
-                <button onClick={() => setShowVolume(!showVolume)} className={`px-2 py-1 rounded text-[10px] font-bold border ${showVolume ? 'bg-slate-200 border-slate-300 text-slate-700' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>VOL</button>
+            {/* Indicators */}
+            <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-800 pl-3 shrink-0">
+                <button onClick={() => setShowSMA(!showSMA)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>SMA</button>
+                <button onClick={() => setShowEMA(!showEMA)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>EMA</button>
+                <button onClick={() => setShowVolume(!showVolume)} className={`px-2.5 py-1.5 rounded text-[10px] font-bold border transition-colors ${showVolume ? 'bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300' : 'bg-transparent border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>VOL</button>
             </div>
         </div>
       </div>
 
-      {/* CHART CONTAINER */}
-      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 flex flex-col min-h-[500px]">
+      {/* CHART CANVAS */}
+      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 min-h-[500px]">
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
             <Loader2 className="animate-spin text-indigo-500 mb-2" size={32} />
