@@ -2,17 +2,17 @@
 
 import { useEffect, useRef, useState, memo } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Loader2, TrendingUp, BarChart2, Activity } from 'lucide-react'
-import { calculateSMA, calculateEMA } from '@/lib/indicators'
+import { Loader2, TrendingUp, BarChart2, Activity, Zap } from 'lucide-react'
+import { calculateSMA, calculateEMA, calculateRSI } from '@/lib/indicators'
 
 const INTERVALS = [
   { label: '1m', value: '1m', range: '1d' },
   { label: '5m', value: '5m', range: '5d' },
   { label: '15m', value: '15m', range: '5d' },
-  { label: '1H', value: '60m', range: '1mo' },
-  { label: '4H', value: '60m', range: '3mo' }, // Yahoo approximation
-  { label: '1D', value: '1d', range: '1y' },
+  { label: '1H', value: '60m', range: '3mo' },
+  { label: '1D', value: '1d', range: '2y' },
   { label: '1W', value: '1wk', range: '5y' },
+  { label: 'ALL', value: '1mo', range: 'max' }, // All Time
 ]
 
 type Props = {
@@ -28,15 +28,19 @@ function TechnicalChart({ symbol }: Props) {
   const volumeSeriesRef = useRef<any>(null)
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
+  const rsiSeriesRef = useRef<any>(null)
 
-  const [interval, setIntervalState] = useState('15m')
-  const [range, setRange] = useState('5d')
+  const [interval, setIntervalState] = useState('1D')
+  const [range, setRange] = useState('2y')
   const [loading, setLoading] = useState(true)
   
   // Indicator Toggles
   const [showSMA, setShowSMA] = useState(false)
   const [showEMA, setShowEMA] = useState(false)
-  const [showVolume, setShowVolume] = useState(true)
+  const [showRSI, setShowRSI] = useState(false)
+  
+  // Dynamic Legend State
+  const [legendData, setLegendData] = useState<any>(null)
 
   // 1. Initialize Chart
   useEffect(() => {
@@ -44,7 +48,7 @@ function TechnicalChart({ symbol }: Props) {
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#ffffff' }, // Will handle dark mode later if needed
+        background: { type: ColorType.Solid, color: '#ffffff' },
         textColor: '#333',
       },
       grid: {
@@ -52,7 +56,7 @@ function TechnicalChart({ symbol }: Props) {
         horzLines: { color: '#f0f0f0' },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 500,
+      height: 550, // Taller for indicators
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
         timeVisible: true,
@@ -60,13 +64,13 @@ function TechnicalChart({ symbol }: Props) {
         borderColor: '#e5e7eb'
       },
       rightPriceScale: {
-        borderColor: '#e5e7eb'
+        borderColor: '#e5e7eb',
+        scaleMargins: { top: 0.1, bottom: 0.2 } // Leave space for volume
       }
     })
 
-    // Handle Dark Mode dynamically
-    const isDark = document.documentElement.classList.contains('dark')
-    if (isDark) {
+    // Dark Mode Handling
+    if (document.documentElement.classList.contains('dark')) {
         chart.applyOptions({
             layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
@@ -75,18 +79,17 @@ function TechnicalChart({ symbol }: Props) {
         })
     }
 
-    // A. Volume Series (Histogram) - Added first so it sits behind candles
+    // A. Volume (Bottom Layer)
     const volumeSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
-        priceScaleId: '', // Overlay on same scale but scaled down
+        priceScaleId: '', // Overlay
     })
-    // Scale volume to sit at bottom 15% of chart
     volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 }
+        scaleMargins: { top: 0.85, bottom: 0 } // Push to very bottom
     })
     volumeSeriesRef.current = volumeSeries
 
-    // B. Candle Series
+    // B. Candles (Main)
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -100,10 +103,57 @@ function TechnicalChart({ symbol }: Props) {
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20' })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50' })
     
+    // RSI: Use Left Scale to avoid messing up price
+    const rsiSeries = chart.addSeries(LineSeries, { 
+        color: '#8b5cf6', 
+        lineWidth: 2, 
+        priceScaleId: 'left', // Separate scale
+        title: 'RSI 14'
+    })
+    
+    // Configure RSI Scale (0-100)
+    chart.priceScale('left').applyOptions({
+        visible: false, // Hide the numbers to keep it clean, or true if you want to see 0-100
+        scaleMargins: { top: 0.7, bottom: 0 } // Position it at bottom overlaying volume
+    })
+
     smaSeriesRef.current = smaSeries
     emaSeriesRef.current = emaSeries
-
+    rsiSeriesRef.current = rsiSeries
     chartRef.current = chart
+
+    // --- CROSSHAIR LISTENER (THE LEGEND) ---
+    chart.subscribeCrosshairMove((param) => {
+        if (param.time) {
+            const data: any = {}
+            // Get Candle Data
+            const candle = param.seriesData.get(candleSeries) as any
+            if (candle) {
+                data.open = candle.open; data.high = candle.high; 
+                data.low = candle.low; data.close = candle.close;
+                // Format Date
+                const dateObj = new Date(Number(param.time) * 1000)
+                data.date = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })
+            }
+            
+            // Get Indicators
+            if (showSMA) {
+                const sma = param.seriesData.get(smaSeries) as any
+                if (sma) data.sma = sma.value
+            }
+            if (showEMA) {
+                const ema = param.seriesData.get(emaSeries) as any
+                if (ema) data.ema = ema.value
+            }
+            if (showRSI) {
+                const rsi = param.seriesData.get(rsiSeries) as any
+                if (rsi) data.rsi = rsi.value
+            }
+            setLegendData(data)
+        } else {
+            setLegendData(null)
+        }
+    })
 
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
@@ -116,7 +166,7 @@ function TechnicalChart({ symbol }: Props) {
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [])
+  }, [showSMA, showEMA, showRSI])
 
   // 2. Fetch & Update Data
   useEffect(() => {
@@ -130,18 +180,11 @@ function TechnicalChart({ symbol }: Props) {
         const data = await res.json()
         
         if (data.candles && chartRef.current) {
-            // Update Candles
+            // Update Candles & Volume
             candleSeriesRef.current.setData(data.candles)
-            
-            // Update Volume
-            if (showVolume) {
-                volumeSeriesRef.current.setData(data.volume)
-                volumeSeriesRef.current.applyOptions({ visible: true })
-            } else {
-                volumeSeriesRef.current.applyOptions({ visible: false })
-            }
+            volumeSeriesRef.current.setData(data.volume)
 
-            // Calculate & Update SMA (Period 20)
+            // Indicators Calculation
             if (showSMA) {
                 const smaData = calculateSMA(data.candles, 20)
                 smaSeriesRef.current.setData(smaData)
@@ -150,13 +193,23 @@ function TechnicalChart({ symbol }: Props) {
                 smaSeriesRef.current.applyOptions({ visible: false })
             }
 
-            // Calculate & Update EMA (Period 50)
             if (showEMA) {
                 const emaData = calculateEMA(data.candles, 50)
                 emaSeriesRef.current.setData(emaData)
                 emaSeriesRef.current.applyOptions({ visible: true })
             } else {
                 emaSeriesRef.current.applyOptions({ visible: false })
+            }
+
+            if (showRSI) {
+                const rsiData = calculateRSI(data.candles, 14)
+                rsiSeriesRef.current.setData(rsiData)
+                rsiSeriesRef.current.applyOptions({ visible: true })
+                // Make left scale visible if RSI is on
+                chartRef.current.priceScale('left').applyOptions({ visible: true })
+            } else {
+                rsiSeriesRef.current.applyOptions({ visible: false })
+                chartRef.current.priceScale('left').applyOptions({ visible: false })
             }
 
             chartRef.current.timeScale().fitContent()
@@ -169,37 +222,56 @@ function TechnicalChart({ symbol }: Props) {
     }
 
     fetchData()
-  }, [symbol, interval, range, showSMA, showEMA, showVolume])
+  }, [symbol, interval, range, showSMA, showEMA, showRSI])
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
       
       {/* TOOLBAR */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-4">
+      <div className="flex flex-wrap items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 gap-2">
         
-        {/* Symbol Info */}
-        <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                <TrendingUp className="h-5 w-5" />
+        {/* Symbol & Live Legend */}
+        <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+                <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
+                {legendData && (
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                        {legendData.date}
+                    </span>
+                )}
             </div>
-            <div>
-                <h3 className="font-bold text-slate-900 dark:text-white leading-none">{symbol}</h3>
-                <span className="text-[10px] font-mono text-slate-500 uppercase">Yahoo Finance Data</span>
+            
+            {/* THE LEGEND OVERLAY (Always Visible Logic) */}
+            <div className="flex items-center gap-4 text-xs font-mono mt-1 h-4">
+                {legendData ? (
+                    <>
+                        <span className="text-slate-600 dark:text-slate-300">O: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.open}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">H: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.high}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">L: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.low}</span></span>
+                        <span className="text-slate-600 dark:text-slate-300">C: <span className={legendData.open > legendData.close ? 'text-red-500' : 'text-green-500'}>{legendData.close}</span></span>
+                        
+                        {showSMA && legendData.sma && <span className="text-blue-500">SMA: {legendData.sma.toFixed(2)}</span>}
+                        {showEMA && legendData.ema && <span className="text-amber-500">EMA: {legendData.ema.toFixed(2)}</span>}
+                        {showRSI && legendData.rsi && <span className="text-purple-500">RSI: {legendData.rsi.toFixed(2)}</span>}
+                    </>
+                ) : (
+                    <span className="text-slate-400 italic">Hover over chart for details</span>
+                )}
             </div>
         </div>
         
-        {/* Controls Container */}
-        <div className="flex flex-wrap items-center gap-2 md:gap-4">
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-2">
             
-            {/* Timeframe Selector */}
+            {/* Timeframe */}
             <div className="flex bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-1">
             {INTERVALS.map((int) => (
                 <button
                 key={int.value + int.range}
                 onClick={() => { setIntervalState(int.value); setRange(int.range); }}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-md transition-all uppercase
                     ${interval === int.value 
-                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 font-bold" 
+                    ? "bg-indigo-600 text-white shadow-sm" 
                     : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                 >
@@ -208,33 +280,18 @@ function TechnicalChart({ symbol }: Props) {
             ))}
             </div>
 
-            {/* Indicators Toggles */}
-            <div className="flex items-center gap-2">
-                <button 
-                    onClick={() => setShowSMA(!showSMA)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}
-                >
-                    <Activity className="h-3 w-3" /> SMA 20
-                </button>
-                <button 
-                    onClick={() => setShowEMA(!showEMA)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}
-                >
-                    <Activity className="h-3 w-3" /> EMA 50
-                </button>
-                <button 
-                    onClick={() => setShowVolume(!showVolume)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all flex items-center gap-1.5 ${showVolume ? 'bg-slate-100 border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}
-                >
-                    <BarChart2 className="h-3 w-3" /> Vol
-                </button>
+            {/* Indicators */}
+            <div className="flex items-center gap-1">
+                <button onClick={() => setShowSMA(!showSMA)} className={`p-1.5 rounded text-xs font-bold border ${showSMA ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}>SMA</button>
+                <button onClick={() => setShowEMA(!showEMA)} className={`p-1.5 rounded text-xs font-bold border ${showEMA ? 'bg-amber-100 border-amber-300 text-amber-700' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}>EMA</button>
+                <button onClick={() => setShowRSI(!showRSI)} className={`p-1.5 rounded text-xs font-bold border ${showRSI ? 'bg-purple-100 border-purple-300 text-purple-700' : 'bg-white border-slate-200 text-slate-500 dark:bg-slate-900 dark:border-slate-800'}`}>RSI</button>
             </div>
 
         </div>
       </div>
 
       {/* CHART CANVAS */}
-      <div className="relative h-[500px] w-full bg-white dark:bg-slate-900">
+      <div className="relative flex-1 w-full bg-white dark:bg-slate-900 min-h-[500px]">
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-10 backdrop-blur-[1px]">
             <Loader2 className="animate-spin text-indigo-500 mb-2" size={32} />

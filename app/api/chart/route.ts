@@ -21,23 +21,18 @@ export async function POST(request: Request) {
     // 1. Resolve Symbol
     let yahooTicker = symbol.toUpperCase().trim()
     
-    // Check Map first
     if (SYMBOL_MAP[yahooTicker]) {
         yahooTicker = SYMBOL_MAP[yahooTicker]
     } 
-    // Handle Commodities
     else if (yahooTicker.startsWith('COMMODITY:')) {
         if (yahooTicker.includes('GOLD')) yahooTicker = 'GC=F'
         else if (yahooTicker.includes('SILVER')) yahooTicker = 'SI=F'
     }
-    // Auto-append .NS for stocks if missing (and not an index/future)
     else if (!yahooTicker.includes('.') && !yahooTicker.startsWith('^') && !yahooTicker.includes('=')) {
         yahooTicker += '.NS'
     }
 
     // 2. Fetch from Yahoo Finance
-    // console.log(`Fetching Chart: ${yahooTicker} | Int: ${interval} | Rng: ${range}`)
-    
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?range=${range}&interval=${interval}`
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
     
@@ -50,7 +45,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Data not found', candles: [], volume: [] })
     }
 
-    // 3. Transform Data for Lightweight Charts
+    // 3. Transform Data
     const timestamp = result.timestamp || []
     const quote = result.indicators?.quote?.[0] || {}
     
@@ -64,12 +59,10 @@ export async function POST(request: Request) {
     const volumeData = []
 
     for (let i = 0; i < timestamp.length; i++) {
-        // Skip incomplete candles (null values)
-        if (opens[i] === null || closes[i] === null || highs[i] === null || lows[i] === null) continue
+        if (opens[i] === null || closes[i] === null) continue
 
-        const time = timestamp[i] // Unix Timestamp (seconds)
+        const time = timestamp[i] 
 
-        // Candle Series Format
         candleData.push({
             time: time,
             open: Number(opens[i].toFixed(2)),
@@ -78,16 +71,16 @@ export async function POST(request: Request) {
             close: Number(closes[i].toFixed(2))
         })
 
-        // Volume Series Format
+        // Volume Logic: Green if Close > Open
         const isGreen = closes[i] >= opens[i]
         volumeData.push({
             time: time,
             value: volumes[i] || 0,
-            color: isGreen ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'
+            color: isGreen ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)' 
         })
     }
 
-    // Sort to ensure time is ascending (Yahoo usually does this, but safety first)
+    // Ensure ascending sort
     candleData.sort((a, b) => a.time - b.time)
     volumeData.sort((a, b) => a.time - b.time)
 
