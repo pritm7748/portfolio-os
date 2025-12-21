@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, memo, useCallback } from 'react'
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Activity, BarChart2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { calculateSMA, calculateEMA } from '@/lib/indicators'
 import { useChartData } from '@/hooks/use-portfolio-data'
 
@@ -22,23 +22,28 @@ function DesktopChart({ symbol }: { symbol: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<any>(null)
   
+  // Series Refs
   const candleSeriesRef = useRef<any>(null)
   const volumeSeriesRef = useRef<any>(null)
   const smaSeriesRef = useRef<any>(null)
   const emaSeriesRef = useRef<any>(null)
 
+  // State
   const [interval, setIntervalState] = useState('15m')
   const [range, setRange] = useState('60d')
   const [activeLabel, setActiveLabel] = useState('15m')
   
+  // Indicators
   const [showSMA, setShowSMA] = useState(true)
   const [showEMA, setShowEMA] = useState(true)
   const [showVolume, setShowVolume] = useState(true)
   
   const [legendData, setLegendData] = useState<any>(null)
 
+  // Data Hook
   const { data, isLoading } = useChartData(symbol, interval, range)
 
+  // 1. Initialize Chart
   useEffect(() => {
     if (!chartContainerRef.current) return
 
@@ -53,7 +58,7 @@ function DesktopChart({ symbol }: { symbol: string }) {
         horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 500,
+      height: 500, // Fixed Desktop Height
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
         visible: true,
@@ -62,14 +67,15 @@ function DesktopChart({ symbol }: { symbol: string }) {
         borderColor: 'rgba(197, 203, 206, 0.3)',
         rightOffset: 12,
         barSpacing: 6,
-        fixRightEdge: true, // <--- THE FIX FOR WHITESPACE
+        fixRightEdge: true, // <--- Added as requested to stop scrolling whitespace
       },
+      // MAIN PRICE SCALE (Candles) - Top 75%
       rightPriceScale: {
         borderColor: 'rgba(197, 203, 206, 0.3)',
         visible: true,
         scaleMargins: {
             top: 0.05,    
-            bottom: 0.25 
+            bottom: 0.25 // Reserve strictly bottom 25% for Volume
         }
       },
       handleScale: { axisPressedMouseMove: true },
@@ -82,26 +88,29 @@ function DesktopChart({ symbol }: { symbol: string }) {
 
     const chart = createChart(chartContainerRef.current, chartOptions)
 
-    // VOLUME (Bottom 25%)
+    // A. VOLUME (Bottom 25%)
     const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: '#26a69a',
+        color: '#26a69a', // Default Green
         priceFormat: { type: 'volume' },
         priceScaleId: 'vol_scale',
     })
     chart.priceScale('vol_scale').applyOptions({
-        scaleMargins: { top: 0.75, bottom: 0 }, 
+        scaleMargins: { top: 0.75, bottom: 0 }, // Starts at 75% height
         visible: false 
     })
     volumeSeriesRef.current = volumeSeries
 
-    // CANDLES
+    // B. CANDLES
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e', downColor: '#ef4444',
-      borderVisible: false, wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
     })
     candleSeriesRef.current = candleSeries
 
-    // INDICATORS
+    // C. INDICATORS
     const smaSeries = chart.addSeries(LineSeries, { color: '#3b82f6', lineWidth: 2, title: 'SMA 20', lastValueVisible: false, priceLineVisible: false })
     const emaSeries = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 2, title: 'EMA 50', lastValueVisible: false, priceLineVisible: false })
     smaSeriesRef.current = smaSeries
@@ -109,6 +118,7 @@ function DesktopChart({ symbol }: { symbol: string }) {
 
     chartRef.current = chart
 
+    // --- LEGEND LOGIC ---
     chart.subscribeCrosshairMove((param) => {
         if (param.time) {
             const data: any = {}
@@ -119,10 +129,19 @@ function DesktopChart({ symbol }: { symbol: string }) {
                 data.open = candle.open; data.high = candle.high; 
                 data.low = candle.low; data.close = candle.close;
                 data.isUp = candle.close >= candle.open;
+                
+                // Date Format: "12 Oct 2025, 14:30"
                 const dateObj = new Date(Number(param.time) * 1000)
-                data.date = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit' })
+                data.date = dateObj.toLocaleDateString('en-GB', {
+                    day: 'numeric', 
+                    month: 'short', 
+                    year: 'numeric', // <--- Included Year
+                    hour: '2-digit', 
+                    minute:'2-digit' 
+                })
             }
             if (volume) data.volume = volume.value
+            
             setLegendData(data)
         } else {
             setLegendData(null)
@@ -143,13 +162,16 @@ function DesktopChart({ symbol }: { symbol: string }) {
     }
   }, [])
 
+  // 2. Data Logic
   useEffect(() => {
     if (data?.candles && data.candles.length > 0 && chartRef.current) {
         candleSeriesRef.current.setData(data.candles)
         
+        // Ensure Volume visibility with colors
         if (showVolume) {
             volumeSeriesRef.current.setData(data.volume.map((v: any) => ({
-                ...v, color: v.color || (v.close >= v.open ? '#26a69a' : '#ef5350')
+                ...v,
+                color: v.color || (v.close >= v.open ? '#26a69a' : '#ef5350')
             })))
             volumeSeriesRef.current.applyOptions({ visible: true })
         } else {
@@ -195,13 +217,18 @@ function DesktopChart({ symbol }: { symbol: string }) {
   const valColor = (isUp: boolean) => isUp ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-[500px]">
+    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-[560px]">
+      
+      {/* DESKTOP HEADER (Always Visible for this component) */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
+        
+        {/* Left: Symbol & Legend */}
         <div className="flex flex-col">
             <div className="flex items-baseline gap-3">
                 <h3 className="font-bold text-slate-900 dark:text-white text-lg">{symbol}</h3>
                 {legendData && <span className="text-xs font-mono text-slate-500">{legendData.date}</span>}
             </div>
+            {/* Desktop OHLCV */}
             <div className="flex gap-4 text-xs font-mono mt-1 text-slate-600 dark:text-slate-400">
                 {legendData ? (
                     <>
@@ -215,7 +242,9 @@ function DesktopChart({ symbol }: { symbol: string }) {
             </div>
         </div>
 
+        {/* Right: Desktop Controls */}
         <div className="flex items-center gap-4">
+            {/* Timeframes */}
             <div className="flex gap-1 bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                 {INTERVALS.map((int) => (
                     <button
@@ -228,6 +257,7 @@ function DesktopChart({ symbol }: { symbol: string }) {
                     </button>
                 ))}
             </div>
+            {/* Indicators */}
             <div className="flex gap-1">
                 <button onClick={() => setShowSMA(!showSMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showSMA ? 'bg-blue-50 border-blue-200 text-blue-600' : 'text-slate-400 border-slate-200'}`}>SMA</button>
                 <button onClick={() => setShowEMA(!showEMA)} className={`px-2 py-1 text-xs font-bold rounded border ${showEMA ? 'bg-amber-50 border-amber-200 text-amber-600' : 'text-slate-400 border-slate-200'}`}>EMA</button>
@@ -236,7 +266,14 @@ function DesktopChart({ symbol }: { symbol: string }) {
         </div>
       </div>
 
+      {/* CHART CANVAS */}
       <div className="relative flex-1 w-full bg-white dark:bg-slate-900 touch-none overflow-hidden min-h-[350px]">
+        {isLoading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-900/80 z-20 backdrop-blur-[1px]">
+            <Loader2 className="animate-spin text-indigo-500 mb-2" size={32} />
+            <span className="text-xs text-slate-500 font-medium animate-pulse">Loading market data...</span>
+          </div>
+        )}
         <div ref={chartContainerRef} className="w-full h-full cursor-crosshair" />
       </div>
     </div>
