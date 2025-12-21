@@ -280,4 +280,4 @@ function DesktopChart({ symbol }: { symbol: string }) {
   )
 }
 
-export default memo(DesktopChart)
+export default memo(DesktopChart) 
