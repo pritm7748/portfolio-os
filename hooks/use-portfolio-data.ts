@@ -322,3 +322,21 @@ export function useActiveAssets() {
         return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
     }, [transactions, watchlist])
 }
+
+export function useChartData(symbol: string, interval: string, range: string) {
+    return useQuery({
+        queryKey: ['chart', symbol, interval, range],
+        queryFn: async () => {
+            const res = await fetch('/api/chart', {
+                method: 'POST',
+                body: JSON.stringify({ symbol, interval, range })
+            })
+            if (!res.ok) throw new Error('Chart fetch failed')
+            return res.json()
+        },
+        enabled: !!symbol,
+        staleTime: 1 * 60 * 1000, // Cache 1 minute for intraday
+        gcTime: 5 * 60 * 1000,    // Keep unused data for 5 minutes
+        refetchOnWindowFocus: false
+    })
+}
