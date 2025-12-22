@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { Search, Trash2, Loader2, Plus, X, Bell, Folder, Edit2, Check } from 'lucide-react'
+import { Search, Trash2, Loader2, Plus, Bell, Folder, Edit2, Check } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import AlertModal from '@/components/alert-modal'
 import { useWatchlists, useWatchlist, useLivePrices } from '@/hooks/use-portfolio-data'
@@ -29,12 +29,16 @@ export default function WatchlistPage() {
   const [isSearching, setIsSearching] = useState(false)
   const [alertAsset, setAlertAsset] = useState<{ticker: string, price: number} | null>(null)
 
-  // Set default list on load
+  // Set default list on load (Selects first available list)
   useEffect(() => {
       if (watchlists && watchlists.length > 0 && !activeListId) {
           setActiveListId(watchlists[0].id)
+      } else if (watchlists && watchlists.length > 0 && activeListId) {
+          // Verify active list still exists
+          const exists = watchlists.find(w => w.id === activeListId)
+          if (!exists) setActiveListId(watchlists[0].id)
       }
-  }, [watchlists])
+  }, [watchlists, activeListId])
 
   // Fetch Items & Prices
   const { data: watchlistItems, isLoading: itemsLoading } = useWatchlist(activeListId || undefined)
@@ -89,7 +93,7 @@ export default function WatchlistPage() {
       setQuery(''); setSearchResults([])
   }
 
-  // --- LIST MANAGEMENT (Create, Rename, Delete) ---
+  // --- LIST MANAGEMENT ---
 
   const createNewList = async () => {
       if (!newListName.trim()) return
@@ -118,16 +122,15 @@ export default function WatchlistPage() {
 
   const deleteList = async (id: number, e: React.MouseEvent) => {
       e.stopPropagation()
-      if (!confirm("Delete this watchlist? All items inside it will also be removed.")) return
+      // Simplified confirmation
+      if (!confirm("Delete this watchlist?")) return
       
       await supabase.from('watchlists').delete().eq('id', id)
-      queryClient.invalidateQueries({ queryKey: ['watchlists_groups'] })
       
-      // If we deleted the active list, switch to the first available one (usually Main)
-      if (activeListId === id) {
-          const main = watchlists?.find(w => w.name === 'Main Watchlist')
-          setActiveListId(main ? main.id : null)
-      }
+      // If deleting the active list, nullify selection so useEffect picks a new one
+      if (activeListId === id) setActiveListId(null)
+      
+      queryClient.invalidateQueries({ queryKey: ['watchlists_groups'] })
   }
 
   const removeItem = async (id: number) => {
@@ -169,7 +172,6 @@ export default function WatchlistPage() {
               {watchlists?.map(list => {
                   const isEditing = editingListId === list.id
                   const isActive = activeListId === list.id
-                  const isMain = list.name === 'Main Watchlist'
 
                   return (
                     <div 
@@ -202,8 +204,8 @@ export default function WatchlistPage() {
                             )}
                         </div>
 
-                        {/* ACTION BUTTONS (Rename / Delete) */}
-                        {!isMain && !isEditing && (
+                        {/* ACTION BUTTONS (Rename / Delete) - UNLOCKED FOR ALL LISTS */}
+                        {!isEditing && (
                             <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button onClick={(e) => startRenaming(e, list.id, list.name)} className="p-1 hover:text-indigo-500 rounded"><Edit2 className="h-3 w-3" /></button>
                                 <button onClick={(e) => deleteList(list.id, e)} className="p-1 hover:text-red-500 rounded"><Trash2 className="h-3 w-3" /></button>
