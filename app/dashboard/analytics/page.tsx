@@ -255,7 +255,9 @@ export default function AnalyticsPage() {
                 const d = point.date
                 allDatesSet.add(d) 
                 if (!priceLookup[d]) priceLookup[d] = {}
-                priceLookup[d][ticker] = point.price 
+                
+                // --- THE FIX: Use 'point.value' instead of 'point.price' ---
+                priceLookup[d][ticker] = point.value || point.price || 0 
             })
         })
         const sortedDates = Array.from(allDatesSet).sort()
