@@ -26,6 +26,7 @@ export type Transaction = {
 
 export type WatchlistItem = {
     id: number
+    watchlist_id: number
     ticker: string
     name: string
     asset_type: string
@@ -40,6 +41,12 @@ export type PriceAlert = {
     is_active: boolean
     created_at: string
     triggered_at: string | null
+}
+
+export type WatchlistGroup = {
+    id: number
+    name: string
+    created_at: string
 }
 
 // --- 1. Transactions Hook (Core Data) ---
@@ -114,24 +121,24 @@ export function useDividends(tickers: string[]) {
 }
 
 // --- 4. Watchlist Hook (New) ---
-export function useWatchlist() {
+export function useWatchlist(watchlistId?: number) {
     const supabase = createClient()
-    
     return useQuery({
-        queryKey: ['watchlist'],
+        queryKey: ['watchlist', watchlistId],
         queryFn: async () => {
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) throw new Error('No user')
+            if (!watchlistId) return []
             
             const { data, error } = await supabase
                 .from('watchlist')
                 .select('*')
+                .eq('watchlist_id', watchlistId)
                 .order('created_at', { ascending: false })
             
             if (error) throw error
             return data as WatchlistItem[]
         },
-        staleTime: 10 * 60 * 1000 // Cache for 10 mins
+        enabled: !!watchlistId,
+        staleTime: 10 * 60 * 1000 
     })
 }
 
@@ -338,5 +345,31 @@ export function useChartData(symbol: string, interval: string, range: string) {
         staleTime: 1 * 60 * 1000, // Cache 1 minute for intraday
         gcTime: 5 * 60 * 1000,    // Keep unused data for 5 minutes
         refetchOnWindowFocus: false
+    })
+}
+
+// --- NEW: Watchlist Groups Hook ---
+export function useWatchlists() {
+    const supabase = createClient()
+    return useQuery({
+        queryKey: ['watchlists_groups'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data, error } = await supabase
+                .from('watchlists')
+                .select('*')
+                .order('created_at', { ascending: true })
+            
+            if (error) throw error
+            // If no watchlists exist (new user), create default
+            if (data.length === 0) {
+               const { data: newWl } = await supabase.from('watchlists').insert({ user_id: user.id, name: 'Main Watchlist' }).select().single()
+               return [newWl] as WatchlistGroup[]
+            }
+            return data as WatchlistGroup[]
+        },
+        staleTime: Infinity 
     })
 }
