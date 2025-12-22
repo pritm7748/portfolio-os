@@ -1,17 +1,34 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { Search, Trash2, Loader2, Plus, X, Bell, Info, FolderPlus, Folder, MoreVertical, Edit2 } from 'lucide-react'
+import { Search, Trash2, Loader2, Plus, X, Bell, Folder, Edit2, Check } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import AlertModal from '@/components/alert-modal'
 import { useWatchlists, useWatchlist, useLivePrices } from '@/hooks/use-portfolio-data'
 import { useQueryClient } from '@tanstack/react-query'
 
 export default function WatchlistPage() {
-  // State for Lists
-  const { data: watchlists, isLoading: listsLoading } = useWatchlists()
+  const supabase = createClient()
+  const queryClient = useQueryClient()
+
+  // --- STATE ---
+  const { data: watchlists } = useWatchlists()
   const [activeListId, setActiveListId] = useState<number | null>(null)
   
+  // UI States
+  const [isCreating, setIsCreating] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  
+  // Rename States
+  const [editingListId, setEditingListId] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState('')
+
+  // Search & Alerts
+  const [query, setQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [alertAsset, setAlertAsset] = useState<{ticker: string, price: number} | null>(null)
+
   // Set default list on load
   useEffect(() => {
       if (watchlists && watchlists.length > 0 && !activeListId) {
@@ -19,25 +36,12 @@ export default function WatchlistPage() {
       }
   }, [watchlists])
 
-  // State for Items
+  // Fetch Items & Prices
   const { data: watchlistItems, isLoading: itemsLoading } = useWatchlist(activeListId || undefined)
   
-  // State for UI
-  const [query, setQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [alertAsset, setAlertAsset] = useState<{ticker: string, price: number} | null>(null)
-  const [isCreating, setIsCreating] = useState(false) // New List Mode
-  const [newListName, setNewListName] = useState('')
-
-  const supabase = createClient()
-  const queryClient = useQueryClient()
-
-  // 1. Fetch Prices
   const tickers = useMemo(() => watchlistItems ? watchlistItems.map(i => i.ticker) : [], [watchlistItems])
-  const { data: priceMap, isLoading: priceLoading } = useLivePrices(tickers)
+  const { data: priceMap } = useLivePrices(tickers)
 
-  // 2. Merge Data
   const mergedItems = useMemo(() => {
       if (!watchlistItems) return []
       return watchlistItems.map(item => {
@@ -52,6 +56,7 @@ export default function WatchlistPage() {
   }, [watchlistItems, priceMap])
 
   // --- ACTIONS ---
+
   const handleSearch = async (val: string) => {
       setQuery(val)
       if (val.length > 2) {
@@ -74,7 +79,7 @@ export default function WatchlistPage() {
 
       await supabase.from('watchlist').insert({ 
           user_id: user.id, 
-          watchlist_id: activeListId, // Link to active list
+          watchlist_id: activeListId, 
           ticker: item.symbol, 
           name: item.name, 
           asset_type: item.type 
@@ -83,6 +88,8 @@ export default function WatchlistPage() {
       queryClient.invalidateQueries({ queryKey: ['watchlist', activeListId] })
       setQuery(''); setSearchResults([])
   }
+
+  // --- LIST MANAGEMENT (Create, Rename, Delete) ---
 
   const createNewList = async () => {
       if (!newListName.trim()) return
@@ -94,12 +101,33 @@ export default function WatchlistPage() {
       setIsCreating(false); setNewListName('')
   }
 
+  const startRenaming = (e: React.MouseEvent, id: number, currentName: string) => {
+      e.stopPropagation()
+      setEditingListId(id)
+      setEditingName(currentName)
+  }
+
+  const saveRename = async (e?: React.FormEvent) => {
+      if (e) e.preventDefault()
+      if (!editingName.trim() || !editingListId) return
+
+      await supabase.from('watchlists').update({ name: editingName }).eq('id', editingListId)
+      queryClient.invalidateQueries({ queryKey: ['watchlists_groups'] })
+      setEditingListId(null)
+  }
+
   const deleteList = async (id: number, e: React.MouseEvent) => {
       e.stopPropagation()
-      if (!confirm("Delete this watchlist and all its items?")) return
+      if (!confirm("Delete this watchlist? All items inside it will also be removed.")) return
+      
       await supabase.from('watchlists').delete().eq('id', id)
       queryClient.invalidateQueries({ queryKey: ['watchlists_groups'] })
-      if (activeListId === id) setActiveListId(null)
+      
+      // If we deleted the active list, switch to the first available one (usually Main)
+      if (activeListId === id) {
+          const main = watchlists?.find(w => w.name === 'Main Watchlist')
+          setActiveListId(main ? main.id : null)
+      }
   }
 
   const removeItem = async (id: number) => {
@@ -118,49 +146,82 @@ export default function WatchlistPage() {
           </div>
           
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              
+              {/* CREATE NEW INPUT */}
               {isCreating && (
-                  <div className="p-2">
+                  <div className="p-2 mb-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-indigo-100 dark:border-slate-700">
                       <input 
                         autoFocus 
-                        className="w-full text-sm border rounded px-2 py-1 mb-2 dark:bg-slate-800 dark:border-slate-700" 
+                        className="w-full text-sm border-b border-indigo-200 bg-transparent px-1 py-1 mb-2 outline-none dark:text-white dark:border-slate-600" 
                         placeholder="List Name..." 
                         value={newListName} 
                         onChange={e => setNewListName(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && createNewList()}
                       />
-                      <div className="flex gap-2 text-xs">
-                          <button onClick={createNewList} className="text-indigo-600 font-bold">Save</button>
-                          <button onClick={() => setIsCreating(false)} className="text-slate-400">Cancel</button>
+                      <div className="flex justify-end gap-2 text-xs">
+                          <button onClick={() => setIsCreating(false)} className="text-slate-400 hover:text-slate-600">Cancel</button>
+                          <button onClick={createNewList} className="text-indigo-600 font-bold hover:text-indigo-700">Save</button>
                       </div>
                   </div>
               )}
 
-              {watchlists?.map(list => (
-                  <div 
-                    key={list.id} 
-                    onClick={() => setActiveListId(list.id)}
-                    className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm font-medium
-                        ${activeListId === list.id ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'}
-                    `}
-                  >
-                      <div className="flex items-center gap-2 overflow-hidden">
-                          <Folder className={`h-4 w-4 flex-shrink-0 ${activeListId === list.id ? 'fill-indigo-200 dark:fill-indigo-900' : ''}`} />
-                          <span className="truncate">{list.name}</span>
-                      </div>
-                      {list.name !== 'Main Watchlist' && (
-                          <button onClick={(e) => deleteList(list.id, e)} className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-opacity">
-                              <Trash2 className="h-3 w-3" />
-                          </button>
-                      )}
-                  </div>
-              ))}
+              {/* LIST OF WATCHLISTS */}
+              {watchlists?.map(list => {
+                  const isEditing = editingListId === list.id
+                  const isActive = activeListId === list.id
+                  const isMain = list.name === 'Main Watchlist'
+
+                  return (
+                    <div 
+                        key={list.id} 
+                        onClick={() => !isEditing && setActiveListId(list.id)}
+                        className={`group flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm font-medium
+                            ${isActive ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'}
+                        `}
+                    >
+                        <div className="flex items-center gap-2 overflow-hidden flex-1">
+                            <Folder className={`h-4 w-4 flex-shrink-0 ${isActive ? 'fill-indigo-200 dark:fill-indigo-900' : ''}`} />
+                            
+                            {/* RENAME INPUT vs NAME */}
+                            {isEditing ? (
+                                <form 
+                                    onSubmit={saveRename} 
+                                    onClick={e => e.stopPropagation()} 
+                                    className="flex-1 flex items-center"
+                                >
+                                    <input 
+                                        autoFocus
+                                        className="w-full bg-white dark:bg-slate-900 border border-indigo-300 rounded px-1 py-0.5 text-xs outline-none text-slate-900 dark:text-white"
+                                        value={editingName}
+                                        onChange={e => setEditingName(e.target.value)}
+                                        onBlur={() => saveRename()}
+                                    />
+                                </form>
+                            ) : (
+                                <span className="truncate">{list.name}</span>
+                            )}
+                        </div>
+
+                        {/* ACTION BUTTONS (Rename / Delete) */}
+                        {!isMain && !isEditing && (
+                            <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={(e) => startRenaming(e, list.id, list.name)} className="p-1 hover:text-indigo-500 rounded"><Edit2 className="h-3 w-3" /></button>
+                                <button onClick={(e) => deleteList(list.id, e)} className="p-1 hover:text-red-500 rounded"><Trash2 className="h-3 w-3" /></button>
+                            </div>
+                        )}
+                        {isEditing && (
+                            <button onClick={(e) => { e.stopPropagation(); saveRename(); }} className="p-1 text-green-600 hover:bg-green-50 rounded"><Check className="h-3 w-3" /></button>
+                        )}
+                    </div>
+                  )
+              })}
           </div>
       </div>
 
-      {/* --- MAIN CONTENT: ITEMS --- */}
+      {/* --- MAIN CONTENT --- */}
       <div className="flex-1 flex flex-col min-w-0">
           
-          {/* Search Header */}
+          {/* SEARCH */}
           <div className="relative mb-4 z-20">
             <div className="relative">
                 <input 
@@ -189,7 +250,7 @@ export default function WatchlistPage() {
             )}
           </div>
 
-          {/* List Content */}
+          {/* TABLE */}
           <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden flex flex-col">
             {itemsLoading ? (
                  <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
