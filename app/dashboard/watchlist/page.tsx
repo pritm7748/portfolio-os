@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { Search, Trash2, Loader2, Plus, Bell, Folder, Edit2, Check } from 'lucide-react'
+import { Search, Trash2, Loader2, Plus, Bell, Folder, Edit2, Check, X, Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import AlertModal from '@/components/alert-modal'
 import { useWatchlists, useWatchlist, useLivePrices } from '@/hooks/use-portfolio-data'
@@ -74,12 +74,18 @@ export default function WatchlistPage() {
       } else { setSearchResults([]) }
   }
 
+  const clearSearch = () => {
+      setQuery('')
+      setSearchResults([])
+      setIsSearching(false)
+  }
+
   const addToWatchlist = async (item: any) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user || !activeListId) return
       
       const exists = watchlistItems?.find(i => i.ticker === item.symbol)
-      if (exists) { alert('Already in this watchlist'); setQuery(''); return }
+      if (exists) { alert('Already in this watchlist'); clearSearch(); return }
 
       await supabase.from('watchlist').insert({ 
           user_id: user.id, 
@@ -90,7 +96,7 @@ export default function WatchlistPage() {
       })
       
       queryClient.invalidateQueries({ queryKey: ['watchlist', activeListId] })
-      setQuery(''); setSearchResults([])
+      clearSearch()
   }
 
   // --- LIST MANAGEMENT ---
@@ -224,7 +230,7 @@ export default function WatchlistPage() {
       <div className="flex-1 flex flex-col min-w-0">
           
           {/* SEARCH */}
-          <div className="relative mb-4 z-20">
+          <div className="relative mb-2 z-20">
             <div className="relative">
                 <input 
                     type="text"
@@ -234,8 +240,25 @@ export default function WatchlistPage() {
                     className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-10 pr-10 text-sm shadow-sm focus:border-indigo-500 focus:outline-none dark:bg-slate-900 dark:border-slate-800 dark:text-white"
                 />
                 <Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
+                
+                {/* Clear (X) Button */}
+                {query && !isSearching && (
+                    <button 
+                        onClick={clearSearch}
+                        className="absolute right-3 top-3.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                )}
+
                 {isSearching && <Loader2 className="absolute right-3 top-3.5 h-4 w-4 animate-spin text-indigo-600" />}
             </div>
+
+            {/* Helper Text */}
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 px-1">
+                <Info className="h-3 w-3 text-amber-500" />
+                <span>Select tickers ending in <b>.NS</b> or <b>.BO</b> for Indian stocks.</span>
+            </p>
 
             {searchResults.length > 0 && (
                 <ul className="absolute mt-2 max-h-60 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-xl dark:bg-slate-900 dark:border-slate-800">
@@ -253,7 +276,7 @@ export default function WatchlistPage() {
           </div>
 
           {/* TABLE */}
-          <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden flex flex-col">
+          <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden flex flex-col mt-2">
             {itemsLoading ? (
                  <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
             ) : mergedItems.length === 0 ? (

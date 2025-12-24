@@ -398,6 +398,12 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                         </ul>
                     )}
                   </div>
+                  
+                  {/* ADDED HELPER TEXT HERE */}
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Info className="h-3 w-3 text-amber-500" />
+                    <span>Select tickers ending in <b>.NS</b> or <b>.BO</b> for Indian stocks.</span>
+                  </p>
               </div>
           )}
 
