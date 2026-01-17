@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import YahooFinance from 'yahoo-finance2'
 
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
@@ -12,10 +12,20 @@ const MACRO_TICKERS = [
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 export async function POST(request: Request) {
+  // 1. INSTANTIATE THE LIBRARY (Fixes the "Call new YahooFinance() first" error)
+  const yahooFinance = new YahooFinance()
+  
+  // Optional: Try to suppress notices if method exists on instance, otherwise ignore
+  try {
+      if (typeof (yahooFinance as any).suppressNotices === 'function') {
+          (yahooFinance as any).suppressNotices(['yahooSurvey', 'ripHistorical'])
+      }
+  } catch (e) {}
+
   try {
     const { tickers } = await request.json()
     
-    // 1. Prepare Ticker List
+    // Prepare Ticker List
     const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
     
     const allHoldings = uniqueTickers.map((t) => {
@@ -33,27 +43,28 @@ export async function POST(request: Request) {
     
     const livePrices: Record<string, number> = {}
 
-    // --- FETCH QUOTES SEQUENTIALLY ---
+    // --- FETCH QUOTES SEQUENTIALLY (Fixes the 429 Rate Limit error) ---
     const CHUNK_SIZE = 20
     const symbolsToFetch = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
     
     const quoteResults: any[] = []
-    // Explicitly typed chunks array
+    // Explicitly type chunks to fix TypeScript 'never' error
     const chunks: string[][] = [] 
 
     for (let i = 0; i < symbolsToFetch.length; i += CHUNK_SIZE) {
         chunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
-    // Process chunks sequentially
+    // Process chunks one by one
     for (const chunk of chunks) {
         try {
-            // FIX: Explicitly cast result to array to fix 'never' error
+            // Explicit cast to fix TypeScript inference
             const results = await yahooFinance.quote(chunk) as unknown as any[]
             
             if (Array.isArray(results)) {
                 quoteResults.push(...results)
             }
+            // Wait 2 seconds between chunks to be polite to the API
             if (chunks.length > 1) await sleep(2000) 
         } catch (e) {
             console.warn(`Failed to fetch chunk: ${chunk[0]}...`, e)
