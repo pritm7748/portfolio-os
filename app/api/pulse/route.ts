@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import YahooFinance from 'yahoo-finance2'
+import yahooFinance from 'yahoo-finance2'
 
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
@@ -8,18 +8,18 @@ const MACRO_TICKERS = [
     { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
 ]
 
-export async function POST(request: Request) {
-  const yahooFinance = new YahooFinance()
+// Helper to pause execution
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+export async function POST(request: Request) {
   try {
     const { tickers } = await request.json()
     
-    // 1. Prepare Ticker List (Handle Empty Case Safely)
+    // 1. Prepare Ticker List
     const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
     
     const allHoldings = uniqueTickers.map((t) => {
          let clean = t.toUpperCase().trim()
-         // Only add .NS if it looks like a raw Indian ticker (no extension, no caret for indices)
          if (!clean.includes('.') && !clean.includes('^') && !clean.includes('=') && !clean.includes('-')) {
              clean += '.NS'
          }
@@ -33,34 +33,40 @@ export async function POST(request: Request) {
     
     const livePrices: Record<string, number> = {}
 
-    // 2. FETCH QUOTES (Macro + Holdings)
-    const CHUNK_SIZE = 30
-    const quoteChunks = []
-    
-    // Always fetch MACRO_TICKERS, even if allHoldings is empty
+    // --- FETCH QUOTES SEQUENTIALLY ---
+    const CHUNK_SIZE = 20
     const symbolsToFetch = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
     
+    const quoteResults: any[] = []
+    // Explicitly typed chunks array
+    const chunks: string[][] = [] 
+
     for (let i = 0; i < symbolsToFetch.length; i += CHUNK_SIZE) {
-        quoteChunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
+        chunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
-    const chunkResults = await Promise.all(
-        quoteChunks.map(chunk => 
-            (yahooFinance.quote(chunk) as Promise<any[]>).catch(e => {
-                console.warn("Quote chunk failed", e)
-                return []
-            })
-        )
-    )
-    const quoteResults = chunkResults.flat()
+    // Process chunks sequentially
+    for (const chunk of chunks) {
+        try {
+            // FIX: Explicitly cast result to array to fix 'never' error
+            const results = await yahooFinance.quote(chunk) as unknown as any[]
+            
+            if (Array.isArray(results)) {
+                quoteResults.push(...results)
+            }
+            if (chunks.length > 1) await sleep(2000) 
+        } catch (e) {
+            console.warn(`Failed to fetch chunk: ${chunk[0]}...`, e)
+        }
+    }
 
-    // 3. Process Quotes
+    // Process Quotes
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
         livePrices[q.symbol] = q.regularMarketPrice || 0
 
-        // A. Macro
+        // Macro
         const macroItem = MACRO_TICKERS.find(m => m.symbol === q.symbol)
         if (macroItem) {
             macro.push({
@@ -74,12 +80,11 @@ export async function POST(request: Request) {
             return
         }
 
-        // B. Volume Shockers (Only for holdings)
+        // Volume Shockers
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
         const ratio = vol / avgVol
         
-        // Threshold: 2.5x Volume AND significant volume (>10k)
         if (ratio > 2.5 && vol > 10000) {
             shockers.push({
                 ticker: q.symbol.replace('.NS', ''),
@@ -91,62 +96,65 @@ export async function POST(request: Request) {
         }
     })
 
-    // 4. DEEP SCAN (Events & Insiders) - Only if we have holdings
+    // --- DEEP SCAN (Events & Insiders) ---
     if (allHoldings.length > 0) {
-        await Promise.all(allHoldings.map(async (ticker) => {
-            try {
-                const result = await yahooFinance.quoteSummary(ticker, { 
-                    modules: ['calendarEvents', 'insiderTransactions'] 
-                }) as any
+        const BATCH_LIMIT = 5
+        
+        for (let i = 0; i < allHoldings.length; i += BATCH_LIMIT) {
+            const batch = allHoldings.slice(i, i + BATCH_LIMIT)
+            
+            await Promise.all(batch.map(async (ticker) => {
+                try {
+                    const result = await yahooFinance.quoteSummary(ticker, { 
+                        modules: ['calendarEvents', 'insiderTransactions'] 
+                    }) as any
 
-                // Calendar
-                const cal = result.calendarEvents
-                if (cal?.earnings?.earningsDate) {
-                    cal.earnings.earningsDate.forEach((date: Date) => {
-                        // Show earnings from last 2 days to future
-                        if (new Date(date) > new Date(Date.now() - 86400000 * 2)) {
-                            events.push({ ticker: ticker.replace('.NS',''), type: 'Earnings', date: date, desc: `Earnings` })
-                        }
-                    })
-                }
-                if (cal?.exDividendDate) {
-                    // Show dividends from last 15 days (to catch recent ex-dates)
-                    if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 15)) {
-                        events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend' })
-                    }
-                }
-
-                // Insiders
-                const txns = result.insiderTransactions?.transactions || []
-                txns.forEach((t: any) => {
-                    // Last 60 days
-                    if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 60)) {
-                        
-                        const shares = t.shares?.raw || t.shares || 0
-                        let value = t.value?.raw || t.value || 0
-                        
-                        // Fallback value calculation
-                        if (value === 0 && shares > 0) {
-                            const currentPrice = livePrices[ticker] || 0
-                            value = shares * currentPrice
-                        }
-
-                        insiders.push({
-                            ticker: ticker.replace('.NS',''),
-                            holder: t.filerName,
-                            relation: t.filerRelation,
-                            action: t.transactionText,
-                            shares: shares,
-                            value: value,
-                            date: t.startDate
+                    // Calendar
+                    const cal = result.calendarEvents
+                    if (cal?.earnings?.earningsDate) {
+                        cal.earnings.earningsDate.forEach((date: Date) => {
+                            if (new Date(date) > new Date(Date.now() - 86400000 * 2)) {
+                                events.push({ ticker: ticker.replace('.NS',''), type: 'Earnings', date: date, desc: `Earnings` })
+                            }
                         })
                     }
-                })
+                    if (cal?.exDividendDate) {
+                        if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 15)) {
+                            events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend' })
+                        }
+                    }
 
-            } catch (e) { 
-                // Ignore individual failures
-            }
-        }))
+                    // Insiders
+                    const txns = result.insiderTransactions?.transactions || []
+                    txns.forEach((t: any) => {
+                        if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 60)) {
+                            const shares = t.shares?.raw || t.shares || 0
+                            let value = t.value?.raw || t.value || 0
+                            
+                            if (value === 0 && shares > 0) {
+                                const currentPrice = livePrices[ticker] || 0
+                                value = shares * currentPrice
+                            }
+
+                            insiders.push({
+                                ticker: ticker.replace('.NS',''),
+                                holder: t.filerName,
+                                relation: t.filerRelation,
+                                action: t.transactionText,
+                                shares: shares,
+                                value: value,
+                                date: t.startDate
+                            })
+                        }
+                    })
+
+                } catch (e) { 
+                    // Silent fail
+                }
+            }))
+            
+            if (i + BATCH_LIMIT < allHoldings.length) await sleep(1500)
+        }
     }
 
     events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -157,6 +165,6 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error("Pulse API Error:", error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ events: [], insiders: [], shockers: [], macro: [], error: error.message })
   }
 }
