@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server'
 import YahooFinance from 'yahoo-finance2'
 
+// 1. INSTANTIATE OUTSIDE THE HANDLER (Singleton Pattern)
+// This is critical. It prevents the library from fetching a new "crumb" (auth token)
+// on every single request, which is what causes the 429 error.
+const yahooFinance = new YahooFinance()
+
+// Suppress logs safely
+try {
+    if (typeof (yahooFinance as any).suppressNotices === 'function') {
+        (yahooFinance as any).suppressNotices(['yahooSurvey', 'ripHistorical'])
+    }
+} catch (e) {}
+
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
     { symbol: 'CL=F', name: 'Brent Crude', type: 'Commodity', prefix: '$', suffix: '' },
@@ -12,16 +24,6 @@ const MACRO_TICKERS = [
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 export async function POST(request: Request) {
-  // 1. INSTANTIATE THE LIBRARY (Fixes the "Call new YahooFinance() first" error)
-  const yahooFinance = new YahooFinance()
-  
-  // Optional: Try to suppress notices if method exists on instance, otherwise ignore
-  try {
-      if (typeof (yahooFinance as any).suppressNotices === 'function') {
-          (yahooFinance as any).suppressNotices(['yahooSurvey', 'ripHistorical'])
-      }
-  } catch (e) {}
-
   try {
     const { tickers } = await request.json()
     
@@ -43,7 +45,7 @@ export async function POST(request: Request) {
     
     const livePrices: Record<string, number> = {}
 
-    // --- FETCH QUOTES SEQUENTIALLY (Fixes the 429 Rate Limit error) ---
+    // --- FETCH QUOTES SEQUENTIALLY ---
     const CHUNK_SIZE = 20
     const symbolsToFetch = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
     
@@ -58,7 +60,7 @@ export async function POST(request: Request) {
     // Process chunks one by one
     for (const chunk of chunks) {
         try {
-            // Explicit cast to fix TypeScript inference
+            // Use the global instance
             const results = await yahooFinance.quote(chunk) as unknown as any[]
             
             if (Array.isArray(results)) {
