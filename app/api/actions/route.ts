@@ -23,7 +23,6 @@ export async function POST(request: Request) {
         if (!yahooTicker.includes('.') && !yahooTicker.includes('-')) yahooTicker += '.NS'
 
         // FETCH SPLITS (Last 30 Days to Today + 1 Day for timezone safety)
-        // We focus on recent splits for the auto-scanner
         const period1 = Math.floor(Date.now() / 1000) - (30 * 24 * 60 * 60) 
         const period2 = Math.floor(Date.now() / 1000) + (24 * 60 * 60) 
         
@@ -58,18 +57,15 @@ export async function POST(request: Request) {
                 // 2. Calculate Factor
                 const factor = ratioNumerator / ratioDenominator
 
-                // 3. Fetch Transactions created BEFORE Ex-Date
-                // We use 'created_at' to ensure we only adjust trades that existed pre-split
+                // 3. Fetch Transactions based on TRADE DATE (Not creation date)
                 const { data: txns } = await supabase
                     .from('transactions')
                     .select('*')
                     .eq('user_id', userId)
                     .eq('asset_id', asset.id)
-                    .lt('created_at', exDate) // <--- The Critical Check
+                    .lt('date', exDate) // <--- FIXED: Now checks the actual Trade Date
 
                 if (!txns || txns.length === 0) {
-                    // Log as "Skipped/No Holdings" so we don't re-process empty events
-                    // await supabase.from('applied_actions').insert({ ... }) <-- Optional: Uncomment if you want to permanently ignore
                     continue
                 }
 
