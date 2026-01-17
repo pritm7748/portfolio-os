@@ -1,18 +1,6 @@
 import { NextResponse } from 'next/server'
-import YahooFinance from 'yahoo-finance2'
 
-// 1. INSTANTIATE OUTSIDE THE HANDLER (Singleton Pattern)
-// This is critical. It prevents the library from fetching a new "crumb" (auth token)
-// on every single request, which is what causes the 429 error.
-const yahooFinance = new YahooFinance()
-
-// Suppress logs safely
-try {
-    if (typeof (yahooFinance as any).suppressNotices === 'function') {
-        (yahooFinance as any).suppressNotices(['yahooSurvey', 'ripHistorical'])
-    }
-} catch (e) {}
-
+// --- CONFIGURATION ---
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
     { symbol: 'CL=F', name: 'Brent Crude', type: 'Commodity', prefix: '$', suffix: '' },
@@ -20,18 +8,53 @@ const MACRO_TICKERS = [
     { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
 ]
 
-// Helper to pause execution
+// Helper: Pause execution to be polite to the API
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// Helper: Raw Fetcher (Bypasses the library's crumb check)
+async function fetchYahooQuotes(symbols: string[]) {
+    if (symbols.length === 0) return []
+    try {
+        const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }, // Pretend to be a browser
+            next: { revalidate: 0 } // No caching
+        })
+        if (!res.ok) return []
+        const data = await res.json()
+        return data?.quoteResponse?.result || []
+    } catch (e) {
+        console.warn('Raw Quote Fetch Error:', e)
+        return []
+    }
+}
+
+// Helper: Raw Modules Fetcher (For Insiders/Events)
+async function fetchYahooModules(symbol: string) {
+    try {
+        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=calendarEvents,insiderTransactions`
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            next: { revalidate: 3600 } // Cache these heavy calls for 1 hour
+        })
+        if (!res.ok) return null
+        const data = await res.json()
+        return data?.quoteSummary?.result?.[0] || null
+    } catch (e) {
+        return null
+    }
+}
 
 export async function POST(request: Request) {
   try {
     const { tickers } = await request.json()
     
-    // Prepare Ticker List
+    // 1. Prepare Ticker List
     const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
     
     const allHoldings = uniqueTickers.map((t) => {
          let clean = t.toUpperCase().trim()
+         // Basic cleanup for Yahoo symbols
          if (!clean.includes('.') && !clean.includes('^') && !clean.includes('=') && !clean.includes('-')) {
              clean += '.NS'
          }
@@ -45,41 +68,31 @@ export async function POST(request: Request) {
     
     const livePrices: Record<string, number> = {}
 
-    // --- FETCH QUOTES SEQUENTIALLY ---
+    // 2. FETCH QUOTES (Batched & Raw)
     const CHUNK_SIZE = 20
     const symbolsToFetch = [...MACRO_TICKERS.map(m => m.symbol), ...allHoldings]
-    
     const quoteResults: any[] = []
-    // Explicitly type chunks to fix TypeScript 'never' error
-    const chunks: string[][] = [] 
-
+    
+    // Split into chunks
+    const chunks: string[][] = []
     for (let i = 0; i < symbolsToFetch.length; i += CHUNK_SIZE) {
         chunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
-    // Process chunks one by one
+    // Execute sequential fetches
     for (const chunk of chunks) {
-        try {
-            // Use the global instance
-            const results = await yahooFinance.quote(chunk) as unknown as any[]
-            
-            if (Array.isArray(results)) {
-                quoteResults.push(...results)
-            }
-            // Wait 2 seconds between chunks to be polite to the API
-            if (chunks.length > 1) await sleep(2000) 
-        } catch (e) {
-            console.warn(`Failed to fetch chunk: ${chunk[0]}...`, e)
-        }
+        const chunkData = await fetchYahooQuotes(chunk)
+        quoteResults.push(...chunkData)
+        if (chunks.length > 1) await sleep(500) // Small delay between chunks
     }
 
-    // Process Quotes
+    // 3. Process Quotes
     quoteResults.forEach((q: any) => {
         if (!q || !q.symbol) return
 
         livePrices[q.symbol] = q.regularMarketPrice || 0
 
-        // Macro
+        // A. Macro
         const macroItem = MACRO_TICKERS.find(m => m.symbol === q.symbol)
         if (macroItem) {
             macro.push({
@@ -93,10 +106,10 @@ export async function POST(request: Request) {
             return
         }
 
-        // Volume Shockers
+        // B. Volume Shockers
         const vol = q.regularMarketVolume || 0
         const avgVol = q.averageDailyVolume3Month || q.averageDailyVolume10Day || 1
-        const ratio = vol / avgVol
+        const ratio = avgVol > 0 ? vol / avgVol : 0
         
         if (ratio > 2.5 && vol > 10000) {
             shockers.push({
@@ -109,7 +122,7 @@ export async function POST(request: Request) {
         }
     })
 
-    // --- DEEP SCAN (Events & Insiders) ---
+    // 4. DEEP SCAN (Using Raw Module Fetcher)
     if (allHoldings.length > 0) {
         const BATCH_LIMIT = 5
         
@@ -117,59 +130,59 @@ export async function POST(request: Request) {
             const batch = allHoldings.slice(i, i + BATCH_LIMIT)
             
             await Promise.all(batch.map(async (ticker) => {
-                try {
-                    const result = await yahooFinance.quoteSummary(ticker, { 
-                        modules: ['calendarEvents', 'insiderTransactions'] 
-                    }) as any
+                const result = await fetchYahooModules(ticker)
+                if (!result) return
 
-                    // Calendar
-                    const cal = result.calendarEvents
-                    if (cal?.earnings?.earningsDate) {
-                        cal.earnings.earningsDate.forEach((date: Date) => {
-                            if (new Date(date) > new Date(Date.now() - 86400000 * 2)) {
-                                events.push({ ticker: ticker.replace('.NS',''), type: 'Earnings', date: date, desc: `Earnings` })
-                            }
-                        })
-                    }
-                    if (cal?.exDividendDate) {
-                        if (new Date(cal.exDividendDate) > new Date(Date.now() - 86400000 * 15)) {
-                            events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: cal.exDividendDate, desc: 'Ex-Dividend' })
-                        }
-                    }
-
-                    // Insiders
-                    const txns = result.insiderTransactions?.transactions || []
-                    txns.forEach((t: any) => {
-                        if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 60)) {
-                            const shares = t.shares?.raw || t.shares || 0
-                            let value = t.value?.raw || t.value || 0
-                            
-                            if (value === 0 && shares > 0) {
-                                const currentPrice = livePrices[ticker] || 0
-                                value = shares * currentPrice
-                            }
-
-                            insiders.push({
-                                ticker: ticker.replace('.NS',''),
-                                holder: t.filerName,
-                                relation: t.filerRelation,
-                                action: t.transactionText,
-                                shares: shares,
-                                value: value,
-                                date: t.startDate
-                            })
+                // Calendar Logic
+                const cal = result.calendarEvents
+                if (cal?.earnings?.earningsDate) {
+                    cal.earnings.earningsDate.forEach((d: any) => {
+                        const dateStr = d.raw ? new Date(d.raw * 1000) : new Date(d) // Handle yahoo formats
+                        if (dateStr > new Date(Date.now() - 86400000 * 2)) {
+                            events.push({ ticker: ticker.replace('.NS',''), type: 'Earnings', date: dateStr, desc: `Earnings` })
                         }
                     })
-
-                } catch (e) { 
-                    // Silent fail
                 }
+                if (cal?.exDividendDate) {
+                    const dateStr = cal.exDividendDate.raw ? new Date(cal.exDividendDate.raw * 1000) : new Date(cal.exDividendDate)
+                    if (dateStr > new Date(Date.now() - 86400000 * 15)) {
+                        events.push({ ticker: ticker.replace('.NS',''), type: 'Dividend', date: dateStr, desc: 'Ex-Dividend' })
+                    }
+                }
+
+                // Insiders Logic
+                const txns = result.insiderTransactions?.transactions || []
+                txns.forEach((t: any) => {
+                    const startDate = t.startDate?.raw ? new Date(t.startDate.raw * 1000) : new Date(t.startDate)
+                    
+                    if (startDate > new Date(Date.now() - 86400000 * 60)) {
+                        const shares = t.shares?.raw || t.shares || 0
+                        let value = t.value?.raw || t.value || 0
+                        
+                        // Fallback Value Calc
+                        if (value === 0 && shares > 0) {
+                            const currentPrice = livePrices[ticker] || 0
+                            value = shares * currentPrice
+                        }
+
+                        insiders.push({
+                            ticker: ticker.replace('.NS',''),
+                            holder: t.filerName,
+                            relation: t.filerRelation,
+                            action: t.transactionText,
+                            shares: shares,
+                            value: value,
+                            date: startDate
+                        })
+                    }
+                })
             }))
             
-            if (i + BATCH_LIMIT < allHoldings.length) await sleep(1500)
+            if (i + BATCH_LIMIT < allHoldings.length) await sleep(1000)
         }
     }
 
+    // Sort results
     events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     insiders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
