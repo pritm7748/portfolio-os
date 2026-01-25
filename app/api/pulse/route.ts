@@ -1,6 +1,9 @@
 // app/api/pulse/route.ts
 import { NextResponse } from 'next/server'
-import yahooFinance from 'yahoo-finance2'
+import YahooFinance from 'yahoo-finance2'
+
+// ✅ FIX: Create instance at MODULE LEVEL (outside the handler)
+const yahooFinance = new YahooFinance()
 
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
@@ -9,7 +12,7 @@ const MACRO_TICKERS = [
     { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
 ]
 
-// Type definitions for quoteSummary response
+// Type definitions
 type CalendarEvents = {
     earnings?: {
         earningsDate?: Date[]
@@ -63,6 +66,7 @@ export async function POST(request: Request) {
         quoteChunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
+    // ✅ Use the module-level instance
     const chunkResults = await Promise.all(
         quoteChunks.map(async (chunk) => {
             try {
@@ -116,7 +120,6 @@ export async function POST(request: Request) {
     if (deepScanHoldings.length > 0) {
         await Promise.all(deepScanHoldings.map(async (ticker) => {
             try {
-                // ✅ FIX: Cast the result to our defined type
                 const result = await yahooFinance.quoteSummary(ticker, { 
                     modules: ['calendarEvents', 'insiderTransactions'] 
                 }) as unknown as QuoteSummaryResult
@@ -151,10 +154,8 @@ export async function POST(request: Request) {
                 txns.forEach((t: InsiderTransaction) => {
                     if (new Date(t.startDate) > new Date(Date.now() - 86400000 * 60)) {
                         
-                        // Safe Access for Shares
                         const shares = typeof t.shares === 'object' ? t.shares.raw : (t.shares || 0)
                         
-                        // Calculate Value
                         let value = typeof t.value === 'object' ? t.value.raw : (t.value || 0)
                         if (value === 0 && shares > 0) {
                             const currentPrice = livePrices[ticker] || 0
