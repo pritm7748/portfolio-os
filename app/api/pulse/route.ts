@@ -33,10 +33,7 @@ async function getYahooCrumb(): Promise<{ crumb: string; cookies: string } | nul
             redirect: 'follow'
         })
 
-        if (!initResponse.ok) {
-            console.log('[DEBUG] Failed to get initial Yahoo page')
-            return null
-        }
+        if (!initResponse.ok) return null
 
         // Extract cookies from response
         const setCookies = initResponse.headers.getSetCookie?.() || []
@@ -52,28 +49,21 @@ async function getYahooCrumb(): Promise<{ crumb: string; cookies: string } | nul
             }
         })
 
-        if (!crumbResponse.ok) {
-            console.log('[DEBUG] Failed to get Yahoo crumb')
-            return null
-        }
+        if (!crumbResponse.ok) return null
 
         const crumb = await crumbResponse.text()
 
-        if (!crumb || crumb.includes('error')) {
-            console.log('[DEBUG] Invalid crumb received:', crumb)
-            return null
-        }
+        if (!crumb || crumb.includes('error')) return null
 
         // Cache the values
         cachedCrumb = crumb
         cachedCookies = cookieString
         crumbExpiry = Date.now() + 30 * 60 * 1000 // 30 minutes
 
-        console.log('[DEBUG] Successfully obtained Yahoo crumb')
         return { crumb, cookies: cookieString }
 
     } catch (e) {
-        console.error('[DEBUG] Failed to get Yahoo crumb:', e)
+        console.error('Failed to get Yahoo crumb:', e)
         return null
     }
 }
@@ -118,7 +108,6 @@ async function fetchQuote(symbol: string): Promise<any | null> {
             volumeRatio: avgVolume > 0 ? latestVolume / avgVolume : 0
         }
     } catch (e) {
-        console.error(`Quote fetch failed for ${symbol}:`, e)
         return null
     }
 }
@@ -137,31 +126,20 @@ async function fetchQuoteSummary(symbol: string, auth: { crumb: string; cookies:
             next: { revalidate: 300 } 
         })
         
-        if (!res.ok) {
-            console.log(`[DEBUG] quoteSummary failed for ${symbol}: HTTP ${res.status}`)
-            return null
-        }
+        if (!res.ok) return null
         
         const data = await res.json()
-        const result = data?.quoteSummary?.result?.[0]
-        
-        if (result) {
-            console.log(`[DEBUG] ${symbol} - Available modules:`, Object.keys(result))
-        }
-        
-        return result || null
+        return data?.quoteSummary?.result?.[0] || null
     } catch (e) {
-        console.error(`[DEBUG] QuoteSummary fetch failed for ${symbol}:`, e)
         return null
     }
 }
 
-// Alternative: Fetch from Yahoo v8 chart API with events parameter
+// Fallback: Fetch dividend events from Yahoo v8 chart API (no auth needed)
 async function fetchEventsFromChart(symbol: string): Promise<{ dividends: any[], splits: any[] }> {
     try {
-        // Fetch 1 year of data with events
         const period1 = Math.floor(Date.now() / 1000) - (365 * 24 * 60 * 60)
-        const period2 = Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60) // 90 days future
+        const period2 = Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60)
         
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d&events=div|split|earn`
         
@@ -193,8 +171,6 @@ export async function POST(request: Request) {
             }
             return clean
         })
-
-        console.log(`[DEBUG] Processing ${allHoldings.length} holdings`)
 
         const events: any[] = []
         const insiders: any[] = []
@@ -243,13 +219,9 @@ export async function POST(request: Request) {
         const auth = await getYahooCrumb()
         
         if (auth) {
-            console.log('[DEBUG] Yahoo auth obtained, fetching events and insiders...')
+            // Scan holdings for events and insiders (limit to first 20)
+            const scanTickers = allHoldings.slice(0, 20)
             
-            // Include some US stocks that definitely have insider data
-            const testTickers = ['AAPL', 'MSFT', 'NVDA']
-            const scanTickers = [...allHoldings.slice(0, 15), ...testTickers]
-            
-            // Add small delay between requests to avoid rate limiting
             for (const ticker of scanTickers) {
                 const summary = await fetchQuoteSummary(ticker, auth)
                 if (!summary) continue
@@ -285,7 +257,6 @@ export async function POST(request: Request) {
                                     date: date.toISOString(),
                                     desc: 'Earnings'
                                 })
-                                console.log(`[DEBUG] Added earnings event for ${cleanTicker}`)
                             }
                         }
                     })
@@ -311,7 +282,6 @@ export async function POST(request: Request) {
                                 date: exDivDate.toISOString(),
                                 desc: 'Ex-Dividend'
                             })
-                            console.log(`[DEBUG] Added dividend event for ${cleanTicker}`)
                         }
                     }
                 }
@@ -351,15 +321,12 @@ export async function POST(request: Request) {
                         value: value,
                         date: txnDate.toISOString()
                     })
-                    console.log(`[DEBUG] Added insider for ${cleanTicker}: ${t.filerName}`)
                 })
 
                 // Small delay to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 100))
             }
         } else {
-            console.log('[DEBUG] Yahoo auth failed, trying alternative method for events...')
-            
             // Fallback: Get dividend events from chart API (no auth needed)
             const scanTickers = allHoldings.slice(0, 20)
             
@@ -397,8 +364,6 @@ export async function POST(request: Request) {
                 e.date.split('T')[0] === event.date.split('T')[0]
             )
         )
-
-        console.log(`[DEBUG] Final counts - Events: ${uniqueEvents.length}, Insiders: ${insiders.length}, Shockers: ${shockers.length}, Macro: ${macro.length}`)
 
         return NextResponse.json({ 
             events: uniqueEvents, 
