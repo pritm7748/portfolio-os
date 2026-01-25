@@ -142,6 +142,28 @@ export function useWatchlist(watchlistId?: number) {
     })
 }
 
+// --- NEW: Fetch ALL Watchlist Items for User (for News/Pulse) ---
+export function useAllWatchlistItems() {
+    const supabase = createClient()
+    
+    return useQuery({
+        queryKey: ['all_watchlist_items'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            
+            const { data, error } = await supabase
+                .from('watchlist')
+                .select('*')
+                .order('created_at', { ascending: false })
+            
+            if (error) throw error
+            return data as WatchlistItem[]
+        },
+        staleTime: 10 * 60 * 1000 // 10 minutes
+    })
+}
+
 // --- 5. Market History Hook (For Sparkline Charts) ---
 export function useMarketHistory(tickers: string[], range: string = '1d') {
     const sortedTickers = tickers.slice().sort()
@@ -274,7 +296,7 @@ export function usePulse(tickers: string[]) {
 
 export function useActiveAssets() {
     const { data: transactions } = useTransactions()
-    const { data: watchlist } = useWatchlist()
+    const { data: watchlistItems } = useAllWatchlistItems()  // ✅ Fixed!
 
     return useMemo(() => {
         // Map Key = Root Symbol (e.g. "TCS") to prevent exchange duplicates
@@ -314,9 +336,9 @@ export function useActiveAssets() {
             })
         }
 
-        // 2. Merge Watchlist (Check against Root Symbol)
-        if (watchlist) {
-            watchlist.forEach(w => {
+        // 2. Merge Watchlist Items (Check against Root Symbol)
+        if (watchlistItems) {
+            watchlistItems.forEach(w => {
                 const root = getRoot(w.ticker)
                 // Only add if NOT already present (Holding takes priority)
                 if (!uniqueMap.has(root)) {
@@ -330,7 +352,7 @@ export function useActiveAssets() {
         }
 
         return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
-    }, [transactions, watchlist])
+    }, [transactions, watchlistItems])  // ✅ Updated dependency
 }
 
 export function useChartData(symbol: string, interval: string, range: string) {
