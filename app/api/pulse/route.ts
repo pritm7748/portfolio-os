@@ -1,9 +1,5 @@
 // app/api/pulse/route.ts
 import { NextResponse } from 'next/server'
-import YahooFinance from 'yahoo-finance2'
-
-// ✅ FIX: Create instance at MODULE LEVEL (outside the handler)
-const yahooFinance = new YahooFinance()
 
 const MACRO_TICKERS = [
     { symbol: 'INR=X', name: 'USD/INR', type: 'Currency', prefix: '₹', suffix: '' },
@@ -11,6 +7,17 @@ const MACRO_TICKERS = [
     { symbol: 'GC=F', name: 'Gold (Global)', type: 'Commodity', prefix: '$', suffix: '' },
     { symbol: '^TNX', name: 'US 10Y Yield', type: 'Bond', prefix: '', suffix: '%' }
 ]
+
+// ✅ Lazy initialization with singleton pattern
+let yahooFinanceInstance: any = null
+
+async function getYahooFinance() {
+    if (!yahooFinanceInstance) {
+        const YahooFinance = (await import('yahoo-finance2')).default
+        yahooFinanceInstance = new YahooFinance()
+    }
+    return yahooFinanceInstance
+}
 
 // Type definitions
 type CalendarEvents = {
@@ -38,6 +45,9 @@ type QuoteSummaryResult = {
 
 export async function POST(request: Request) {
   try {
+    // ✅ Get instance using lazy initialization
+    const yahooFinance = await getYahooFinance()
+
     const { tickers } = await request.json()
     
     // 1. Prepare Ticker List
@@ -66,7 +76,6 @@ export async function POST(request: Request) {
         quoteChunks.push(symbolsToFetch.slice(i, i + CHUNK_SIZE))
     }
 
-    // ✅ Use the module-level instance
     const chunkResults = await Promise.all(
         quoteChunks.map(async (chunk) => {
             try {
