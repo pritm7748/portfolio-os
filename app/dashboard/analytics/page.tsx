@@ -247,128 +247,150 @@ export default function AnalyticsPage() {
     }, [transactions])
 
     const fetchChartData = async (range: string, category: 'equity' | 'commodity') => {
-        if (!transactions) return
-        setChartLoading(true)
-        setChartCategory(category)
-        setCurrentRange(range)
+    if (!transactions) return
+    setChartLoading(true)
+    setChartCategory(category)
+    setCurrentRange(range)
 
-        try {
-            const relevantTickers = new Set<string>()
-            const categoryTxns = transactions.filter(t => {
-                const cat = getCategory(t.assets.asset_type)
-                if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
-                return false
+    try {
+        const relevantTickers = new Set<string>()
+        const categoryTxns = transactions.filter(t => {
+            const cat = getCategory(t.assets.asset_type)
+            if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
+            return false
+        })
+
+        if (relevantTickers.size === 0) { 
+            setChartData([])
+            setChartLoading(false)
+            return 
+        }
+
+        // Fetch portfolio history AND benchmark
+        const tickersToFetch = Array.from(relevantTickers)
+        if (category === 'equity') {
+            tickersToFetch.push(BENCHMARK_TICKER) // Add NIFTY 50
+        }
+
+        const res = await fetch('/api/history', { 
+            method: 'POST', 
+            body: JSON.stringify({ tickers: tickersToFetch, range }) 
+        })
+        const historyMap = await res.json()
+
+        // Extract benchmark data with better null handling
+        const benchmarkHistory: Record<string, number> = {}
+        let lastKnownBenchmarkValue = 0 // Track last valid value
+        
+        if (historyMap[BENCHMARK_TICKER] && Array.isArray(historyMap[BENCHMARK_TICKER])) {
+            // First pass: collect all valid values
+            historyMap[BENCHMARK_TICKER].forEach((point: any) => {
+                const value = point.value || point.price || 0
+                if (value > 0) {
+                    benchmarkHistory[point.date] = value
+                }
+            })
+        }
+
+        const priceLookup: Record<string, Record<string, number>> = {}
+        const allDatesSet = new Set<string>()
+        
+        Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
+            if (ticker === BENCHMARK_TICKER) return // Skip benchmark in portfolio calc
+            if (!Array.isArray(history)) return
+            history.forEach((point: any) => {
+                const d = point.date
+                allDatesSet.add(d)
+                if (!priceLookup[d]) priceLookup[d] = {}
+                priceLookup[d][ticker] = point.value || point.price || 0
+            })
+        })
+
+        const sortedDates = Array.from(allDatesSet).sort()
+        const finalChartData: ChartDataPoint[] = []
+        const runningHoldings: Record<string, number> = {}
+        const lastKnownPrices: Record<string, number> = {}
+
+        let runningInvested = 0
+        let txnIndex = 0
+
+        // Get first benchmark value for return calculation
+        let firstBenchmarkValue = 0
+        let firstPortfolioValue = 0
+        let lastValidBenchmark = 0 // NEW: Track last valid benchmark for forward-fill
+
+        for (const date of sortedDates) {
+            const dayStart = new Date(date).getTime()
+
+            while (txnIndex < categoryTxns.length) {
+                const t = categoryTxns[txnIndex]
+                const tTime = new Date(t.date).getTime()
+                if (tTime > dayStart + 86400000) break
+
+                if (t.transaction_type === 'Buy') {
+                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
+                    runningInvested += (Number(t.price) * Number(t.quantity))
+                } else if (t.transaction_type === 'Sell') {
+                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
+                    runningInvested -= (Number(t.price) * Number(t.quantity))
+                }
+                txnIndex++
+            }
+
+            const daysPrices = priceLookup[date] || {}
+            Object.keys(daysPrices).forEach(t => {
+                if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
             })
 
-            if (relevantTickers.size === 0) { 
-                setChartData([])
-                setChartLoading(false)
-                return 
-            }
-
-            // Fetch portfolio history AND benchmark
-            const tickersToFetch = Array.from(relevantTickers)
-            if (category === 'equity') {
-                tickersToFetch.push(BENCHMARK_TICKER) // Add NIFTY 50
-            }
-
-            const res = await fetch('/api/history', { 
-                method: 'POST', 
-                body: JSON.stringify({ tickers: tickersToFetch, range }) 
+            let dailyValue = 0
+            Object.keys(runningHoldings).forEach(ticker => {
+                const qty = runningHoldings[ticker]
+                if (qty > 0) {
+                    const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
+                    if (price > 0) dailyValue += (qty * price)
+                }
             })
-            const historyMap = await res.json()
 
-            // Extract benchmark data
-            const benchmarkHistory: Record<string, number> = {}
-            if (historyMap[BENCHMARK_TICKER] && Array.isArray(historyMap[BENCHMARK_TICKER])) {
-                historyMap[BENCHMARK_TICKER].forEach((point: any) => {
-                    benchmarkHistory[point.date] = point.value || point.price || 0
-                })
-            }
-
-            const priceLookup: Record<string, Record<string, number>> = {}
-            const allDatesSet = new Set<string>()
+            // FIX: Get benchmark value with forward-fill for missing dates
+            let benchmarkValue = benchmarkHistory[date] || 0
             
-            Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
-                if (ticker === BENCHMARK_TICKER) return // Skip benchmark in portfolio calc
-                if (!Array.isArray(history)) return
-                history.forEach((point: any) => {
-                    const d = point.date
-                    allDatesSet.add(d)
-                    if (!priceLookup[d]) priceLookup[d] = {}
-                    priceLookup[d][ticker] = point.value || point.price || 0
-                })
-            })
+            // If no value for this date, use last known valid value
+            if (benchmarkValue === 0 && lastValidBenchmark > 0) {
+                benchmarkValue = lastValidBenchmark
+            }
+            
+            // Update last valid benchmark if we have a real value
+            if (benchmarkValue > 0) {
+                lastValidBenchmark = benchmarkValue
+            }
 
-            const sortedDates = Array.from(allDatesSet).sort()
-            const finalChartData: ChartDataPoint[] = []
-            const runningHoldings: Record<string, number> = {}
-            const lastKnownPrices: Record<string, number> = {}
-
-            let runningInvested = 0
-            let txnIndex = 0
-
-            // Get first benchmark value for return calculation
-            let firstBenchmarkValue = 0
-            let firstPortfolioValue = 0
-
-            for (const date of sortedDates) {
-                const dayStart = new Date(date).getTime()
-
-                while (txnIndex < categoryTxns.length) {
-                    const t = categoryTxns[txnIndex]
-                    const tTime = new Date(t.date).getTime()
-                    if (tTime > dayStart + 86400000) break
-
-                    if (t.transaction_type === 'Buy') {
-                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
-                        runningInvested += (Number(t.price) * Number(t.quantity))
-                    } else if (t.transaction_type === 'Sell') {
-                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
-                        runningInvested -= (Number(t.price) * Number(t.quantity))
-                    }
-                    txnIndex++
+            if (runningInvested > 0 || dailyValue > 0) {
+                // Track first values for return calculation
+                if (firstPortfolioValue === 0 && dailyValue > 0) {
+                    firstPortfolioValue = dailyValue
+                }
+                if (firstBenchmarkValue === 0 && benchmarkValue > 0) {
+                    firstBenchmarkValue = benchmarkValue
                 }
 
-                const daysPrices = priceLookup[date] || {}
-                Object.keys(daysPrices).forEach(t => {
-                    if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
-                })
+                // Calculate returns from start
+                const portfolioReturnPct = firstPortfolioValue > 0 
+                    ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 
+                    : 0
+                const benchmarkReturnPct = firstBenchmarkValue > 0 
+                    ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 
+                    : 0
 
-                let dailyValue = 0
-                Object.keys(runningHoldings).forEach(ticker => {
-                    const qty = runningHoldings[ticker]
-                    if (qty > 0) {
-                        const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
-                        if (price > 0) dailyValue += (qty * price)
-                    }
-                })
+                // Normalize benchmark to same starting value as portfolio for comparison
+                const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
+                    ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
+                    : benchmarkValue
 
-                // Get benchmark value for this date
-                const benchmarkValue = benchmarkHistory[date] || 0
+                // Only add data point if benchmark is valid (or we're not showing benchmark)
+                // This prevents the 0 spikes
+                const hasBenchmarkData = category !== 'equity' || normalizedBenchmark > 0
 
-                if (runningInvested > 0 || dailyValue > 0) {
-                    // Track first values for return calculation
-                    if (firstPortfolioValue === 0 && dailyValue > 0) {
-                        firstPortfolioValue = dailyValue
-                    }
-                    if (firstBenchmarkValue === 0 && benchmarkValue > 0) {
-                        firstBenchmarkValue = benchmarkValue
-                    }
-
-                    // Calculate returns from start
-                    const portfolioReturnPct = firstPortfolioValue > 0 
-                        ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 
-                        : 0
-                    const benchmarkReturnPct = firstBenchmarkValue > 0 
-                        ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 
-                        : 0
-
-                    // Normalize benchmark to same starting value as portfolio for comparison
-                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
-                        ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
-                        : benchmarkValue
-
+                if (hasBenchmarkData) {
                     finalChartData.push({ 
                         date, 
                         invested: Math.max(0, runningInvested), 
@@ -379,26 +401,27 @@ export default function AnalyticsPage() {
                     })
                 }
             }
-
-            // Calculate final alpha
-            if (finalChartData.length > 0) {
-                const lastPoint = finalChartData[finalChartData.length - 1]
-                const finalPortfolioReturn = lastPoint.portfolioReturn || 0
-                const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
-                
-                setPortfolioReturn(finalPortfolioReturn)
-                setBenchmarkReturn(finalBenchmarkReturn)
-                setAlpha(finalPortfolioReturn - finalBenchmarkReturn)
-                setShowBenchmark(category === 'equity')
-            }
-
-            setChartData(finalChartData)
-        } catch (e) { 
-            console.error(e) 
-        } finally { 
-            setChartLoading(false) 
         }
+
+        // Calculate final alpha
+        if (finalChartData.length > 0) {
+            const lastPoint = finalChartData[finalChartData.length - 1]
+            const finalPortfolioReturn = lastPoint.portfolioReturn || 0
+            const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
+            
+            setPortfolioReturn(finalPortfolioReturn)
+            setBenchmarkReturn(finalBenchmarkReturn)
+            setAlpha(finalPortfolioReturn - finalBenchmarkReturn)
+            setShowBenchmark(category === 'equity')
+        }
+
+        setChartData(finalChartData)
+    } catch (e) { 
+        console.error(e) 
+    } finally { 
+        setChartLoading(false) 
     }
+}
 
     if (txnsLoading && !metrics) return (
         <div className="flex h-96 items-center justify-center">

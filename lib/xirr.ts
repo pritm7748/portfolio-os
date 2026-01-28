@@ -6,13 +6,15 @@ const diffInDays = (d1: Date, d2: Date) => {
 }
 
 // 2. The XIRR Equation
-// We look for a rate 'r' such that the sum of discounted cash flows is 0.
 const xirrEquation = (cashFlows: { amount: number; date: Date }[], rate: number) => {
   const startDate = cashFlows[0].date;
   let sum = 0;
   for (const cf of cashFlows) {
     const days = diffInDays(cf.date, startDate);
-    sum += cf.amount / Math.pow(1 + rate, days / 365);
+    // Protect against negative base with negative rate
+    const base = 1 + rate;
+    if (base <= 0) return Infinity; // Signal invalid rate
+    sum += cf.amount / Math.pow(base, days / 365);
   }
   return sum;
 }
@@ -23,20 +25,22 @@ const xirrDerivative = (cashFlows: { amount: number; date: Date }[], rate: numbe
   let sum = 0;
   for (const cf of cashFlows) {
     const days = diffInDays(cf.date, startDate);
-    sum += (-days / 365) * cf.amount / Math.pow(1 + rate, (days / 365) + 1);
+    const base = 1 + rate;
+    if (base <= 0) return Infinity;
+    sum += (-days / 365) * cf.amount / Math.pow(base, (days / 365) + 1);
   }
   return sum;
 }
 
-// 4. The Solver
+// 4. The Solver - FIXED VERSION
 export function calculateXIRR(transactions: { amount: number; date: string }[], currentValue: number) {
-  // Prepare Cash Flows
-  // Buys are NEGATIVE (Money out)
-  // Sells are POSITIVE (Money in)
-  // Current Value is POSITIVE (Money you would get if you sold today)
+  // Validation
+  if (!transactions || transactions.length === 0) return 0;
+  if (currentValue < 0) return 0; // Negative portfolio value doesn't make sense
   
+  // Prepare Cash Flows
   const cashFlows = transactions.map(t => ({
-    amount: t.amount, // Should be negative for buys, positive for sells
+    amount: t.amount,
     date: new Date(t.date)
   }));
 
@@ -49,26 +53,77 @@ export function calculateXIRR(transactions: { amount: number; date: string }[], 
   // Sort by date
   cashFlows.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  // Newton-Raphson Method
-  let rate = 0.1; // Initial guess (10%)
+  // Check if we have meaningful data
+  const totalInvested = cashFlows
+    .filter(cf => cf.amount < 0)
+    .reduce((sum, cf) => sum + Math.abs(cf.amount), 0);
+  
+  if (totalInvested === 0) return 0; // No investments made
+
+  // Calculate simple return to get initial guess
+  const totalReturns = cashFlows
+    .filter(cf => cf.amount > 0)
+    .reduce((sum, cf) => sum + cf.amount, 0);
+  
+  const simpleReturn = (totalReturns - totalInvested) / totalInvested;
+  
+  // Time span in years
+  const firstDate = cashFlows[0].date;
+  const lastDate = cashFlows[cashFlows.length - 1].date;
+  const yearsSpan = diffInDays(lastDate, firstDate) / 365;
+  
+  if (yearsSpan < 0.01) return 0; // Less than ~4 days, not meaningful
+
+  // Initial guess based on simple annualized return
+  let rate = yearsSpan > 0 ? Math.pow(1 + simpleReturn, 1 / yearsSpan) - 1 : simpleReturn;
+  
+  // Clamp initial guess to reasonable bounds
+  rate = Math.max(-0.9, Math.min(rate, 5)); // Between -90% and 500%
+
+  // Newton-Raphson Method with better convergence
   const maxIterations = 100;
-  const tolerance = 1e-6;
+  const tolerance = 1e-7;
 
   for (let i = 0; i < maxIterations; i++) {
     const fValue = xirrEquation(cashFlows, rate);
     const fDerivative = xirrDerivative(cashFlows, rate);
     
-    if (Math.abs(fDerivative) < tolerance) break; // Avoid division by zero
+    // Check for invalid values
+    if (!isFinite(fValue) || !isFinite(fDerivative)) {
+      // Try a different starting point
+      rate = simpleReturn / Math.max(1, yearsSpan);
+      continue;
+    }
+    
+    if (Math.abs(fDerivative) < 1e-10) {
+      // Derivative too small, adjust rate slightly
+      rate = rate * 0.9;
+      continue;
+    }
 
     const newRate = rate - fValue / fDerivative;
     
-    if (Math.abs(newRate - rate) < tolerance) {
-      return newRate * 100; // Return as percentage
+    // Clamp to prevent divergence (allow negative rates down to -99%)
+    const clampedRate = Math.max(-0.99, Math.min(newRate, 10));
+    
+    // Check for convergence
+    if (Math.abs(clampedRate - rate) < tolerance) {
+      rate = clampedRate;
+      break;
     }
     
-    rate = newRate;
+    rate = clampedRate;
   }
 
-  // If calculation fails or is NaN, return 0
-  return isNaN(rate) ? 0 : rate * 100;
+  // Final validation
+  if (!isFinite(rate) || isNaN(rate)) {
+    // Fallback: Calculate simple annualized return
+    if (yearsSpan > 0 && totalInvested > 0) {
+      const finalReturn = (currentValue - totalInvested) / totalInvested;
+      return finalReturn * 100 / yearsSpan; // Simple annualized
+    }
+    return 0;
+  }
+
+  return rate * 100; // Return as percentage (can be negative)
 }
