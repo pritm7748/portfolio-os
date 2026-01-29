@@ -107,34 +107,40 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                     </div>
                 </div>
 
-                {/* 3. CORRELATION HEATMAP (FIXED UI) */}
+                {/* 3. CORRELATION HEATMAP (SCROLLABLE & FULL) */}
                 <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 overflow-hidden flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-slate-800 dark:text-white">Correlation Matrix</h3>
-                        <div className="group relative">
-                            <HelpCircle className="h-4 w-4 text-slate-400 cursor-help" />
-                            <div className="absolute right-0 top-6 w-64 p-3 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                                <p className="mb-1"><span className="text-red-400 font-bold">Red (High +ve):</span> Assets move together. (Riskier)</p>
-                                <p><span className="text-green-400 font-bold">Green (Low/Neg):</span> Assets move differently. (Better Diversification)</p>
+                        <div className="flex items-center gap-2">
+                             <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">
+                                {tickers.length} Stocks
+                             </span>
+                            <div className="group relative">
+                                <HelpCircle className="h-4 w-4 text-slate-400 cursor-help" />
+                                <div className="absolute right-0 top-6 w-64 p-3 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                                    <p className="mb-1"><span className="text-red-400 font-bold">Red (High +ve):</span> Assets move together. (Riskier)</p>
+                                    <p><span className="text-green-400 font-bold">Green (Low/Neg):</span> Assets move differently. (Better Diversification)</p>
+                                </div>
                             </div>
                         </div>
                     </div>
                     
-                    {tickers.length > 15 ? (
+                    {/* SCROLLABLE CONTAINER */}
+                    {tickers.length === 0 ? (
                         <div className="flex h-full items-center justify-center text-slate-400 text-sm italic">
-                            Too many assets for heatmap. Showing top holdings only.
+                            No stock data available for correlation.
                         </div>
                     ) : (
-                        <div className="flex-1 overflow-x-auto overflow-y-hidden pb-2">
+                        <div className="flex-1 overflow-auto max-h-[400px] border border-slate-100 dark:border-slate-800 rounded-lg">
                             {/* Matrix Container - Inline Grid to force content width */}
-                            <div className="inline-grid gap-1" style={{ gridTemplateColumns: `auto repeat(${tickers.length}, 40px)` }}>
+                            <div className="inline-grid gap-1 p-2" style={{ gridTemplateColumns: `auto repeat(${tickers.length}, 40px)` }}>
                                 
                                 {/* TOP LEFT CORNER (Empty) */}
-                                <div className="h-24 bg-transparent"></div>
+                                <div className="h-24 bg-transparent sticky left-0 top-0 z-20 bg-white dark:bg-slate-900"></div>
 
-                                {/* COLUMN HEADERS (Rotated) */}
+                                {/* COLUMN HEADERS (Rotated & Sticky Top) */}
                                 {tickers.map(t => (
-                                    <div key={`col-${t}`} className="h-24 w-10 flex items-end justify-center pb-2">
+                                    <div key={`col-${t}`} className="h-24 w-10 flex items-end justify-center pb-2 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
                                         <span className="text-[10px] font-bold text-slate-500 -rotate-90 origin-bottom-left translate-x-2.5 whitespace-nowrap">
                                             {cleanName(t).substring(0, 10)}
                                         </span>
@@ -144,8 +150,8 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                                 {/* MATRIX ROWS */}
                                 {tickers.map((rowTicker) => (
                                     <>
-                                        {/* ROW LABEL */}
-                                        <div key={`row-${rowTicker}`} className="h-10 flex items-center justify-end pr-3">
+                                        {/* ROW LABEL (Sticky Left) */}
+                                        <div key={`row-${rowTicker}`} className="h-10 flex items-center justify-end pr-3 sticky left-0 z-10 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800">
                                             <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">
                                                 {cleanName(rowTicker).substring(0, 12)}
                                             </span>
@@ -179,25 +185,19 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
 function MetricCard({ label, value, sub, icon: Icon, color, explanation }: any) {
     return (
         <div className="group relative rounded-xl border border-slate-200 bg-slate-50 p-4 dark:bg-slate-800/50 dark:border-slate-700 hover:border-indigo-300 transition-colors">
-            
-            {/* Tooltip Popup */}
             {explanation && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 bg-slate-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
                     {explanation}
-                    {/* Tiny triangle pointer */}
                     <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
                 </div>
             )}
-
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                     <Icon className={`h-4 w-4 ${color}`} />
                     <span className="text-xs font-bold text-slate-500 uppercase">{label}</span>
                 </div>
-                {/* Info Icon Indicator */}
                 <Info className="h-3 w-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
-            
             <div className="text-2xl font-bold text-slate-900 dark:text-white">{value}</div>
             <div className="text-[10px] text-slate-400 mt-1">{sub}</div>
         </div>

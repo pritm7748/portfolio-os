@@ -254,11 +254,10 @@ export default function AnalyticsPage() {
 
     // --- NEW: INSTITUTIONAL RISK METRICS ---
     const riskMetrics = useMemo(() => {
-        if (!chartData || chartData.length === 0 || !historyMap) return null
+        if (!chartData || chartData.length === 0 || !historyMap || !transactions) return null
 
         // 1. Prepare Equity Curve & Benchmark Curve
         const equityCurve = chartData.map(d => ({ date: d.date, value: d.value }))
-        // Filter out dates where benchmark is 0/missing to avoid skewing stats
         const validBenchmarkPoints = chartData.filter(d => d.benchmark && d.benchmark > 0)
         
         if (validBenchmarkPoints.length < 5) return null
@@ -269,20 +268,45 @@ export default function AnalyticsPage() {
         // 2. Compute Ratios
         const beta = calculateBeta(equityReturns, benchmarkReturns)
         const sharpe = calculateSharpe(equityReturns)
-        const volatility = stdDev(equityReturns) * Math.sqrt(252) // Annualized StdDev
+        const volatility = stdDev(equityReturns) * Math.sqrt(252)
         const { maxDrawdown, curve: drawdownCurve } = calculateDrawdown(equityCurve)
 
-        // 3. Compute Correlation (Top 8 assets by value to keep matrix readable)
-        const topTickers = allTickers.slice(0, 8) 
-        const correlationMatrix = calculateCorrelationMatrix(historyMap, topTickers)
+        // 3. FILTER STOCKS FOR MATRIX
+        // We want ONLY pure stocks. No Mutual Funds, No Gold, No Currency.
+        
+        // A. Build a map of Ticker -> Type
+        const tickerTypeMap = new Map<string, string>()
+        transactions.forEach(t => {
+            tickerTypeMap.set(t.assets.ticker, t.assets.asset_type)
+        })
+
+        // B. Filter the list
+        const pureStockTickers = allTickers.filter(ticker => {
+            const type = tickerTypeMap.get(ticker)?.toLowerCase() || ''
+            
+            // Exclude Mutual Funds / ETFs
+            if (type.includes('mutual') || type.includes('fund') || type.includes('etf')) return false
+            
+            // Exclude Commodities / Gold / Silver
+            if (type.includes('gold') || type.includes('silver') || type.includes('commodity')) return false
+            
+            // Exclude Currency / Bonds
+            if (type.includes('currency') || type.includes('bond') || type.includes('debt')) return false
+
+            return true
+        })
+
+        // 4. Calculate Matrix for ALL qualifying stocks
+        // (Removed the .slice(0, 8) limit)
+        const correlationMatrix = calculateCorrelationMatrix(historyMap, pureStockTickers)
 
         return {
             stats: { beta, sharpe, maxDrawdown, stdDev: volatility },
             drawdownCurve,
             correlationMatrix,
-            topTickers
+            topTickers: pureStockTickers
         }
-    }, [chartData, historyMap, allTickers])
+    }, [chartData, historyMap, allTickers, transactions])
 
     useEffect(() => {
         if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
@@ -507,7 +531,7 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* --- 3. NEW: INSTITUTIONAL RISK ANALYSIS --- */}
+            {/* NEW RISK ANALYSIS COMPONENT */}
             {riskMetrics && chartCategory === 'equity' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
