@@ -13,18 +13,29 @@ type Props = {
 export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix, tickers }: Props) {
     
     const getHeatmapColor = (val: number) => {
-        if (val === 1) return 'bg-indigo-600'
-        if (val > 0.7) return 'bg-red-500'
-        if (val > 0.3) return 'bg-red-300'
-        if (val > -0.3) return 'bg-slate-100 dark:bg-slate-800'
-        if (val > -0.7) return 'bg-green-300'
-        return 'bg-green-500'
+        // Self Correlation (1.0) -> Neutral Dark
+        if (val >= 0.99) return 'bg-slate-800 text-white' 
+        
+        // High Positive -> Red (Danger/High Correlation)
+        if (val > 0.7) return 'bg-red-500 text-white'
+        if (val > 0.5) return 'bg-red-400 text-white'
+        if (val > 0.3) return 'bg-red-200 text-slate-800'
+        
+        // Neutral -> Grey
+        if (val > -0.3) return 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+        
+        // Negative -> Green (Hedge/Good Diversification)
+        if (val > -0.7) return 'bg-green-200 text-slate-800'
+        return 'bg-green-500 text-white'
     }
+
+    // Helper to clean ticker names (RELIANCE.NS -> RELIANCE)
+    const cleanName = (t: string) => t.replace('.NS', '').replace('.BO', '').replace(':NSE', '')
 
     return (
         <div className="space-y-6">
             
-            {/* 1. METRICS CARDS WITH EXPLANATIONS */}
+            {/* 1. METRICS CARDS */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <MetricCard 
                     label="Portfolio Beta" 
@@ -73,7 +84,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                             </div>
                         </div>
                     </div>
-                    <div className="h-[300px]">
+                    <div className="h-[350px]">
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={drawdownCurve}>
                                 <defs>
@@ -96,9 +107,9 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                     </div>
                 </div>
 
-                {/* 3. CORRELATION HEATMAP */}
-                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 overflow-hidden">
-                    <div className="flex items-center justify-between mb-4">
+                {/* 3. CORRELATION HEATMAP (FIXED UI) */}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 overflow-hidden flex flex-col">
+                    <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-slate-800 dark:text-white">Correlation Matrix</h3>
                         <div className="group relative">
                             <HelpCircle className="h-4 w-4 text-slate-400 cursor-help" />
@@ -109,37 +120,46 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                         </div>
                     </div>
                     
-                    {tickers.length > 10 ? (
+                    {tickers.length > 15 ? (
                         <div className="flex h-full items-center justify-center text-slate-400 text-sm italic">
-                            Too many assets for heatmap. Select top 10 in settings.
+                            Too many assets for heatmap. Showing top holdings only.
                         </div>
                     ) : (
-                        <div className="overflow-x-auto">
-                            <div className="grid gap-1" style={{ gridTemplateColumns: `30px repeat(${tickers.length}, 1fr)` }}>
-                                {/* Header Row */}
-                                <div className="h-8"></div>
+                        <div className="flex-1 overflow-x-auto overflow-y-hidden pb-2">
+                            {/* Matrix Container - Inline Grid to force content width */}
+                            <div className="inline-grid gap-1" style={{ gridTemplateColumns: `auto repeat(${tickers.length}, 40px)` }}>
+                                
+                                {/* TOP LEFT CORNER (Empty) */}
+                                <div className="h-24 bg-transparent"></div>
+
+                                {/* COLUMN HEADERS (Rotated) */}
                                 {tickers.map(t => (
-                                    <div key={t} className="h-8 flex items-center justify-center">
-                                        <span className="text-[10px] font-bold text-slate-500 -rotate-45 whitespace-nowrap">{t}</span>
+                                    <div key={`col-${t}`} className="h-24 w-10 flex items-end justify-center pb-2">
+                                        <span className="text-[10px] font-bold text-slate-500 -rotate-90 origin-bottom-left translate-x-2.5 whitespace-nowrap">
+                                            {cleanName(t).substring(0, 10)}
+                                        </span>
                                     </div>
                                 ))}
 
-                                {/* Rows */}
+                                {/* MATRIX ROWS */}
                                 {tickers.map((rowTicker) => (
                                     <>
-                                        {/* Row Label */}
-                                        <div key={`label-${rowTicker}`} className="flex items-center justify-end pr-2">
-                                            <span className="text-[10px] font-bold text-slate-500">{rowTicker}</span>
+                                        {/* ROW LABEL */}
+                                        <div key={`row-${rowTicker}`} className="h-10 flex items-center justify-end pr-3">
+                                            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                                {cleanName(rowTicker).substring(0, 12)}
+                                            </span>
                                         </div>
-                                        {/* Cells */}
+
+                                        {/* ROW CELLS */}
                                         {tickers.map((colTicker) => {
                                             const cell = correlationMatrix.find(c => c.x === rowTicker && c.y === colTicker)
                                             const val = cell?.value || 0
                                             return (
                                                 <div 
                                                     key={`${rowTicker}-${colTicker}`}
-                                                    className={`h-8 w-full rounded flex items-center justify-center text-[9px] font-medium text-white/90 ${getHeatmapColor(val)} cursor-default transition-transform hover:scale-105`}
-                                                    title={`${rowTicker} vs ${colTicker}: ${val.toFixed(2)}`}
+                                                    className={`h-10 w-10 rounded-md flex items-center justify-center text-[10px] font-medium transition-transform hover:scale-110 cursor-default shadow-sm ${getHeatmapColor(val)}`}
+                                                    title={`${cleanName(rowTicker)} vs ${cleanName(colTicker)}: ${val.toFixed(2)}`}
                                                 >
                                                     {val.toFixed(1)}
                                                 </div>
@@ -162,7 +182,7 @@ function MetricCard({ label, value, sub, icon: Icon, color, explanation }: any) 
             
             {/* Tooltip Popup */}
             {explanation && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 bg-slate-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
                     {explanation}
                     {/* Tiny triangle pointer */}
                     <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
