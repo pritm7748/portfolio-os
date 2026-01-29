@@ -6,18 +6,19 @@ const diffInDays = (d1: Date, d2: Date) => {
 }
 
 // 2. The XIRR Equation
-// We look for a rate 'r' such that the sum of discounted cash flows is 0.
 const xirrEquation = (cashFlows: { amount: number; date: Date }[], rate: number) => {
   const startDate = cashFlows[0].date;
   let sum = 0;
   for (const cf of cashFlows) {
     const days = diffInDays(cf.date, startDate);
-    sum += cf.amount / Math.pow(1 + rate, days / 365);
+    // Protect against division by zero or complex numbers if rate <= -1
+    const denominator = Math.pow(1 + rate, days / 365);
+    sum += cf.amount / (denominator === 0 ? 0.0000001 : denominator);
   }
   return sum;
 }
 
-// 3. The Derivative (needed for Newton-Raphson solver)
+// 3. The Derivative
 const xirrDerivative = (cashFlows: { amount: number; date: Date }[], rate: number) => {
   const startDate = cashFlows[0].date;
   let sum = 0;
@@ -28,19 +29,15 @@ const xirrDerivative = (cashFlows: { amount: number; date: Date }[], rate: numbe
   return sum;
 }
 
-// 4. The Solver
+// 4. The Solver (Robust Version)
 export function calculateXIRR(transactions: { amount: number; date: string }[], currentValue: number) {
-  // Prepare Cash Flows
-  // Buys are NEGATIVE (Money out)
-  // Sells are POSITIVE (Money in)
-  // Current Value is POSITIVE (Money you would get if you sold today)
-  
+  // --- PREP ---
   const cashFlows = transactions.map(t => ({
-    amount: t.amount, // Should be negative for buys, positive for sells
+    amount: t.amount,
     date: new Date(t.date)
   }));
 
-  // Add the "Terminal Value" (Current Portfolio Value) as if we sold everything today
+  // Add Terminal Value
   cashFlows.push({
     amount: currentValue,
     date: new Date()
@@ -49,26 +46,56 @@ export function calculateXIRR(transactions: { amount: number; date: string }[], 
   // Sort by date
   cashFlows.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  // Newton-Raphson Method
-  let rate = 0.1; // Initial guess (10%)
-  const maxIterations = 100;
-  const tolerance = 1e-6;
-
-  for (let i = 0; i < maxIterations; i++) {
-    const fValue = xirrEquation(cashFlows, rate);
-    const fDerivative = xirrDerivative(cashFlows, rate);
-    
-    if (Math.abs(fDerivative) < tolerance) break; // Avoid division by zero
-
-    const newRate = rate - fValue / fDerivative;
-    
-    if (Math.abs(newRate - rate) < tolerance) {
-      return newRate * 100; // Return as percentage
-    }
-    
-    rate = newRate;
+  // --- EDGE CASE: Total Loss ---
+  // If current value is 0 and we have invested money, it's a -100% return.
+  if (currentValue === 0) {
+      return -100;
   }
 
-  // If calculation fails or is NaN, return 0
-  return isNaN(rate) ? 0 : rate * 100;
+  // --- SOLVER ---
+  // We define a local solve function to try multiple guesses
+  const solve = (guess: number): number | null => {
+      let rate = guess;
+      const maxIterations = 100;
+      const tolerance = 1e-6;
+
+      for (let i = 0; i < maxIterations; i++) {
+          // Clamp rate to prevent Math.pow errors (rate cannot be <= -1)
+          if (rate <= -1) rate = -0.9999; 
+
+          const fValue = xirrEquation(cashFlows, rate);
+          
+          // Check if we found the root
+          if (Math.abs(fValue) < tolerance) return rate;
+
+          const fDerivative = xirrDerivative(cashFlows, rate);
+
+          // Avoid division by zero
+          if (Math.abs(fDerivative) < tolerance) break; 
+
+          const newRate = rate - fValue / fDerivative;
+
+          // Convergence check
+          if (Math.abs(newRate - rate) < tolerance) return newRate;
+
+          rate = newRate;
+      }
+      return null; // Failed to converge
+  }
+
+  // --- STRATEGY: Try Multiple Guesses ---
+  // 1. Try 10% (Standard)
+  // 2. Try -10% (For loss-making portfolios)
+  // 3. Try -50% (For heavy losses)
+  const guesses = [0.1, -0.1, -0.5, 0.5];
+
+  for (const guess of guesses) {
+      const result = solve(guess);
+      if (result !== null && !isNaN(result) && isFinite(result)) {
+          return result * 100;
+      }
+  }
+
+  // If all failed, return 0 (or you could calculate simple ROI as fallback)
+  return 0;
 }
