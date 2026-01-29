@@ -2,6 +2,12 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { calculateXIRR } from '@/lib/xirr'
+import { 
+    calculateBeta, calculateSharpe, calculateDrawdown, calculateCorrelationMatrix, 
+    getReturns, stdDev 
+} from '@/lib/analytics-math' // --- NEW IMPORT ---
+import RiskAnalysis from '@/components/risk-analysis' // --- NEW IMPORT ---
+
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -90,6 +96,9 @@ export default function AnalyticsPage() {
     const [alpha, setAlpha] = useState(0)
     const [portfolioReturn, setPortfolioReturn] = useState(0)
     const [benchmarkReturn, setBenchmarkReturn] = useState(0)
+
+    // --- NEW: Raw History State for Risk Calculations ---
+    const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({})
 
     const getCategory = (type: string) => {
         const t = type.toLowerCase()
@@ -211,10 +220,10 @@ export default function AnalyticsPage() {
         const unrealized = valTotal - costTotal
         const totalProfit = unrealized + totalRealizedPnL + totalDividends
         
-        // Calculate XIRR with checks
-        const xirrTotal = (flowsTotal.length > 0 && valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
-        const xirrEq = (flowsEquity.length > 0 && valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
-        const xirrComm = (flowsComm.length > 0 && valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
+        // Calculate XIRR with checks (using >= 0 to allow for total loss scenario)
+        const xirrTotal = (flowsTotal.length > 0 && valTotal >= 0) ? calculateXIRR(flowsTotal, valTotal) : 0
+        const xirrEq = (flowsEquity.length > 0 && valEq >= 0) ? calculateXIRR(flowsEquity, valEq) : 0
+        const xirrComm = (flowsComm.length > 0 && valComm >= 0) ? calculateXIRR(flowsComm, valComm) : 0
 
         const finalMetrics = {
             totalXirr: xirrTotal, equityXirr: xirrEq, commXirr: xirrComm,
@@ -242,6 +251,38 @@ export default function AnalyticsPage() {
         return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary }
 
     }, [transactions, priceMap])
+
+    // --- NEW: INSTITUTIONAL RISK METRICS ---
+    const riskMetrics = useMemo(() => {
+        if (!chartData || chartData.length === 0 || !historyMap) return null
+
+        // 1. Prepare Equity Curve & Benchmark Curve
+        const equityCurve = chartData.map(d => ({ date: d.date, value: d.value }))
+        // Filter out dates where benchmark is 0/missing to avoid skewing stats
+        const validBenchmarkPoints = chartData.filter(d => d.benchmark && d.benchmark > 0)
+        
+        if (validBenchmarkPoints.length < 5) return null
+
+        const equityReturns = getReturns(equityCurve)
+        const benchmarkReturns = getReturns(validBenchmarkPoints.map(d => ({ date: d.date, value: d.benchmark || 0 })))
+
+        // 2. Compute Ratios
+        const beta = calculateBeta(equityReturns, benchmarkReturns)
+        const sharpe = calculateSharpe(equityReturns)
+        const volatility = stdDev(equityReturns) * Math.sqrt(252) // Annualized StdDev
+        const { maxDrawdown, curve: drawdownCurve } = calculateDrawdown(equityCurve)
+
+        // 3. Compute Correlation (Top 8 assets by value to keep matrix readable)
+        const topTickers = allTickers.slice(0, 8) 
+        const correlationMatrix = calculateCorrelationMatrix(historyMap, topTickers)
+
+        return {
+            stats: { beta, sharpe, maxDrawdown, stdDev: volatility },
+            drawdownCurve,
+            correlationMatrix,
+            topTickers
+        }
+    }, [chartData, historyMap, allTickers])
 
     useEffect(() => {
         if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
@@ -276,11 +317,14 @@ export default function AnalyticsPage() {
                 method: 'POST', 
                 body: JSON.stringify({ tickers: tickersToFetch, range }) 
             })
-            const historyMap = await res.json()
+            const rawHistoryMap = await res.json()
+            
+            // --- SAVE RAW HISTORY FOR RISK ANALYTICS ---
+            setHistoryMap(rawHistoryMap)
 
             const benchmarkHistory: Record<string, number> = {}
-            if (historyMap[BENCHMARK_TICKER] && Array.isArray(historyMap[BENCHMARK_TICKER])) {
-                historyMap[BENCHMARK_TICKER].forEach((point: any) => {
+            if (rawHistoryMap[BENCHMARK_TICKER] && Array.isArray(rawHistoryMap[BENCHMARK_TICKER])) {
+                rawHistoryMap[BENCHMARK_TICKER].forEach((point: any) => {
                     benchmarkHistory[point.date] = point.value || point.price || 0
                 })
             }
@@ -288,7 +332,7 @@ export default function AnalyticsPage() {
             const priceLookup: Record<string, Record<string, number>> = {}
             const allDatesSet = new Set<string>()
             
-            Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
+            Object.entries(rawHistoryMap).forEach(([ticker, history]: [string, any]) => {
                 if (ticker === BENCHMARK_TICKER) return
                 if (!Array.isArray(history)) return
                 history.forEach((point: any) => {
@@ -310,7 +354,6 @@ export default function AnalyticsPage() {
             let firstBenchmarkValue = 0
             let firstPortfolioValue = 0
             
-            // FIX: Track last known benchmark to "Fill Forward" gaps
             let lastKnownBenchmark = 0
 
             for (const date of sortedDates) {
@@ -345,12 +388,11 @@ export default function AnalyticsPage() {
                     }
                 })
 
-                // FIX: Benchmark "Fill Forward" Logic
+                // Benchmark Fill Forward Logic
                 let benchmarkValue = benchmarkHistory[date] || 0
                 if (benchmarkValue > 0) {
                     lastKnownBenchmark = benchmarkValue
                 } else if (lastKnownBenchmark > 0) {
-                    // Use yesterday's value if today is 0/missing
                     benchmarkValue = lastKnownBenchmark
                 }
 
@@ -371,7 +413,7 @@ export default function AnalyticsPage() {
 
                     const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
                         ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
-                        : 0 // Don't show line if benchmark missing
+                        : 0
 
                     finalChartData.push({ 
                         date, 
@@ -428,7 +470,7 @@ export default function AnalyticsPage() {
             {/* 2. METRICS CARDS */}
             {metrics && (
                 <div className="grid gap-6 md:grid-cols-3">
-                    {/* TOTAL XIRR - Added Red Color for Negative */}
+                    {/* TOTAL XIRR */}
                     <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-4 opacity-10"><TrendingUp size={100} /></div>
                         <div className="flex items-center justify-between mb-2 opacity-90 relative z-10">
@@ -465,10 +507,25 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 3. AI ANALYST */}
+            {/* --- 3. NEW: INSTITUTIONAL RISK ANALYSIS --- */}
+            {riskMetrics && chartCategory === 'equity' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                        <Briefcase className="h-5 w-5 text-indigo-500" /> Institutional Risk Analysis
+                    </h3>
+                    <RiskAnalysis 
+                        metrics={riskMetrics.stats}
+                        drawdownCurve={riskMetrics.drawdownCurve}
+                        correlationMatrix={riskMetrics.correlationMatrix}
+                        tickers={riskMetrics.topTickers}
+                    />
+                </div>
+            )}
+
+            {/* 4. AI ANALYST */}
             {aiSummary && <AIAnalyst data={aiSummary} />}
 
-            {/* 4. FINANCIAL SUMMARY */}
+            {/* 5. FINANCIAL SUMMARY */}
             {metrics && (
                 <div className="grid gap-6 md:grid-cols-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -490,8 +547,8 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 5. RISK ANALYSIS */}
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Risk Analysis</h3>
+            {/* 6. RISK ANALYSIS (Sector & Conglomerate) */}
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Portfolio Composition</h3>
             <div className="grid gap-6 md:grid-cols-2">
 
                 {/* SECTOR EXPOSURE */}
@@ -609,7 +666,7 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
-            {/* 6. PORTFOLIO HEALTH */}
+            {/* 7. PORTFOLIO HEALTH */}
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
                 <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
                 <ul className="space-y-6">
