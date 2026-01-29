@@ -5,8 +5,9 @@ import { calculateXIRR } from '@/lib/xirr'
 import { 
     calculateBeta, calculateSharpe, calculateDrawdown, calculateCorrelationMatrix, 
     getReturns, stdDev 
-} from '@/lib/analytics-math' // --- NEW IMPORT ---
-import RiskAnalysis from '@/components/risk-analysis' // --- NEW IMPORT ---
+} from '@/lib/analytics-math'
+import RiskAnalysis from '@/components/risk-analysis'
+import WealthSimulator from '@/components/wealth-simulator' // --- NEW IMPORT ---
 
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
@@ -22,16 +23,7 @@ import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
 const BENCHMARK_TICKER = '^NSEI' // NIFTY 50
 
-type ChartDataPoint = { 
-    date: string
-    invested: number
-    value: number
-    benchmark?: number
-    portfolioReturn?: number
-    benchmarkReturn?: number
-}
-
-// --- HELPER: CUSTOM TOOLTIP ---
+// --- HELPERS ---
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
@@ -58,7 +50,6 @@ const CustomTooltip = ({ active, payload }: any) => {
     return null
 }
 
-// --- HELPER: STATIC ACTIVE SHAPE ---
 const renderActiveShape = (props: any) => {
     const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props
     return (
@@ -86,18 +77,14 @@ export default function AnalyticsPage() {
 
     const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
-    const [chartData, setChartData] = useState<ChartDataPoint[]>([])
+    const [chartData, setChartData] = useState<any[]>([])
     const [chartLoading, setChartLoading] = useState(false)
     const [chartCategory, setChartCategory] = useState<'equity' | 'commodity'>('equity')
     const [currentRange, setCurrentRange] = useState('1y')
-    
-    // Benchmark comparison state
     const [showBenchmark, setShowBenchmark] = useState(true)
     const [alpha, setAlpha] = useState(0)
     const [portfolioReturn, setPortfolioReturn] = useState(0)
     const [benchmarkReturn, setBenchmarkReturn] = useState(0)
-
-    // --- NEW: Raw History State for Risk Calculations ---
     const [historyMap, setHistoryMap] = useState<Record<string, any[]>>({})
 
     const getCategory = (type: string) => {
@@ -138,7 +125,6 @@ export default function AnalyticsPage() {
             if (category === 'commodity') flowsComm.push(flow)
             else flowsEquity.push(flow)
 
-            // Building portfolio state
             if (!assetLots[ticker]) {
                 assetLots[ticker] = []
                 portfolio[ticker] = { quantity: 0, totalInvested: 0, ticker, name, type: asset_type, sector }
@@ -220,7 +206,6 @@ export default function AnalyticsPage() {
         const unrealized = valTotal - costTotal
         const totalProfit = unrealized + totalRealizedPnL + totalDividends
         
-        // Calculate XIRR with checks (using >= 0 to allow for total loss scenario)
         const xirrTotal = (flowsTotal.length > 0 && valTotal >= 0) ? calculateXIRR(flowsTotal, valTotal) : 0
         const xirrEq = (flowsEquity.length > 0 && valEq >= 0) ? calculateXIRR(flowsEquity, valEq) : 0
         const xirrComm = (flowsComm.length > 0 && valComm >= 0) ? calculateXIRR(flowsComm, valComm) : 0
@@ -252,11 +237,11 @@ export default function AnalyticsPage() {
 
     }, [transactions, priceMap])
 
-    // --- NEW: INSTITUTIONAL RISK METRICS ---
+
+    // --- RISK METRICS & FILTERING LOGIC ---
     const riskMetrics = useMemo(() => {
         if (!chartData || chartData.length === 0 || !historyMap || !transactions) return null
 
-        // 1. Prepare Equity Curve & Benchmark Curve
         const equityCurve = chartData.map(d => ({ date: d.date, value: d.value }))
         const validBenchmarkPoints = chartData.filter(d => d.benchmark && d.benchmark > 0)
         
@@ -265,39 +250,23 @@ export default function AnalyticsPage() {
         const equityReturns = getReturns(equityCurve)
         const benchmarkReturns = getReturns(validBenchmarkPoints.map(d => ({ date: d.date, value: d.benchmark || 0 })))
 
-        // 2. Compute Ratios
         const beta = calculateBeta(equityReturns, benchmarkReturns)
         const sharpe = calculateSharpe(equityReturns)
         const volatility = stdDev(equityReturns) * Math.sqrt(252)
         const { maxDrawdown, curve: drawdownCurve } = calculateDrawdown(equityCurve)
 
-        // 3. FILTER STOCKS FOR MATRIX
-        // We want ONLY pure stocks. No Mutual Funds, No Gold, No Currency.
-        
-        // A. Build a map of Ticker -> Type
+        // Filter Pure Stocks for Correlation Matrix
         const tickerTypeMap = new Map<string, string>()
-        transactions.forEach(t => {
-            tickerTypeMap.set(t.assets.ticker, t.assets.asset_type)
-        })
+        transactions.forEach(t => tickerTypeMap.set(t.assets.ticker, t.assets.asset_type))
 
-        // B. Filter the list
         const pureStockTickers = allTickers.filter(ticker => {
             const type = tickerTypeMap.get(ticker)?.toLowerCase() || ''
-            
-            // Exclude Mutual Funds / ETFs
             if (type.includes('mutual') || type.includes('fund') || type.includes('etf')) return false
-            
-            // Exclude Commodities / Gold / Silver
             if (type.includes('gold') || type.includes('silver') || type.includes('commodity')) return false
-            
-            // Exclude Currency / Bonds
             if (type.includes('currency') || type.includes('bond') || type.includes('debt')) return false
-
             return true
         })
 
-        // 4. Calculate Matrix for ALL qualifying stocks
-        // (Removed the .slice(0, 8) limit)
         const correlationMatrix = calculateCorrelationMatrix(historyMap, pureStockTickers)
 
         return {
@@ -333,20 +302,26 @@ export default function AnalyticsPage() {
             }
 
             const tickersToFetch = Array.from(relevantTickers)
-            if (category === 'equity') {
-                tickersToFetch.push(BENCHMARK_TICKER)
-            }
+            if (category === 'equity') tickersToFetch.push(BENCHMARK_TICKER)
 
             const res = await fetch('/api/history', { 
                 method: 'POST', 
                 body: JSON.stringify({ tickers: tickersToFetch, range }) 
             })
             const rawHistoryMap = await res.json()
-            
-            // --- SAVE RAW HISTORY FOR RISK ANALYTICS ---
             setHistoryMap(rawHistoryMap)
 
-            const benchmarkHistory: Record<string, number> = {}
+            // ... (Rest of your Chart Data Logic - kept identical to previous version)
+            // Re-pasting brevity here, but ensure your existing logic is preserved
+            // for constructing 'finalChartData'
+            
+            // Note: Since I don't want to cut off your existing logic,
+            // I'm assuming the existing code block for creating finalChartData is here.
+            // ...
+            
+            // TEMPORARY FIX to prevent empty chart error if logic above is omitted in copy-paste
+            // In your actual file, keep the logic from the previous step.
+             const benchmarkHistory: Record<string, number> = {}
             if (rawHistoryMap[BENCHMARK_TICKER] && Array.isArray(rawHistoryMap[BENCHMARK_TICKER])) {
                 rawHistoryMap[BENCHMARK_TICKER].forEach((point: any) => {
                     benchmarkHistory[point.date] = point.value || point.price || 0
@@ -368,7 +343,7 @@ export default function AnalyticsPage() {
             })
 
             const sortedDates = Array.from(allDatesSet).sort()
-            const finalChartData: ChartDataPoint[] = []
+            const finalChartData: any[] = [] // ChartDataPoint
             const runningHoldings: Record<string, number> = {}
             const lastKnownPrices: Record<string, number> = {}
 
@@ -377,17 +352,14 @@ export default function AnalyticsPage() {
 
             let firstBenchmarkValue = 0
             let firstPortfolioValue = 0
-            
             let lastKnownBenchmark = 0
 
             for (const date of sortedDates) {
                 const dayStart = new Date(date).getTime()
-
                 while (txnIndex < categoryTxns.length) {
                     const t = categoryTxns[txnIndex]
                     const tTime = new Date(t.date).getTime()
                     if (tTime > dayStart + 86400000) break
-
                     if (t.transaction_type === 'Buy') {
                         runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
                         runningInvested += (Number(t.price) * Number(t.quantity))
@@ -412,32 +384,17 @@ export default function AnalyticsPage() {
                     }
                 })
 
-                // Benchmark Fill Forward Logic
                 let benchmarkValue = benchmarkHistory[date] || 0
-                if (benchmarkValue > 0) {
-                    lastKnownBenchmark = benchmarkValue
-                } else if (lastKnownBenchmark > 0) {
-                    benchmarkValue = lastKnownBenchmark
-                }
+                if (benchmarkValue > 0) lastKnownBenchmark = benchmarkValue
+                else if (lastKnownBenchmark > 0) benchmarkValue = lastKnownBenchmark
 
                 if (runningInvested > 0 || dailyValue > 0) {
-                    if (firstPortfolioValue === 0 && dailyValue > 0) {
-                        firstPortfolioValue = dailyValue
-                    }
-                    if (firstBenchmarkValue === 0 && benchmarkValue > 0) {
-                        firstBenchmarkValue = benchmarkValue
-                    }
+                    if (firstPortfolioValue === 0 && dailyValue > 0) firstPortfolioValue = dailyValue
+                    if (firstBenchmarkValue === 0 && benchmarkValue > 0) firstBenchmarkValue = benchmarkValue
 
-                    const portfolioReturnPct = firstPortfolioValue > 0 
-                        ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 
-                        : 0
-                    const benchmarkReturnPct = firstBenchmarkValue > 0 
-                        ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 
-                        : 0
-
-                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
-                        ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
-                        : 0
+                    const portfolioReturnPct = firstPortfolioValue > 0 ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 : 0
+                    const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
+                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue : 0
 
                     finalChartData.push({ 
                         date, 
@@ -450,11 +407,10 @@ export default function AnalyticsPage() {
                 }
             }
 
-            if (finalChartData.length > 0) {
+             if (finalChartData.length > 0) {
                 const lastPoint = finalChartData[finalChartData.length - 1]
                 const finalPortfolioReturn = lastPoint.portfolioReturn || 0
                 const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
-                
                 setPortfolioReturn(finalPortfolioReturn)
                 setBenchmarkReturn(finalBenchmarkReturn)
                 setAlpha(finalPortfolioReturn - finalBenchmarkReturn)
@@ -494,7 +450,6 @@ export default function AnalyticsPage() {
             {/* 2. METRICS CARDS */}
             {metrics && (
                 <div className="grid gap-6 md:grid-cols-3">
-                    {/* TOTAL XIRR */}
                     <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-4 opacity-10"><TrendingUp size={100} /></div>
                         <div className="flex items-center justify-between mb-2 opacity-90 relative z-10">
@@ -531,7 +486,22 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* NEW RISK ANALYSIS COMPONENT */}
+            {/* 3. NEW: WEALTH SIMULATOR (Monte Carlo) */}
+            {riskMetrics && chartCategory === 'equity' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <WealthSimulator 
+                        currentValue={metrics.netWorth}
+                        stats={{
+                            // Convert XIRR percentage to decimal (15% -> 0.15)
+                            // Use StdDev from Risk Calc
+                            expectedReturn: metrics.xirr / 100,
+                            volatility: riskMetrics.stats.stdDev
+                        }}
+                    />
+                </div>
+            )}
+
+            {/* 4. NEW: INSTITUTIONAL RISK ANALYSIS */}
             {riskMetrics && chartCategory === 'equity' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
@@ -546,10 +516,10 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 4. AI ANALYST */}
+            {/* 5. AI ANALYST */}
             {aiSummary && <AIAnalyst data={aiSummary} />}
 
-            {/* 5. FINANCIAL SUMMARY */}
+            {/* 6. FINANCIAL SUMMARY */}
             {metrics && (
                 <div className="grid gap-6 md:grid-cols-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -571,7 +541,7 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 6. RISK ANALYSIS (Sector & Conglomerate) */}
+            {/* 7. PORTFOLIO COMPOSITION */}
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Portfolio Composition</h3>
             <div className="grid gap-6 md:grid-cols-2">
 
@@ -690,7 +660,7 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
-            {/* 7. PORTFOLIO HEALTH */}
+            {/* 8. PORTFOLIO HEALTH */}
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
                 <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
                 <ul className="space-y-6">
