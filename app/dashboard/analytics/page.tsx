@@ -1,9 +1,8 @@
-// app/dashboard/analytics/page.tsx
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
 import { calculateXIRR } from '@/lib/xirr'
-import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info } from 'lucide-react'
+import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
     PieChart, Pie, Cell, Sector
@@ -130,6 +129,7 @@ export default function AnalyticsPage() {
             if (category === 'commodity') flowsComm.push(flow)
             else flowsEquity.push(flow)
 
+            // Building portfolio state
             if (!assetLots[ticker]) {
                 assetLots[ticker] = []
                 portfolio[ticker] = { quantity: 0, totalInvested: 0, ticker, name, type: asset_type, sector }
@@ -210,9 +210,11 @@ export default function AnalyticsPage() {
 
         const unrealized = valTotal - costTotal
         const totalProfit = unrealized + totalRealizedPnL + totalDividends
-        const xirrTotal = (flowsTotal.length > 0 || valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
-        const xirrEq = (flowsEquity.length > 0 || valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
-        const xirrComm = (flowsComm.length > 0 || valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
+        
+        // Calculate XIRR with checks
+        const xirrTotal = (flowsTotal.length > 0 && valTotal > 0) ? calculateXIRR(flowsTotal, valTotal) : 0
+        const xirrEq = (flowsEquity.length > 0 && valEq > 0) ? calculateXIRR(flowsEquity, valEq) : 0
+        const xirrComm = (flowsComm.length > 0 && valComm > 0) ? calculateXIRR(flowsComm, valComm) : 0
 
         const finalMetrics = {
             totalXirr: xirrTotal, equityXirr: xirrEq, commXirr: xirrComm,
@@ -241,156 +243,136 @@ export default function AnalyticsPage() {
 
     }, [transactions, priceMap])
 
-    // Fetch chart data on load
     useEffect(() => {
         if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
     }, [transactions])
 
     const fetchChartData = async (range: string, category: 'equity' | 'commodity') => {
-    if (!transactions) return
-    setChartLoading(true)
-    setChartCategory(category)
-    setCurrentRange(range)
+        if (!transactions) return
+        setChartLoading(true)
+        setChartCategory(category)
+        setCurrentRange(range)
 
-    try {
-        const relevantTickers = new Set<string>()
-        const categoryTxns = transactions.filter(t => {
-            const cat = getCategory(t.assets.asset_type)
-            if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
-            return false
-        })
-
-        if (relevantTickers.size === 0) { 
-            setChartData([])
-            setChartLoading(false)
-            return 
-        }
-
-        // Fetch portfolio history AND benchmark
-        const tickersToFetch = Array.from(relevantTickers)
-        if (category === 'equity') {
-            tickersToFetch.push(BENCHMARK_TICKER) // Add NIFTY 50
-        }
-
-        const res = await fetch('/api/history', { 
-            method: 'POST', 
-            body: JSON.stringify({ tickers: tickersToFetch, range }) 
-        })
-        const historyMap = await res.json()
-
-        // Extract benchmark data with better null handling
-        const benchmarkHistory: Record<string, number> = {}
-        let lastKnownBenchmarkValue = 0 // Track last valid value
-        
-        if (historyMap[BENCHMARK_TICKER] && Array.isArray(historyMap[BENCHMARK_TICKER])) {
-            // First pass: collect all valid values
-            historyMap[BENCHMARK_TICKER].forEach((point: any) => {
-                const value = point.value || point.price || 0
-                if (value > 0) {
-                    benchmarkHistory[point.date] = value
-                }
+        try {
+            const relevantTickers = new Set<string>()
+            const categoryTxns = transactions.filter(t => {
+                const cat = getCategory(t.assets.asset_type)
+                if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
+                return false
             })
-        }
 
-        const priceLookup: Record<string, Record<string, number>> = {}
-        const allDatesSet = new Set<string>()
-        
-        Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
-            if (ticker === BENCHMARK_TICKER) return // Skip benchmark in portfolio calc
-            if (!Array.isArray(history)) return
-            history.forEach((point: any) => {
-                const d = point.date
-                allDatesSet.add(d)
-                if (!priceLookup[d]) priceLookup[d] = {}
-                priceLookup[d][ticker] = point.value || point.price || 0
-            })
-        })
-
-        const sortedDates = Array.from(allDatesSet).sort()
-        const finalChartData: ChartDataPoint[] = []
-        const runningHoldings: Record<string, number> = {}
-        const lastKnownPrices: Record<string, number> = {}
-
-        let runningInvested = 0
-        let txnIndex = 0
-
-        // Get first benchmark value for return calculation
-        let firstBenchmarkValue = 0
-        let firstPortfolioValue = 0
-        let lastValidBenchmark = 0 // NEW: Track last valid benchmark for forward-fill
-
-        for (const date of sortedDates) {
-            const dayStart = new Date(date).getTime()
-
-            while (txnIndex < categoryTxns.length) {
-                const t = categoryTxns[txnIndex]
-                const tTime = new Date(t.date).getTime()
-                if (tTime > dayStart + 86400000) break
-
-                if (t.transaction_type === 'Buy') {
-                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
-                    runningInvested += (Number(t.price) * Number(t.quantity))
-                } else if (t.transaction_type === 'Sell') {
-                    runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
-                    runningInvested -= (Number(t.price) * Number(t.quantity))
-                }
-                txnIndex++
+            if (relevantTickers.size === 0) { 
+                setChartData([])
+                setChartLoading(false)
+                return 
             }
 
-            const daysPrices = priceLookup[date] || {}
-            Object.keys(daysPrices).forEach(t => {
-                if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
-            })
+            const tickersToFetch = Array.from(relevantTickers)
+            if (category === 'equity') {
+                tickersToFetch.push(BENCHMARK_TICKER)
+            }
 
-            let dailyValue = 0
-            Object.keys(runningHoldings).forEach(ticker => {
-                const qty = runningHoldings[ticker]
-                if (qty > 0) {
-                    const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
-                    if (price > 0) dailyValue += (qty * price)
-                }
+            const res = await fetch('/api/history', { 
+                method: 'POST', 
+                body: JSON.stringify({ tickers: tickersToFetch, range }) 
             })
+            const historyMap = await res.json()
 
-            // FIX: Get benchmark value with forward-fill for missing dates
-            let benchmarkValue = benchmarkHistory[date] || 0
+            const benchmarkHistory: Record<string, number> = {}
+            if (historyMap[BENCHMARK_TICKER] && Array.isArray(historyMap[BENCHMARK_TICKER])) {
+                historyMap[BENCHMARK_TICKER].forEach((point: any) => {
+                    benchmarkHistory[point.date] = point.value || point.price || 0
+                })
+            }
+
+            const priceLookup: Record<string, Record<string, number>> = {}
+            const allDatesSet = new Set<string>()
             
-            // If no value for this date, use last known valid value
-            if (benchmarkValue === 0 && lastValidBenchmark > 0) {
-                benchmarkValue = lastValidBenchmark
-            }
+            Object.entries(historyMap).forEach(([ticker, history]: [string, any]) => {
+                if (ticker === BENCHMARK_TICKER) return
+                if (!Array.isArray(history)) return
+                history.forEach((point: any) => {
+                    const d = point.date
+                    allDatesSet.add(d)
+                    if (!priceLookup[d]) priceLookup[d] = {}
+                    priceLookup[d][ticker] = point.value || point.price || 0
+                })
+            })
+
+            const sortedDates = Array.from(allDatesSet).sort()
+            const finalChartData: ChartDataPoint[] = []
+            const runningHoldings: Record<string, number> = {}
+            const lastKnownPrices: Record<string, number> = {}
+
+            let runningInvested = 0
+            let txnIndex = 0
+
+            let firstBenchmarkValue = 0
+            let firstPortfolioValue = 0
             
-            // Update last valid benchmark if we have a real value
-            if (benchmarkValue > 0) {
-                lastValidBenchmark = benchmarkValue
-            }
+            // FIX: Track last known benchmark to "Fill Forward" gaps
+            let lastKnownBenchmark = 0
 
-            if (runningInvested > 0 || dailyValue > 0) {
-                // Track first values for return calculation
-                if (firstPortfolioValue === 0 && dailyValue > 0) {
-                    firstPortfolioValue = dailyValue
+            for (const date of sortedDates) {
+                const dayStart = new Date(date).getTime()
+
+                while (txnIndex < categoryTxns.length) {
+                    const t = categoryTxns[txnIndex]
+                    const tTime = new Date(t.date).getTime()
+                    if (tTime > dayStart + 86400000) break
+
+                    if (t.transaction_type === 'Buy') {
+                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
+                        runningInvested += (Number(t.price) * Number(t.quantity))
+                    } else if (t.transaction_type === 'Sell') {
+                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
+                        runningInvested -= (Number(t.price) * Number(t.quantity))
+                    }
+                    txnIndex++
                 }
-                if (firstBenchmarkValue === 0 && benchmarkValue > 0) {
-                    firstBenchmarkValue = benchmarkValue
+
+                const daysPrices = priceLookup[date] || {}
+                Object.keys(daysPrices).forEach(t => {
+                    if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
+                })
+
+                let dailyValue = 0
+                Object.keys(runningHoldings).forEach(ticker => {
+                    const qty = runningHoldings[ticker]
+                    if (qty > 0) {
+                        const price = daysPrices[ticker] || lastKnownPrices[ticker] || 0
+                        if (price > 0) dailyValue += (qty * price)
+                    }
+                })
+
+                // FIX: Benchmark "Fill Forward" Logic
+                let benchmarkValue = benchmarkHistory[date] || 0
+                if (benchmarkValue > 0) {
+                    lastKnownBenchmark = benchmarkValue
+                } else if (lastKnownBenchmark > 0) {
+                    // Use yesterday's value if today is 0/missing
+                    benchmarkValue = lastKnownBenchmark
                 }
 
-                // Calculate returns from start
-                const portfolioReturnPct = firstPortfolioValue > 0 
-                    ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 
-                    : 0
-                const benchmarkReturnPct = firstBenchmarkValue > 0 
-                    ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 
-                    : 0
+                if (runningInvested > 0 || dailyValue > 0) {
+                    if (firstPortfolioValue === 0 && dailyValue > 0) {
+                        firstPortfolioValue = dailyValue
+                    }
+                    if (firstBenchmarkValue === 0 && benchmarkValue > 0) {
+                        firstBenchmarkValue = benchmarkValue
+                    }
 
-                // Normalize benchmark to same starting value as portfolio for comparison
-                const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
-                    ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
-                    : benchmarkValue
+                    const portfolioReturnPct = firstPortfolioValue > 0 
+                        ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 
+                        : 0
+                    const benchmarkReturnPct = firstBenchmarkValue > 0 
+                        ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 
+                        : 0
 
-                // Only add data point if benchmark is valid (or we're not showing benchmark)
-                // This prevents the 0 spikes
-                const hasBenchmarkData = category !== 'equity' || normalizedBenchmark > 0
+                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0
+                        ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue
+                        : 0 // Don't show line if benchmark missing
 
-                if (hasBenchmarkData) {
                     finalChartData.push({ 
                         date, 
                         invested: Math.max(0, runningInvested), 
@@ -401,27 +383,25 @@ export default function AnalyticsPage() {
                     })
                 }
             }
-        }
 
-        // Calculate final alpha
-        if (finalChartData.length > 0) {
-            const lastPoint = finalChartData[finalChartData.length - 1]
-            const finalPortfolioReturn = lastPoint.portfolioReturn || 0
-            const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
-            
-            setPortfolioReturn(finalPortfolioReturn)
-            setBenchmarkReturn(finalBenchmarkReturn)
-            setAlpha(finalPortfolioReturn - finalBenchmarkReturn)
-            setShowBenchmark(category === 'equity')
-        }
+            if (finalChartData.length > 0) {
+                const lastPoint = finalChartData[finalChartData.length - 1]
+                const finalPortfolioReturn = lastPoint.portfolioReturn || 0
+                const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
+                
+                setPortfolioReturn(finalPortfolioReturn)
+                setBenchmarkReturn(finalBenchmarkReturn)
+                setAlpha(finalPortfolioReturn - finalBenchmarkReturn)
+                setShowBenchmark(category === 'equity')
+            }
 
-        setChartData(finalChartData)
-    } catch (e) { 
-        console.error(e) 
-    } finally { 
-        setChartLoading(false) 
+            setChartData(finalChartData)
+        } catch (e) { 
+            console.error(e) 
+        } finally { 
+            setChartLoading(false) 
+        }
     }
-}
 
     if (txnsLoading && !metrics) return (
         <div className="flex h-96 items-center justify-center">
@@ -432,7 +412,6 @@ export default function AnalyticsPage() {
     return (
         <div className="space-y-6 pb-10">
 
-            {/* 1. BENCHMARK CHART */}
             <PortfolioHistoryChart
                 data={chartData}
                 isLoading={chartLoading}
@@ -449,13 +428,16 @@ export default function AnalyticsPage() {
             {/* 2. METRICS CARDS */}
             {metrics && (
                 <div className="grid gap-6 md:grid-cols-3">
+                    {/* TOTAL XIRR - Added Red Color for Negative */}
                     <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-700 p-6 text-white shadow-lg relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-4 opacity-10"><TrendingUp size={100} /></div>
                         <div className="flex items-center justify-between mb-2 opacity-90 relative z-10">
                             <span className="font-medium text-sm uppercase tracking-wider">Total XIRR</span>
                             <TrendingUp className="h-5 w-5" />
                         </div>
-                        <div className="text-4xl font-bold relative z-10">{metrics.totalXirr.toFixed(2)}%</div>
+                        <div className={`text-4xl font-bold relative z-10 ${metrics.totalXirr < 0 ? 'text-red-300' : 'text-white'}`}>
+                            {metrics.totalXirr.toFixed(2)}%
+                        </div>
                         <p className="text-xs mt-2 opacity-70 relative z-10">Annualized Return</p>
                     </div>
 
@@ -464,7 +446,9 @@ export default function AnalyticsPage() {
                             <span className="font-medium text-sm uppercase tracking-wider">Equity XIRR</span>
                             <BarChart3 className="h-5 w-5 text-indigo-500" />
                         </div>
-                        <div className="text-3xl font-bold text-slate-900 dark:text-white">{metrics.equityXirr.toFixed(2)}%</div>
+                        <div className={`text-3xl font-bold ${metrics.equityXirr < 0 ? 'text-red-500' : 'text-slate-900 dark:text-white'}`}>
+                            {metrics.equityXirr.toFixed(2)}%
+                        </div>
                         <p className="text-xs mt-2 text-slate-400">Stocks & Mutual Funds</p>
                     </div>
 
@@ -473,7 +457,9 @@ export default function AnalyticsPage() {
                             <span className="font-medium text-sm uppercase tracking-wider">Commodity XIRR</span>
                             <Gem className="h-5 w-5 text-amber-500" />
                         </div>
-                        <div className="text-3xl font-bold text-slate-900 dark:text-white">{metrics.commXirr.toFixed(2)}%</div>
+                        <div className={`text-3xl font-bold ${metrics.commXirr < 0 ? 'text-red-500' : 'text-slate-900 dark:text-white'}`}>
+                            {metrics.commXirr.toFixed(2)}%
+                        </div>
                         <p className="text-xs mt-2 text-slate-400">Gold, Silver & Currency</p>
                     </div>
                 </div>
@@ -641,12 +627,12 @@ export default function AnalyticsPage() {
                     </li>
                     <li className="flex gap-4">
                         <div className="mt-1 h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                            <TrendingUp size={16} />
+                            {metrics.xirr >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
                         </div>
                         <div>
                             <span className="block font-semibold text-slate-900 dark:text-white">Performance</span>
                             <p className="text-sm text-slate-500 mt-1">
-                                Your Total XIRR is <span className={`font-medium ${metrics.xirr >= 12 ? 'text-green-600' : 'text-slate-800 dark:text-slate-200'}`}>{metrics.xirr.toFixed(2)}%</span>.
+                                Your Total XIRR is <span className={`font-medium ${metrics.xirr >= 0 ? 'text-green-600' : 'text-red-600'}`}>{metrics.xirr.toFixed(2)}%</span>.
                                 {metrics.xirr > 12 ? " You are beating most mutual funds!" : " Review underperforming assets."}
                             </p>
                         </div>
