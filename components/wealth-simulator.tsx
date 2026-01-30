@@ -12,13 +12,12 @@ type Props = {
 
 export default function WealthSimulator({ currentValue, stats }: Props) {
     const [years, setYears] = useState(10)
-    const [hoveredPoint, setHoveredPoint] = useState<any>(null) // State for hover interaction
+    const [hoveredPoint, setHoveredPoint] = useState<any>(null)
 
     // Run Simulation
     const data = useMemo(() => {
         if (!currentValue || currentValue === 0) return []
 
-        // SAFETY: Clamp inputs to realistic long-term bounds
         const safeReturn = Math.min(Math.max(stats.expectedReturn, 0.08), 0.25) 
         const safeVol = Math.max(stats.volatility, 0.10)
 
@@ -27,7 +26,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
 
     if (!data || data.length === 0) return null
 
-    // Determine what to show: Hovered data OR Final year data (default)
     const activeData = hoveredPoint || data[data.length - 1]
     const { p10, p50, p90 } = activeData.percentiles
     const activeYear = activeData.year
@@ -45,7 +43,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                     </p>
                 </div>
                 
-                {/* Year Toggle */}
                 <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
                     {[5, 10, 20].map(y => (
                         <button
@@ -68,8 +65,9 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                     <AreaChart 
                         data={data} 
                         margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                        onMouseMove={(e) => {
-                            if (e.activePayload && e.activePayload[0]) {
+                        // FIX: Type 'e' as 'any' to bypass missing type definition for activePayload
+                        onMouseMove={(e: any) => {
+                            if (e && e.activePayload && e.activePayload[0]) {
                                 setHoveredPoint(e.activePayload[0].payload)
                             }
                         }}
@@ -106,7 +104,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                             labelFormatter={(label) => `Year: ${label}`}
                         />
                         
-                        {/* Cone of Uncertainty */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p90" 
@@ -114,7 +111,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                             fill="url(#colorUncertainty)" 
                             isAnimationActive={false}
                         />
-                         {/* Masking Layer */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p10" 
@@ -123,8 +119,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                             className="fill-white dark:fill-slate-900" 
                             isAnimationActive={false}
                         />
-                        
-                        {/* Median Line */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p50" 
@@ -137,7 +131,6 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                 </ResponsiveContainer>
             </div>
 
-            {/* Dynamic Summary Footer */}
             <div className="mt-4 flex flex-col sm:flex-row items-center justify-between text-sm p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 gap-4 transition-all duration-300">
                 <div className="text-slate-500 dark:text-slate-400 text-center sm:text-left">
                     Projected Wealth in <span className="font-bold text-slate-800 dark:text-white transition-colors duration-200">{activeYear}</span>
