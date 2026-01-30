@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { runMonteCarlo } from '@/lib/monte-carlo'
-import { TrendingUp, RefreshCw, HelpCircle } from 'lucide-react'
+import { TrendingUp } from 'lucide-react'
 
 type Props = {
     currentValue: number
@@ -12,17 +12,14 @@ type Props = {
 
 export default function WealthSimulator({ currentValue, stats }: Props) {
     const [years, setYears] = useState(10)
+    const [hoveredPoint, setHoveredPoint] = useState<any>(null) // State for hover interaction
 
     // Run Simulation
     const data = useMemo(() => {
         if (!currentValue || currentValue === 0) return []
 
         // SAFETY: Clamp inputs to realistic long-term bounds
-        // Even if user has 50% XIRR today, we shouldn't project 50% for 10 years.
-        // We clamp return between 8% and 25% for projection.
         const safeReturn = Math.min(Math.max(stats.expectedReturn, 0.08), 0.25) 
-        
-        // We clamp volatility to at least 10% (markets are never perfectly smooth)
         const safeVol = Math.max(stats.volatility, 0.10)
 
         return runMonteCarlo(currentValue, safeReturn, safeVol, years)
@@ -30,10 +27,10 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
 
     if (!data || data.length === 0) return null
 
-    const finalPoint = data[data.length - 1]
-    const finalMedian = finalPoint.percentiles.p50
-    const finalP90 = finalPoint.percentiles.p90
-    const finalP10 = finalPoint.percentiles.p10
+    // Determine what to show: Hovered data OR Final year data (default)
+    const activeData = hoveredPoint || data[data.length - 1]
+    const { p10, p50, p90 } = activeData.percentiles
+    const activeYear = activeData.year
 
     return (
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
@@ -53,7 +50,7 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                     {[5, 10, 20].map(y => (
                         <button
                             key={y}
-                            onClick={() => setYears(y)}
+                            onClick={() => { setYears(y); setHoveredPoint(null); }}
                             className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
                                 years === y 
                                 ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' 
@@ -68,7 +65,16 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
 
             <div className="h-[300px] w-full relative">
                 <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <AreaChart 
+                        data={data} 
+                        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                        onMouseMove={(e) => {
+                            if (e.activePayload && e.activePayload[0]) {
+                                setHoveredPoint(e.activePayload[0].payload)
+                            }
+                        }}
+                        onMouseLeave={() => setHoveredPoint(null)}
+                    >
                         <defs>
                             <linearGradient id="colorUncertainty" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
@@ -100,11 +106,7 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                             labelFormatter={(label) => `Year: ${label}`}
                         />
                         
-                        {/* TRICK: We draw the P90 area (Optimistic) first.
-                           Then we draw the P10 area (Pessimistic) with a WHITE fill to "mask" the bottom part.
-                           This creates the floating "cone" effect representing the range of outcomes.
-                        */}
-                        
+                        {/* Cone of Uncertainty */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p90" 
@@ -112,17 +114,17 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                             fill="url(#colorUncertainty)" 
                             isAnimationActive={false}
                         />
-                         {/* Masking Layer for Light/Dark Mode */}
+                         {/* Masking Layer */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p10" 
                             stroke="transparent" 
-                            fill="var(--bg-mask)" // We will handle this via CSS variable or just simplify
+                            fill="var(--bg-mask)" 
                             className="fill-white dark:fill-slate-900" 
                             isAnimationActive={false}
                         />
                         
-                        {/* The Median Line */}
+                        {/* Median Line */}
                         <Area 
                             type="monotone" 
                             dataKey="percentiles.p50" 
@@ -135,14 +137,17 @@ export default function WealthSimulator({ currentValue, stats }: Props) {
                 </ResponsiveContainer>
             </div>
 
-            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between text-sm p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 gap-4">
+            {/* Dynamic Summary Footer */}
+            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between text-sm p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 gap-4 transition-all duration-300">
                 <div className="text-slate-500 dark:text-slate-400 text-center sm:text-left">
-                    Projected Wealth in <span className="font-bold text-slate-800 dark:text-white">{new Date().getFullYear() + years}</span>
+                    Projected Wealth in <span className="font-bold text-slate-800 dark:text-white transition-colors duration-200">{activeYear}</span>
                 </div>
                 <div className="text-center sm:text-right">
-                    <div className="text-lg font-bold text-indigo-600 dark:text-indigo-400">₹{(finalMedian/100000).toFixed(2)} Lakhs</div>
-                    <div className="text-[10px] text-slate-400">
-                        Range: ₹{(finalP10/100000).toFixed(0)}L - ₹{(finalP90/100000).toFixed(0)}L
+                    <div className="text-lg font-bold text-indigo-600 dark:text-indigo-400 transition-all duration-200">
+                        ₹{(p50/100000).toFixed(2)} Lakhs
+                    </div>
+                    <div className="text-[10px] text-slate-400 transition-all duration-200">
+                        Range: ₹{(p10/100000).toFixed(0)}L - ₹{(p90/100000).toFixed(0)}L
                     </div>
                 </div>
             </div>
