@@ -7,7 +7,8 @@ import {
     getReturns, stdDev 
 } from '@/lib/analytics-math'
 import RiskAnalysis from '@/components/risk-analysis'
-import WealthSimulator from '@/components/wealth-simulator' // --- NEW IMPORT ---
+import WealthSimulator from '@/components/wealth-simulator'
+import StressTest from '@/components/stress-test' // --- NEW IMPORT ---
 
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
@@ -23,7 +24,7 @@ import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
 const BENCHMARK_TICKER = '^NSEI' // NIFTY 50
 
-// --- HELPERS ---
+// --- HELPERS (Tooltip & Pie Shape) ---
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
@@ -237,8 +238,7 @@ export default function AnalyticsPage() {
 
     }, [transactions, priceMap])
 
-
-    // --- RISK METRICS & FILTERING LOGIC ---
+    // --- RISK METRICS LOGIC ---
     const riskMetrics = useMemo(() => {
         if (!chartData || chartData.length === 0 || !historyMap || !transactions) return null
 
@@ -255,7 +255,6 @@ export default function AnalyticsPage() {
         const volatility = stdDev(equityReturns) * Math.sqrt(252)
         const { maxDrawdown, curve: drawdownCurve } = calculateDrawdown(equityCurve)
 
-        // Filter Pure Stocks for Correlation Matrix
         const tickerTypeMap = new Map<string, string>()
         transactions.forEach(t => tickerTypeMap.set(t.assets.ticker, t.assets.asset_type))
 
@@ -311,17 +310,7 @@ export default function AnalyticsPage() {
             const rawHistoryMap = await res.json()
             setHistoryMap(rawHistoryMap)
 
-            // ... (Rest of your Chart Data Logic - kept identical to previous version)
-            // Re-pasting brevity here, but ensure your existing logic is preserved
-            // for constructing 'finalChartData'
-            
-            // Note: Since I don't want to cut off your existing logic,
-            // I'm assuming the existing code block for creating finalChartData is here.
-            // ...
-            
-            // TEMPORARY FIX to prevent empty chart error if logic above is omitted in copy-paste
-            // In your actual file, keep the logic from the previous step.
-             const benchmarkHistory: Record<string, number> = {}
+            const benchmarkHistory: Record<string, number> = {}
             if (rawHistoryMap[BENCHMARK_TICKER] && Array.isArray(rawHistoryMap[BENCHMARK_TICKER])) {
                 rawHistoryMap[BENCHMARK_TICKER].forEach((point: any) => {
                     benchmarkHistory[point.date] = point.value || point.price || 0
@@ -343,13 +332,12 @@ export default function AnalyticsPage() {
             })
 
             const sortedDates = Array.from(allDatesSet).sort()
-            const finalChartData: any[] = [] // ChartDataPoint
+            const finalChartData: any[] = []
             const runningHoldings: Record<string, number> = {}
             const lastKnownPrices: Record<string, number> = {}
 
             let runningInvested = 0
             let txnIndex = 0
-
             let firstBenchmarkValue = 0
             let firstPortfolioValue = 0
             let lastKnownBenchmark = 0
@@ -486,25 +474,38 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 3. NEW: WEALTH SIMULATOR (Monte Carlo) */}
+            {/* 3. NEW: DECISION INTELLIGENCE (Monte Carlo + Stress Test) */}
             {riskMetrics && chartCategory === 'equity' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-                    <WealthSimulator 
-                        currentValue={metrics.netWorth}
-                        stats={{
-                            // Convert XIRR percentage to decimal (15% -> 0.15)
-                            // Use StdDev from Risk Calc
-                            expectedReturn: metrics.xirr / 100,
-                            volatility: riskMetrics.stats.stdDev
-                        }}
-                    />
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-4">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                        <Briefcase className="h-5 w-5 text-indigo-500" /> Decision Intelligence
+                    </h3>
+                    
+                    {/* The "Future vs Risk" Grid */}
+                    <div className="grid lg:grid-cols-2 gap-6">
+                        
+                        {/* LEFT: The Optimist View (Wealth Simulator) */}
+                        <WealthSimulator 
+                            currentValue={metrics.netWorth}
+                            stats={{
+                                expectedReturn: metrics.xirr / 100,
+                                volatility: riskMetrics.stats.stdDev
+                            }}
+                        />
+
+                        {/* RIGHT: The Pessimist View (Stress Test) */}
+                        <StressTest 
+                            beta={riskMetrics.stats.beta}
+                            netWorth={metrics.netWorth}
+                        />
+                    </div>
                 </div>
             )}
 
             {/* 4. NEW: INSTITUTIONAL RISK ANALYSIS */}
             {riskMetrics && chartCategory === 'equity' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-                    <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 mt-8">
                         <Briefcase className="h-5 w-5 text-indigo-500" /> Institutional Risk Analysis
                     </h3>
                     <RiskAnalysis 
