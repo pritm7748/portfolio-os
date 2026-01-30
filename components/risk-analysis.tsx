@@ -29,8 +29,14 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
         return 'bg-green-500 text-white'
     }
 
-    // Helper to clean ticker names (RELIANCE.NS -> RELIANCE)
-    const cleanName = (t: string) => t.replace('.NS', '').replace('.BO', '').replace(':NSE', '')
+    // Aggressively clean ticker names for display
+    const cleanName = (t: string) => {
+        return t.replace(/\.NS/g, '')
+                .replace(/\.BO/g, '')
+                .replace(/:NSE/g, '')
+                .replace(/&/g, '')
+                .trim()
+    }
 
     return (
         <div className="space-y-6">
@@ -107,7 +113,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                     </div>
                 </div>
 
-                {/* 3. CORRELATION HEATMAP (SCROLLABLE & FULL) */}
+                {/* 3. CORRELATION HEATMAP (FIXED ALIGNMENT) */}
                 <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 overflow-hidden flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-slate-800 dark:text-white">Correlation Matrix</h3>
@@ -125,25 +131,30 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                         </div>
                     </div>
                     
-                    {/* SCROLLABLE CONTAINER */}
                     {tickers.length === 0 ? (
                         <div className="flex h-full items-center justify-center text-slate-400 text-sm italic">
                             No stock data available for correlation.
                         </div>
                     ) : (
                         <div className="flex-1 overflow-auto max-h-[400px] border border-slate-100 dark:border-slate-800 rounded-lg">
-                            {/* Matrix Container - Inline Grid to force content width */}
+                            {/* Matrix Container */}
                             <div className="inline-grid gap-1 p-2" style={{ gridTemplateColumns: `auto repeat(${tickers.length}, 40px)` }}>
                                 
                                 {/* TOP LEFT CORNER (Empty) */}
-                                <div className="h-24 bg-transparent sticky left-0 top-0 z-20 bg-white dark:bg-slate-900"></div>
+                                <div className="h-32 bg-transparent sticky left-0 top-0 z-20 bg-white dark:bg-slate-900"></div>
 
-                                {/* COLUMN HEADERS (Rotated & Sticky Top) */}
+                                {/* COLUMN HEADERS (FIXED ALIGNMENT) */}
                                 {tickers.map(t => (
-                                    <div key={`col-${t}`} className="h-24 w-10 flex items-end justify-center pb-2 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-                                        <span className="text-[10px] font-bold text-slate-500 -rotate-90 origin-bottom-left translate-x-2.5 whitespace-nowrap">
-                                            {cleanName(t).substring(0, 10)}
-                                        </span>
+                                    <div key={`col-${t}`} className="h-32 w-10 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+                                        {/* ABSOLUTE POSITIONING FIX:
+                                            - bottom-2: Text starts near the bottom of the header cell
+                                            - left-1/2: Position centered horizontally
+                                            - -translate-x-1/2: Adjust for text width itself
+                                            - origin-[50%_100%]: Pivot around bottom center so it stands straight up
+                                        */}
+                                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-max -rotate-90 origin-[50%_100%] text-[10px] font-bold text-slate-500 whitespace-nowrap">
+                                            {cleanName(t).substring(0, 12)}
+                                        </div>
                                     </div>
                                 ))}
 
