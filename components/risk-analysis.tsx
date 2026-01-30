@@ -40,7 +40,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                 .replace(/INDIA/g, '')
                 .replace(/IND/g, '')
                 .trim()
-                .substring(0, 12) // Hard limit to prevent layout breaking
+                .substring(0, 10) // Tighter limit for clean columns
     }
 
     return (
@@ -148,12 +148,15 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                                 {/* TOP LEFT CORNER (Empty) */}
                                 <div className="h-32 bg-transparent sticky left-0 top-0 z-20 bg-white dark:bg-slate-900"></div>
 
-                                {/* COLUMN HEADERS (Fixed Alignment) */}
+                                {/* COLUMN HEADERS (Fixed with Writing Mode) */}
                                 {tickers.map(t => (
-                                    <div key={`col-${t}`} className="h-32 w-10 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-                                        <div className="absolute bottom-2 left-1/2 w-max -translate-x-1/2 -rotate-90 origin-bottom text-[10px] font-bold text-slate-500 whitespace-nowrap">
+                                    <div 
+                                        key={`col-${t}`} 
+                                        className="h-32 w-10 flex flex-col justify-end items-center pb-2 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800"
+                                    >
+                                        <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap [writing-mode:vertical-rl] rotate-180">
                                             {cleanName(t)}
-                                        </div>
+                                        </span>
                                     </div>
                                 ))}
 
@@ -174,7 +177,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                                             return (
                                                 <div 
                                                     key={`${rowTicker}-${colTicker}`}
-                                                    className={`h-10 w-10 rounded-md flex items-center justify-center text-[10px] font-medium transition-transform hover:scale-110 cursor-default shadow-sm ${getHeatmapColor(val)}`}
+                                                    className={`h-10 w-10 rounded-md flex items-center justify-center text-[10px] font-medium leading-none transition-transform hover:scale-110 cursor-default shadow-sm ${getHeatmapColor(val)}`}
                                                     title={`${cleanName(rowTicker)} vs ${cleanName(colTicker)}: ${val.toFixed(2)}`}
                                                 >
                                                     {val.toFixed(1)}
