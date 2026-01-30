@@ -35,7 +35,12 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                 .replace(/\.BO/g, '')
                 .replace(/:NSE/g, '')
                 .replace(/&/g, '')
+                .replace(/LTD/g, '')
+                .replace(/LIMITED/g, '')
+                .replace(/INDIA/g, '')
+                .replace(/IND/g, '')
                 .trim()
+                .substring(0, 12) // Hard limit to prevent layout breaking
     }
 
     return (
@@ -113,7 +118,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                     </div>
                 </div>
 
-                {/* 3. CORRELATION HEATMAP (FIXED ALIGNMENT) */}
+                {/* 3. CORRELATION HEATMAP (FIXED & SCROLLABLE) */}
                 <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 overflow-hidden flex flex-col">
                     <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-slate-800 dark:text-white">Correlation Matrix</h3>
@@ -143,17 +148,11 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                                 {/* TOP LEFT CORNER (Empty) */}
                                 <div className="h-32 bg-transparent sticky left-0 top-0 z-20 bg-white dark:bg-slate-900"></div>
 
-                                {/* COLUMN HEADERS (FIXED ALIGNMENT) */}
+                                {/* COLUMN HEADERS (Fixed Alignment) */}
                                 {tickers.map(t => (
                                     <div key={`col-${t}`} className="h-32 w-10 sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-                                        {/* ABSOLUTE POSITIONING FIX:
-                                            - bottom-2: Text starts near the bottom of the header cell
-                                            - left-1/2: Position centered horizontally
-                                            - -translate-x-1/2: Adjust for text width itself
-                                            - origin-[50%_100%]: Pivot around bottom center so it stands straight up
-                                        */}
-                                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-max -rotate-90 origin-[50%_100%] text-[10px] font-bold text-slate-500 whitespace-nowrap">
-                                            {cleanName(t).substring(0, 12)}
+                                        <div className="absolute bottom-2 left-1/2 w-max -translate-x-1/2 -rotate-90 origin-bottom text-[10px] font-bold text-slate-500 whitespace-nowrap">
+                                            {cleanName(t)}
                                         </div>
                                     </div>
                                 ))}
@@ -164,7 +163,7 @@ export default function RiskAnalysis({ metrics, drawdownCurve, correlationMatrix
                                         {/* ROW LABEL (Sticky Left) */}
                                         <div key={`row-${rowTicker}`} className="h-10 flex items-center justify-end pr-3 sticky left-0 z-10 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800">
                                             <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                                                {cleanName(rowTicker).substring(0, 12)}
+                                                {cleanName(rowTicker)}
                                             </span>
                                         </div>
 
