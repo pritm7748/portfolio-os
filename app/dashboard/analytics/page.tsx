@@ -8,7 +8,8 @@ import {
 } from '@/lib/analytics-math'
 import RiskAnalysis from '@/components/risk-analysis'
 import WealthSimulator from '@/components/wealth-simulator'
-import StressTest from '@/components/stress-test' // --- NEW IMPORT ---
+import StressTest from '@/components/stress-test'
+import EfficiencyPlot from '@/components/efficiency-plot'
 
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
@@ -24,7 +25,7 @@ import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#64748b']
 const BENCHMARK_TICKER = '^NSEI' // NIFTY 50
 
-// --- HELPERS (Tooltip & Pie Shape) ---
+// --- HELPERS ---
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
@@ -238,9 +239,9 @@ export default function AnalyticsPage() {
 
     }, [transactions, priceMap])
 
-    // --- RISK METRICS LOGIC ---
+    // --- RISK & EFFICIENCY METRICS ---
     const riskMetrics = useMemo(() => {
-        if (!chartData || chartData.length === 0 || !historyMap || !transactions) return null
+        if (!chartData || chartData.length === 0 || !historyMap || !transactions || !metrics) return null
 
         const equityCurve = chartData.map(d => ({ date: d.date, value: d.value }))
         const validBenchmarkPoints = chartData.filter(d => d.benchmark && d.benchmark > 0)
@@ -255,6 +256,7 @@ export default function AnalyticsPage() {
         const volatility = stdDev(equityReturns) * Math.sqrt(252)
         const { maxDrawdown, curve: drawdownCurve } = calculateDrawdown(equityCurve)
 
+        // Filter Pure Stocks
         const tickerTypeMap = new Map<string, string>()
         transactions.forEach(t => tickerTypeMap.set(t.assets.ticker, t.assets.asset_type))
 
@@ -268,13 +270,53 @@ export default function AnalyticsPage() {
 
         const correlationMatrix = calculateCorrelationMatrix(historyMap, pureStockTickers)
 
+        // --- FIXED: Explicitly Cast Type for Efficiency Data ---
+        const efficiencyData = pureStockTickers.map(ticker => {
+            const series = historyMap[ticker] || []
+            if (series.length < 10) return null
+
+            const assetReturns = []
+            for (let i = 1; i < series.length; i++) {
+                const prev = series[i-1].value || series[i-1].price || 0
+                const curr = series[i].value || series[i].price || 0
+                if (prev > 0) assetReturns.push((curr - prev) / prev)
+            }
+
+            if (assetReturns.length === 0) return null
+
+            const meanDailyRet = assetReturns.reduce((a, b) => a + b, 0) / assetReturns.length
+            const annualReturn = (Math.pow(1 + meanDailyRet, 252) - 1) * 100 // CAGR %
+            
+            const variance = assetReturns.reduce((sum, r) => sum + Math.pow(r - meanDailyRet, 2), 0) / (assetReturns.length - 1)
+            const annualVol = Math.sqrt(variance * 252) * 100 // Volatility %
+
+            // Approximate Weight
+            let qty = 0
+            transactions.filter(t => t.assets.ticker === ticker).forEach(t => {
+                if (t.transaction_type === 'Buy') qty += Number(t.quantity)
+                else if (t.transaction_type === 'Sell') qty -= Number(t.quantity)
+            })
+            const currentPrice = series[series.length - 1]?.value || 0
+            const holdingValue = qty * currentPrice
+            const weight = metrics.netWorth > 0 ? (holdingValue / metrics.netWorth) * 100 : 0
+
+            return {
+                ticker: ticker.replace(/\.NS|\.BO|:NSE/g, ''),
+                name: ticker,
+                return: annualReturn,
+                risk: annualVol,
+                weight: Math.max(weight, 2)
+            }
+        }).filter((item) => item !== null) as { ticker: string; name: string; return: number; risk: number; weight: number }[]
+
         return {
             stats: { beta, sharpe, maxDrawdown, stdDev: volatility },
             drawdownCurve,
             correlationMatrix,
-            topTickers: pureStockTickers
+            topTickers: pureStockTickers,
+            efficiencyData
         }
-    }, [chartData, historyMap, allTickers, transactions])
+    }, [chartData, historyMap, allTickers, transactions, metrics])
 
     useEffect(() => {
         if (transactions && transactions.length > 0) fetchChartData('1y', 'equity')
@@ -474,17 +516,14 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 3. NEW: DECISION INTELLIGENCE (Monte Carlo + Stress Test) */}
+            {/* 3. DECISION INTELLIGENCE */}
             {riskMetrics && chartCategory === 'equity' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-4">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                         <Briefcase className="h-5 w-5 text-indigo-500" /> Decision Intelligence
                     </h3>
                     
-                    {/* The "Future vs Risk" Grid */}
                     <div className="grid lg:grid-cols-2 gap-6">
-                        
-                        {/* LEFT: The Optimist View (Wealth Simulator) */}
                         <WealthSimulator 
                             currentValue={metrics.netWorth}
                             stats={{
@@ -492,8 +531,6 @@ export default function AnalyticsPage() {
                                 volatility: riskMetrics.stats.stdDev
                             }}
                         />
-
-                        {/* RIGHT: The Pessimist View (Stress Test) */}
                         <StressTest 
                             beta={riskMetrics.stats.beta}
                             netWorth={metrics.netWorth}
@@ -502,7 +539,7 @@ export default function AnalyticsPage() {
                 </div>
             )}
 
-            {/* 4. NEW: INSTITUTIONAL RISK ANALYSIS */}
+            {/* 4. INSTITUTIONAL RISK & EFFICIENCY */}
             {riskMetrics && chartCategory === 'equity' && (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 mt-8">
@@ -514,44 +551,44 @@ export default function AnalyticsPage() {
                         correlationMatrix={riskMetrics.correlationMatrix}
                         tickers={riskMetrics.topTickers}
                     />
+                    
+                    {riskMetrics.efficiencyData && (
+                        <div className="mt-6 h-[400px]">
+                            <EfficiencyPlot data={riskMetrics.efficiencyData} />
+                        </div>
+                    )}
                 </div>
             )}
 
             {/* 5. AI ANALYST */}
             {aiSummary && <AIAnalyst data={aiSummary} />}
 
-            {/* 6. FINANCIAL SUMMARY */}
-            {metrics && (
-                <div className="grid gap-6 md:grid-cols-3">
-                    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase">Net Worth</h4>
-                        <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">₹{metrics.currentVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase">Unrealized P&L</h4>
-                        <div className={`mt-2 text-2xl font-bold ${metrics.unrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {metrics.unrealized >= 0 ? '+' : ''}₹{metrics.unrealized.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase">Realized P&L</h4>
-                        <div className={`mt-2 text-2xl font-bold ${metrics.realized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {metrics.realized >= 0 ? '+' : ''}₹{metrics.realized.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </div>
+            {/* 6. FINANCIAL SUMMARY & COMPOSITION */}
+             <div className="grid gap-6 md:grid-cols-3 mt-6">
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase">Net Worth</h4>
+                    <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">₹{metrics.currentVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase">Unrealized P&L</h4>
+                    <div className={`mt-2 text-2xl font-bold ${metrics.unrealized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {metrics.unrealized >= 0 ? '+' : ''}₹{metrics.unrealized.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </div>
                 </div>
-            )}
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase">Realized P&L</h4>
+                    <div className={`mt-2 text-2xl font-bold ${metrics.realized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {metrics.realized >= 0 ? '+' : ''}₹{metrics.realized.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    </div>
+                </div>
+            </div>
 
-            {/* 7. PORTFOLIO COMPOSITION */}
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">Portfolio Composition</h3>
-            <div className="grid gap-6 md:grid-cols-2">
-
+             <div className="grid gap-6 md:grid-cols-2 mt-6">
                 {/* SECTOR EXPOSURE */}
                 <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
                     <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
                         <Building2 className="h-4 w-4 text-indigo-500" /> Sector Exposure
                     </h3>
-
                     <div className="flex-1 min-h-0 relative [&_*:focus]:outline-none">
                         <div className="absolute inset-0 flex flex-col">
                             <div className="flex-1 relative" style={{ minHeight: 0 }}>
@@ -580,7 +617,6 @@ export default function AnalyticsPage() {
                                         <Tooltip content={<CustomTooltip />} position={{ x: 10, y: 10 }} wrapperStyle={{ zIndex: 1000 }} />
                                     </PieChart>
                                 </ResponsiveContainer>
-
                                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-[50]">
                                     <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Total</p>
                                     <p className="text-base font-bold text-slate-800 dark:text-white whitespace-nowrap">
@@ -588,15 +624,11 @@ export default function AnalyticsPage() {
                                     </p>
                                 </div>
                             </div>
-
                             <div className="pt-4 pb-2 overflow-auto" style={{ maxHeight: '120px' }}>
                                 <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px]">
                                     {sectorData.map((entry, index) => (
                                         <div key={`legend-${index}`} className="flex items-center gap-1">
-                                            <div
-                                                className="w-2 h-2 rounded-full"
-                                                style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                                            />
+                                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
                                             <span className="text-slate-600 dark:text-slate-400">{entry.name}</span>
                                         </div>
                                     ))}
@@ -614,7 +646,6 @@ export default function AnalyticsPage() {
                         </h3>
                         <Info className="h-4 w-4 text-slate-400" />
                     </div>
-
                     <div className="flex-1 min-h-0 [&_*:focus]:outline-none">
                         {conglomerateData.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
@@ -659,37 +690,6 @@ export default function AnalyticsPage() {
                         )}
                     </div>
                 </div>
-            </div>
-
-            {/* 8. PORTFOLIO HEALTH */}
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 mt-6">
-                <h3 className="mb-6 font-bold text-slate-800 dark:text-white">Portfolio Health</h3>
-                <ul className="space-y-6">
-                    <li className="flex gap-4">
-                        <div className="mt-1 h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-                            <Gem size={16} />
-                        </div>
-                        <div>
-                            <span className="block font-semibold text-slate-900 dark:text-white">Diversity Score</span>
-                            <p className="text-sm text-slate-500 mt-1">
-                                You are invested in <span className="font-medium text-slate-800 dark:text-slate-200">{sectorData.length} sectors</span>.
-                                {sectorData.length < 3 ? " Consider adding Commodities or Debt for stability." : " Good diversification."}
-                            </p>
-                        </div>
-                    </li>
-                    <li className="flex gap-4">
-                        <div className="mt-1 h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                            {metrics.xirr >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-                        </div>
-                        <div>
-                            <span className="block font-semibold text-slate-900 dark:text-white">Performance</span>
-                            <p className="text-sm text-slate-500 mt-1">
-                                Your Total XIRR is <span className={`font-medium ${metrics.xirr >= 0 ? 'text-green-600' : 'text-red-600'}`}>{metrics.xirr.toFixed(2)}%</span>.
-                                {metrics.xirr > 12 ? " You are beating most mutual funds!" : " Review underperforming assets."}
-                            </p>
-                        </div>
-                    </li>
-                </ul>
             </div>
         </div>
     )
