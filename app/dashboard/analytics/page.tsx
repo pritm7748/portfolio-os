@@ -10,6 +10,7 @@ import RiskAnalysis from '@/components/risk-analysis'
 import WealthSimulator from '@/components/wealth-simulator'
 import StressTest from '@/components/stress-test'
 import EfficiencyPlot from '@/components/efficiency-plot'
+import GhostPortfolio from '@/components/ghost-portfolio' // --- ADDED IMPORT ---
 
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
 import { 
@@ -270,7 +271,7 @@ export default function AnalyticsPage() {
 
         const correlationMatrix = calculateCorrelationMatrix(historyMap, pureStockTickers)
 
-        // --- FIXED: Explicitly Cast Type for Efficiency Data ---
+        // Efficiency Data
         const efficiencyData = pureStockTickers.map(ticker => {
             const series = historyMap[ticker] || []
             if (series.length < 10) return null
@@ -285,10 +286,10 @@ export default function AnalyticsPage() {
             if (assetReturns.length === 0) return null
 
             const meanDailyRet = assetReturns.reduce((a, b) => a + b, 0) / assetReturns.length
-            const annualReturn = (Math.pow(1 + meanDailyRet, 252) - 1) * 100 // CAGR %
+            const annualReturn = (Math.pow(1 + meanDailyRet, 252) - 1) * 100 
             
             const variance = assetReturns.reduce((sum, r) => sum + Math.pow(r - meanDailyRet, 2), 0) / (assetReturns.length - 1)
-            const annualVol = Math.sqrt(variance * 252) * 100 // Volatility %
+            const annualVol = Math.sqrt(variance * 252) * 100 
 
             // Approximate Weight
             let qty = 0
@@ -366,10 +367,9 @@ export default function AnalyticsPage() {
                 if (ticker === BENCHMARK_TICKER) return
                 if (!Array.isArray(history)) return
                 history.forEach((point: any) => {
-                    const d = point.date
-                    allDatesSet.add(d)
-                    if (!priceLookup[d]) priceLookup[d] = {}
-                    priceLookup[d][ticker] = point.value || point.price || 0
+                    allDatesSet.add(point.date)
+                    if (!priceLookup[point.date]) priceLookup[point.date] = {}
+                    priceLookup[point.date][ticker] = point.value || point.price || 0
                 })
             })
 
@@ -401,9 +401,7 @@ export default function AnalyticsPage() {
                 }
 
                 const daysPrices = priceLookup[date] || {}
-                Object.keys(daysPrices).forEach(t => {
-                    if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t]
-                })
+                Object.keys(daysPrices).forEach(t => { if (daysPrices[t] > 0) lastKnownPrices[t] = daysPrices[t] })
 
                 let dailyValue = 0
                 Object.keys(runningHoldings).forEach(ticker => {
@@ -416,7 +414,7 @@ export default function AnalyticsPage() {
 
                 let benchmarkValue = benchmarkHistory[date] || 0
                 if (benchmarkValue > 0) lastKnownBenchmark = benchmarkValue
-                else if (lastKnownBenchmark > 0) benchmarkValue = lastKnownBenchmark
+                else benchmarkValue = lastKnownBenchmark
 
                 if (runningInvested > 0 || dailyValue > 0) {
                     if (firstPortfolioValue === 0 && dailyValue > 0) firstPortfolioValue = dailyValue
@@ -437,7 +435,7 @@ export default function AnalyticsPage() {
                 }
             }
 
-             if (finalChartData.length > 0) {
+            if (finalChartData.length > 0) {
                 const lastPoint = finalChartData[finalChartData.length - 1]
                 const finalPortfolioReturn = lastPoint.portfolioReturn || 0
                 const finalBenchmarkReturn = lastPoint.benchmarkReturn || 0
@@ -531,10 +529,21 @@ export default function AnalyticsPage() {
                                 volatility: riskMetrics.stats.stdDev
                             }}
                         />
-                        <StressTest 
-                            beta={riskMetrics.stats.beta}
-                            netWorth={metrics.netWorth}
-                        />
+                        <div className="flex flex-col gap-6">
+                            <div className="flex-1">
+                                <StressTest 
+                                    beta={riskMetrics.stats.beta}
+                                    netWorth={metrics.netWorth}
+                                />
+                            </div>
+                            {/* NEW: GHOST PORTFOLIO INTEGRATION */}
+                            <div className="flex-1">
+                                <GhostPortfolio 
+                                    transactions={transactions || []}
+                                    priceMap={priceMap || {}}
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
