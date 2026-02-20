@@ -6,16 +6,24 @@ import { Treemap, ResponsiveContainer, Tooltip } from 'recharts'
 const CustomizedContent = (props: any) => {
     const { x, y, width, height, name, dayChangePercent } = props
 
+    // FIX: Recharts creates a parent 'root' node that lacks our custom properties.
+    // We must safely fallback to 0 or empty strings to prevent undefined crashes.
+    const change = dayChangePercent || 0
+    const displayName = name ? String(name).split('.')[0] : ''
+
     // Determine color based on Daily Change Intensity
     let fill = '#94a3b8' // Neutral Grey
-    if (dayChangePercent >= 2) fill = '#16a34a' // Strong Green
-    else if (dayChangePercent > 0) fill = '#4ade80' // Light Green
-    else if (dayChangePercent <= -2) fill = '#dc2626' // Strong Red
-    else if (dayChangePercent < 0) fill = '#f87171' // Light Red
+    if (change >= 2) fill = '#16a34a' // Strong Green
+    else if (change > 0) fill = '#4ade80' // Light Green
+    else if (change <= -2) fill = '#dc2626' // Strong Red
+    else if (change < 0) fill = '#f87171' // Light Red
 
     // Don't render text if the box is too tiny
     const showText = width > 45 && height > 35
     const showSubText = width > 55 && height > 50
+
+    // If there is no name (e.g., it's a structural root node), don't render anything
+    if (!name) return null
 
     return (
         <g>
@@ -39,8 +47,7 @@ const CustomizedContent = (props: any) => {
                     fontWeight="bold"
                     className="pointer-events-none drop-shadow-md"
                 >
-                    {/* Strip .NS or .BO for cleaner display */}
-                    {name.split('.')[0]}
+                    {displayName}
                 </text>
             )}
             {showSubText && (
@@ -54,7 +61,7 @@ const CustomizedContent = (props: any) => {
                     opacity={0.9}
                     className="pointer-events-none"
                 >
-                    {dayChangePercent > 0 ? '+' : ''}{dayChangePercent.toFixed(2)}%
+                    {change > 0 ? '+' : ''}{change.toFixed(2)}%
                 </text>
             )}
         </g>
@@ -65,21 +72,24 @@ const CustomizedContent = (props: any) => {
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload
+        // Safe fallback for tooltip as well
+        const change = data.dayChangePercent || 0
+
         return (
             <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl text-sm z-50 min-w-[150px]">
                 <p className="font-bold text-slate-800 dark:text-white mb-2 pb-1 border-b border-slate-100 dark:border-slate-800">
-                    {data.name}
+                    {data.name || 'Asset'}
                 </p>
                 <div className="flex justify-between gap-4 text-xs mb-1">
                     <span className="text-slate-500">Total Value:</span>
                     <span className="font-bold text-slate-900 dark:text-white">
-                        ₹{data.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        ₹{(data.value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                 </div>
                 <div className="flex justify-between gap-4 text-xs">
                     <span className="text-slate-500">Day's Move:</span>
-                    <span className={`font-bold ${data.dayChangePercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {data.dayChangePercent >= 0 ? '+' : ''}{data.dayChangePercent.toFixed(2)}%
+                    <span className={`font-bold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {change >= 0 ? '+' : ''}{change.toFixed(2)}%
                     </span>
                 </div>
             </div>
