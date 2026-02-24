@@ -1,5 +1,6 @@
 // app/api/pulse/route.ts
 import { NextResponse } from 'next/server'
+import { NseIndia } from 'stock-nse-india'
 
 // ════════════════════════════════════════════════════════════════
 //  CONSTANTS
@@ -18,154 +19,14 @@ const YAHOO_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.5',
 }
 
-const NSE_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Referer': 'https://www.nseindia.com/',
-    'Connection': 'keep-alive',
-}
-
 // ════════════════════════════════════════════════════════════════
-//  NSE SESSION MANAGEMENT
+//  YAHOO FINANCE (Global macro + volume avg fallback)
 // ════════════════════════════════════════════════════════════════
 
-let nseCookies: string | null = null
-let nseCookieExpiry: number = 0
-
-async function getNSESession(): Promise<string | null> {
-    // Return cached cookies if still valid (5 min TTL — NSE sessions expire fast)
-    if (nseCookies && Date.now() < nseCookieExpiry) {
-        return nseCookies
-    }
-
-    try {
-        // Visit the NSE homepage to get session cookies
-        const res = await fetch('https://www.nseindia.com/', {
-            headers: NSE_HEADERS,
-            redirect: 'follow',
-        })
-
-        if (!res.ok) return null
-
-        const setCookies = res.headers.getSetCookie?.() || []
-        const cookieString = setCookies.map(c => c.split(';')[0]).join('; ')
-
-        if (!cookieString) return null
-
-        nseCookies = cookieString
-        nseCookieExpiry = Date.now() + 5 * 60 * 1000 // 5 minutes
-        return cookieString
-    } catch (e) {
-        console.error('[NSE] Session init failed:', e)
-        return null
-    }
-}
-
-/** Generic NSE API fetcher with retry */
-async function fetchNSE(url: string, cookies: string): Promise<any | null> {
-    try {
-        const res = await fetch(url, {
-            headers: {
-                ...NSE_HEADERS,
-                'Cookie': cookies,
-            },
-        })
-
-        // If we get a 401/403, our session expired — clear cache
-        if (res.status === 401 || res.status === 403) {
-            nseCookies = null
-            nseCookieExpiry = 0
-            return null
-        }
-
-        if (!res.ok) return null
-
-        return await res.json()
-    } catch (e) {
-        return null
-    }
-}
-
-// ════════════════════════════════════════════════════════════════
-//  NSE DATA FETCHERS
-// ════════════════════════════════════════════════════════════════
-
-/** Get live trade info for a stock — volume, OHLC, delivery data */
-async function fetchNSETradeInfo(symbol: string, cookies: string) {
-    const data = await fetchNSE(
-        `https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol)}`,
-        cookies
-    )
-    if (!data) return null
-
-    const priceInfo = data.priceInfo || {}
-    const tradeInfo = data.securityWiseDP || data.marketDeptOrderBook?.tradeInfo || {}
-    const preOpen = data.preOpenMarket?.preopen || []
-
-    const lastPrice = priceInfo.lastPrice || priceInfo.close || 0
-    const previousClose = priceInfo.previousClose || 0
-    const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
-
-    // Volume data from trade info
-    const totalTradedVolume = tradeInfo.totalTradedVolume || tradeInfo.tradedVolume || 0
-    // Use deliverable quantity if available
-    const deliverableQty = tradeInfo.deliverableQty || tradeInfo.deliveryToTradedQuantity || 0
-
-    return {
-        symbol,
-        price: lastPrice,
-        previousClose,
-        change,
-        volume: totalTradedVolume,
-        deliverableQty,
-        open: priceInfo.open || 0,
-        high: priceInfo.intraDayHighLow?.max || priceInfo.weekHighLow?.max || 0,
-        low: priceInfo.intraDayHighLow?.min || priceInfo.weekHighLow?.min || 0,
-    }
-}
-
-/** Get corporate actions (dividends, splits, bonuses, rights) */
-async function fetchNSECorporateActions(symbol: string, cookies: string) {
-    const data = await fetchNSE(
-        `https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=${encodeURIComponent(symbol)}`,
-        cookies
-    )
-    return Array.isArray(data) ? data : []
-}
-
-/** Get board meeting dates */
-async function fetchNSEBoardMeetings(symbol: string, cookies: string) {
-    const data = await fetchNSE(
-        `https://www.nseindia.com/api/corporate-board-meetings?index=equities&symbol=${encodeURIComponent(symbol)}`,
-        cookies
-    )
-    return Array.isArray(data) ? data : []
-}
-
-/** Get insider trading (SEBI disclosures) */
-async function fetchNSEInsiderTrading(symbol: string, cookies: string) {
-    const data = await fetchNSE(
-        `https://www.nseindia.com/api/corporates-insider-trading?index=equities&symbol=${encodeURIComponent(symbol)}`,
-        cookies
-    )
-    return Array.isArray(data) ? data : []
-}
-
-// ════════════════════════════════════════════════════════════════
-//  YAHOO FINANCE FETCHERS (kept for macro data + fallback)
-// ════════════════════════════════════════════════════════════════
-
-/** Fetch quote data from Yahoo v8 Chart API (no auth needed) */
 async function fetchYahooQuote(symbol: string): Promise<any | null> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`
-        const res = await fetch(url, {
-            headers: YAHOO_HEADERS,
-            next: { revalidate: 60 }
-        })
-
+        const res = await fetch(url, { headers: YAHOO_HEADERS, next: { revalidate: 60 } })
         if (!res.ok) return null
 
         const data = await res.json()
@@ -181,23 +42,33 @@ async function fetchYahooQuote(symbol: string): Promise<any | null> {
 
         const volumes = quotes.volume || []
         const latestVolume = volumes[volumes.length - 1] || 0
-
         const validVolumes = volumes.filter((v: number) => v && v > 0)
         const avgVolume = validVolumes.length > 1
             ? validVolumes.slice(0, -1).reduce((a: number, b: number) => a + b, 0) / (validVolumes.length - 1)
             : latestVolume
 
-        return {
-            symbol: meta?.symbol || symbol,
-            price: currentPrice,
-            previousClose,
-            change,
-            volume: latestVolume,
-            avgVolume,
-            volumeRatio: avgVolume > 0 ? latestVolume / avgVolume : 0
-        }
+        return { symbol: meta?.symbol || symbol, price: currentPrice, previousClose, change, volume: latestVolume, avgVolume, volumeRatio: avgVolume > 0 ? latestVolume / avgVolume : 0 }
     } catch (e) {
         return null
+    }
+}
+
+/** Fetch dividend/split events from Yahoo v8 chart (no auth) */
+async function fetchYahooEvents(symbol: string): Promise<{ dividends: any[], splits: any[] }> {
+    try {
+        const period1 = Math.floor(Date.now() / 1000) - (365 * 24 * 60 * 60)
+        const period2 = Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60)
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d&events=div|split`
+        const res = await fetch(url, { headers: YAHOO_HEADERS })
+        if (!res.ok) return { dividends: [], splits: [] }
+        const data = await res.json()
+        const events = data?.chart?.result?.[0]?.events || {}
+        return {
+            dividends: events.dividends ? Object.values(events.dividends) : [],
+            splits: events.splits ? Object.values(events.splits) : []
+        }
+    } catch (e) {
+        return { dividends: [], splits: [] }
     }
 }
 
@@ -205,26 +76,19 @@ async function fetchYahooQuote(symbol: string): Promise<any | null> {
 //  HELPERS
 // ════════════════════════════════════════════════════════════════
 
-/** Extract NSE symbol from a ticker like "TCS.NS" → "TCS" */
 function toNSESymbol(ticker: string): string {
     return ticker.toUpperCase().replace('.NS', '').replace('.BO', '').replace(':NSE', '').trim()
 }
 
-/** Check if a ticker is an Indian stock (not a commodity, forex, or index) */
 function isIndianStock(ticker: string): boolean {
     const t = ticker.toUpperCase()
-    if (t.includes('^') || t.includes('=')) return false // Indices & forex
-    if (t.startsWith('COMMODITY:')) return false
-    return true
+    return !t.includes('^') && !t.includes('=') && !t.startsWith('COMMODITY:')
 }
 
-/** Parse a date string in various Indian formats */
 function parseDate(dateStr: string): Date | null {
     if (!dateStr) return null
-    // NSE uses formats like "15-Jan-2025", "15 Jan 2025", "2025-01-15"
     const d = new Date(dateStr)
     if (!isNaN(d.getTime())) return d
-    // Try DD-Mon-YYYY format
     const parts = dateStr.split(/[-\/\s]+/)
     if (parts.length === 3) {
         const attempt = new Date(`${parts[1]} ${parts[0]}, ${parts[2]}`)
@@ -233,8 +97,232 @@ function parseDate(dateStr: string): Date | null {
     return null
 }
 
-/** Small delay to avoid hammering NSE */
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// ════════════════════════════════════════════════════════════════
+//  NSE DATA via stock-nse-india package
+// ════════════════════════════════════════════════════════════════
+
+async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
+    const events: any[] = []
+    const insiders: any[] = []
+    const shockers: any[] = []
+
+    const now = Date.now()
+    const sixtyDaysAgo = new Date(now - 60 * 86400000)
+    const ninetyDaysFromNow = new Date(now + 90 * 86400000)
+    const oneEightyDaysAgo = new Date(now - 180 * 86400000)
+
+    const BATCH_SIZE = 3
+    const BATCH_DELAY = 500
+
+    for (let i = 0; i < indianTickers.length; i += BATCH_SIZE) {
+        const batch = indianTickers.slice(i, i + BATCH_SIZE)
+
+        const batchPromises = batch.map(async (ticker) => {
+            const nseSymbol = toNSESymbol(ticker)
+
+            // ── 1. TRADE INFO (volume shockers) ──
+            try {
+                const tradeInfo = await nse.getEquityTradeInfo(nseSymbol)
+                const details = await nse.getEquityDetails(nseSymbol)
+
+                const volume = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
+                const lastPrice = details?.priceInfo?.lastPrice || 0
+                const previousClose = details?.priceInfo?.previousClose || 0
+                const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
+
+                if (volume > 0) {
+                    // Get average volume from Yahoo (5-day lookback)
+                    const yahooTicker = ticker.includes('.') ? ticker : ticker + '.NS'
+                    const yahoo = await fetchYahooQuote(yahooTicker)
+                    const avgVolume = yahoo?.avgVolume || volume
+                    const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0
+
+                    if (volumeRatio > 2.5 && volume > 10000) {
+                        shockers.push({
+                            ticker: nseSymbol,
+                            volume,
+                            avgVolume,
+                            ratio: volumeRatio.toFixed(1) + 'x',
+                            change
+                        })
+                    }
+                }
+            } catch (e) { /* skip */ }
+
+            // ── 2. CORPORATE INFO (events + board meetings) ──
+            try {
+                const corpInfo = await nse.getEquityCorporateInfo(nseSymbol)
+
+                // Corporate Actions (dividends, splits, bonuses, rights)
+                const actions = corpInfo?.corporate_actions?.data || []
+                actions.forEach((action: any) => {
+                    const exDate = parseDate(action.exdate)
+                    if (!exDate || exDate < sixtyDaysAgo || exDate > ninetyDaysFromNow) return
+
+                    const purpose = (action.purpose || '').toLowerCase()
+                    let type = 'Corporate Action'
+                    let desc = action.purpose || 'Corporate Action'
+
+                    if (purpose.includes('dividend')) {
+                        type = 'Dividend'
+                        desc = `Ex-Dividend: ${action.purpose}`
+                    } else if (purpose.includes('split') || purpose.includes('sub-division')) {
+                        type = 'Split'
+                        desc = `Stock Split: ${action.purpose}`
+                    } else if (purpose.includes('bonus')) {
+                        type = 'Bonus'
+                        desc = `Bonus Issue: ${action.purpose}`
+                    } else if (purpose.includes('rights')) {
+                        type = 'Rights'
+                        desc = `Rights Issue: ${action.purpose}`
+                    } else if (purpose.includes('buyback')) {
+                        type = 'Buyback'
+                        desc = `Buyback: ${action.purpose}`
+                    }
+
+                    events.push({
+                        ticker: nseSymbol,
+                        type,
+                        date: exDate.toISOString(),
+                        desc: desc.length > 80 ? desc.substring(0, 77) + '...' : desc
+                    })
+                })
+
+                // Board Meetings
+                const meetings = corpInfo?.borad_meeting?.data || []
+                meetings.forEach((meeting: any) => {
+                    const meetingDate = parseDate(meeting.meetingdate)
+                    if (!meetingDate || meetingDate < sixtyDaysAgo || meetingDate > ninetyDaysFromNow) return
+
+                    events.push({
+                        ticker: nseSymbol,
+                        type: 'Board Meeting',
+                        date: meetingDate.toISOString(),
+                        desc: (meeting.purpose || 'Board Meeting').length > 80
+                            ? (meeting.purpose || 'Board Meeting').substring(0, 77) + '...'
+                            : (meeting.purpose || 'Board Meeting')
+                    })
+                })
+
+                // Financial Results → treat as "Earnings" events
+                const results = corpInfo?.financial_results?.data || []
+                results.slice(0, 2).forEach((result: any) => {
+                    const toDate = parseDate(result.to_date)
+                    if (!toDate || toDate < sixtyDaysAgo) return
+
+                    events.push({
+                        ticker: nseSymbol,
+                        type: 'Earnings',
+                        date: toDate.toISOString(),
+                        desc: `Results: Income ₹${Number(result.income || 0).toLocaleString('en-IN')}Cr | EPS ₹${result.reDilEPS || 'N/A'}`
+                    })
+                })
+            } catch (e) { /* skip */ }
+
+            // ── 3. INSIDER TRADING (via direct endpoint) ──
+            try {
+                const insiderData: any = await nse.getDataByEndpoint(
+                    `/api/corporates-insider-trading?index=equities&symbol=${encodeURIComponent(nseSymbol)}`
+                )
+                const trades = Array.isArray(insiderData) ? insiderData : (insiderData?.data || [])
+
+                trades.forEach((trade: any) => {
+                    const txnDate = parseDate(
+                        trade.acqfromDt || trade.date || trade.intimDt || trade.acquisitionfromDate
+                    )
+                    if (!txnDate || txnDate < oneEightyDaysAgo) return
+
+                    const shares = Number(trade.secAcq || trade.noOfSecurities || trade.securityAcq || 0)
+                    const value = Number(trade.secVal || trade.befAcqSharesNo || 0)
+
+                    const acqMode = (trade.acqMode || trade.acquisitionMode || '').trim()
+
+                    insiders.push({
+                        ticker: nseSymbol,
+                        holder: trade.acquirerName || trade.acqName || trade.personName || 'Unknown',
+                        relation: trade.personCategory || trade.categoryOfPerson || trade.categoryperson || 'Promoter',
+                        action: acqMode || 'Transaction',
+                        shares: Math.abs(shares),
+                        value: Math.abs(value),
+                        date: txnDate.toISOString()
+                    })
+                })
+            } catch (e) { /* skip */ }
+        })
+
+        await Promise.all(batchPromises)
+
+        if (i + BATCH_SIZE < indianTickers.length) {
+            await delay(BATCH_DELAY)
+        }
+    }
+
+    return { events, insiders, shockers }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  YAHOO FALLBACK (when NSE package fails entirely)
+// ════════════════════════════════════════════════════════════════
+
+async function fetchYahooFallback(indianTickers: string[]) {
+    const events: any[] = []
+    const shockers: any[] = []
+
+    const now = Date.now()
+    const sixtyDaysAgo = new Date(now - 60 * 86400000)
+    const thirtyDaysFromNow = new Date(now + 30 * 86400000)
+
+    const promises = indianTickers.map(async (ticker) => {
+        const cleanTicker = toNSESymbol(ticker)
+        const yahooTicker = ticker.includes('.') ? ticker : ticker + '.NS'
+
+        // Volume from Yahoo chart
+        const quote = await fetchYahooQuote(yahooTicker)
+        if (quote) {
+            if (quote.volumeRatio > 2.5 && quote.volume > 10000) {
+                shockers.push({
+                    ticker: cleanTicker,
+                    volume: quote.volume,
+                    avgVolume: quote.avgVolume,
+                    ratio: quote.volumeRatio.toFixed(1) + 'x',
+                    change: quote.change
+                })
+            }
+        }
+
+        // Events from Yahoo chart (dividends/splits — no auth needed)
+        const { dividends, splits } = await fetchYahooEvents(yahooTicker)
+
+        dividends.forEach((div: any) => {
+            const date = new Date(div.date * 1000)
+            if (date > sixtyDaysAgo && date < thirtyDaysFromNow) {
+                events.push({
+                    ticker: cleanTicker,
+                    type: 'Dividend',
+                    date: date.toISOString(),
+                    desc: `Dividend ₹${div.amount?.toFixed(2) || 'N/A'}`
+                })
+            }
+        })
+
+        splits.forEach((split: any) => {
+            const date = new Date(split.date * 1000)
+            if (date > sixtyDaysAgo && date < thirtyDaysFromNow) {
+                events.push({
+                    ticker: cleanTicker,
+                    type: 'Split',
+                    date: date.toISOString(),
+                    desc: `Stock Split ${split.numerator}:${split.denominator}`
+                })
+            }
+        })
+    })
+
+    await Promise.all(promises)
+    return { events, insiders: [], shockers }
+}
 
 // ════════════════════════════════════════════════════════════════
 //  MAIN HANDLER
@@ -243,7 +331,6 @@ const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 export async function POST(request: Request) {
     try {
         const { tickers } = await request.json()
-
         const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
 
         const events: any[] = []
@@ -251,7 +338,7 @@ export async function POST(request: Request) {
         const shockers: any[] = []
         const macro: any[] = []
 
-        // ─── 1. MACRO DATA (Yahoo — global instruments) ───
+        // ─── 1. MACRO DATA (always from Yahoo) ───
         const macroPromises = MACRO_TICKERS.map(async (m) => {
             const quote = await fetchYahooQuote(m.symbol)
             if (quote) {
@@ -267,181 +354,39 @@ export async function POST(request: Request) {
         })
         await Promise.all(macroPromises)
 
-        // ─── 2. INDIAN STOCK DATA (NSE India – all tickers) ───
-        const nseCookies = await getNSESession()
-
-        // Separate Indian stocks from non-Indian tickers
+        // ─── 2. INDIAN STOCK DATA ───
         const indianTickers = uniqueTickers.filter(isIndianStock)
         const nonIndianTickers = uniqueTickers.filter(t => !isIndianStock(t))
 
-        const now = Date.now()
-        const sixtyDaysAgo = new Date(now - 60 * 86400000)
-        const ninetyDaysFromNow = new Date(now + 90 * 86400000)
-        const oneEightyDaysAgo = new Date(now - 180 * 86400000)
+        if (indianTickers.length > 0) {
+            let nseSuccess = false
 
-        if (nseCookies && indianTickers.length > 0) {
-            // ─── 2a. Volume Shockers + Events + Insiders from NSE ───
-            // Process in batches of 5 to respect rate limits
-            const BATCH_SIZE = 5
-            const BATCH_DELAY = 300 // ms between batches
+            // TRY NSE (via stock-nse-india package - handles cookies/sessions internally)
+            try {
+                const nse = new NseIndia()
+                // Quick connectivity test
+                await nse.getEquityDetails('TCS')
 
-            for (let i = 0; i < indianTickers.length; i += BATCH_SIZE) {
-                const batch = indianTickers.slice(i, i + BATCH_SIZE)
-
-                const batchPromises = batch.map(async (ticker) => {
-                    const nseSymbol = toNSESymbol(ticker)
-                    const cleanTicker = nseSymbol // Already clean
-
-                    // ── TRADE INFO (for volume shockers) ──
-                    try {
-                        const tradeData = await fetchNSETradeInfo(nseSymbol, nseCookies)
-                        if (tradeData && tradeData.volume > 0) {
-                            // NSE doesn't give us a simple "average volume" — we'll compute
-                            // a rough ratio from deliverable quantity vs total volume
-                            // For volume shockers, we use total traded volume > some threshold
-                            // We'll track this and use Yahoo as supplementary for avg
-                            const yahooFallback = await fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
-                            const avgVolume = yahooFallback?.avgVolume || tradeData.volume
-                            const volumeRatio = avgVolume > 0 ? tradeData.volume / avgVolume : 0
-
-                            if (volumeRatio > 2.5 && tradeData.volume > 10000) {
-                                shockers.push({
-                                    ticker: cleanTicker,
-                                    volume: tradeData.volume,
-                                    avgVolume: avgVolume,
-                                    ratio: volumeRatio.toFixed(1) + 'x',
-                                    change: tradeData.change
-                                })
-                            }
-                        }
-                    } catch (e) { /* skip */ }
-
-                    // ── CORPORATE ACTIONS (dividends, splits, bonuses) ──
-                    try {
-                        const actions = await fetchNSECorporateActions(nseSymbol, nseCookies)
-                        actions.forEach((action: any) => {
-                            const exDate = parseDate(action.exDate || action.exdate)
-                            if (!exDate) return
-                            if (exDate < sixtyDaysAgo || exDate > ninetyDaysFromNow) return
-
-                            const subject = (action.subject || '').toLowerCase()
-                            let type = 'Corporate Action'
-                            let desc = action.subject || 'Corporate Action'
-
-                            if (subject.includes('dividend')) {
-                                type = 'Dividend'
-                                desc = `Ex-Dividend: ${action.subject}`
-                            } else if (subject.includes('split') || subject.includes('sub-division')) {
-                                type = 'Split'
-                                desc = `Stock Split: ${action.subject}`
-                            } else if (subject.includes('bonus')) {
-                                type = 'Bonus'
-                                desc = `Bonus Issue: ${action.subject}`
-                            } else if (subject.includes('rights')) {
-                                type = 'Rights'
-                                desc = `Rights Issue: ${action.subject}`
-                            } else if (subject.includes('buyback')) {
-                                type = 'Buyback'
-                                desc = `Buyback: ${action.subject}`
-                            }
-
-                            events.push({
-                                ticker: cleanTicker,
-                                type,
-                                date: exDate.toISOString(),
-                                desc: desc.length > 80 ? desc.substring(0, 77) + '...' : desc
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-
-                    // ── BOARD MEETINGS ──
-                    try {
-                        const meetings = await fetchNSEBoardMeetings(nseSymbol, nseCookies)
-                        meetings.forEach((meeting: any) => {
-                            const meetingDate = parseDate(meeting.bm_date || meeting.meetingDate)
-                            if (!meetingDate) return
-                            if (meetingDate < sixtyDaysAgo || meetingDate > ninetyDaysFromNow) return
-
-                            const purpose = meeting.bm_purpose || meeting.purpose || 'Board Meeting'
-
-                            events.push({
-                                ticker: cleanTicker,
-                                type: 'Board Meeting',
-                                date: meetingDate.toISOString(),
-                                desc: purpose.length > 80 ? purpose.substring(0, 77) + '...' : purpose
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-
-                    // ── INSIDER TRADING ──
-                    try {
-                        const trades = await fetchNSEInsiderTrading(nseSymbol, nseCookies)
-                        trades.forEach((trade: any) => {
-                            const txnDate = parseDate(
-                                trade.acqfromDt || trade.date || trade.intimDt || trade.trdDate
-                            )
-                            if (!txnDate || txnDate < oneEightyDaysAgo) return
-
-                            const shares = Number(trade.secAcq || trade.noOfSecurities || trade.secVal || 0)
-                            const value = Number(trade.secVal || trade.tdpTransactionPrice || 0)
-
-                            // Determine action
-                            const acqMode = (trade.acqMode || trade.modeOfAcquisition || '').toLowerCase()
-                            const txnType = (trade.personCategory || trade.tdpTransactionType || '').toLowerCase()
-                            let action = trade.acqMode || trade.transactionType || 'Transaction'
-
-                            // Build proper action string from NSE fields
-                            if (acqMode.includes('market') && acqMode.includes('purchase')) action = 'Market Purchase'
-                            else if (acqMode.includes('market') && acqMode.includes('sale')) action = 'Market Sale - Disposal'
-                            else if (acqMode.includes('off market')) action = 'Off Market Transfer'
-                            else if (acqMode.includes('esop') || acqMode.includes('exercise')) action = 'ESOP Exercise'
-                            else if (acqMode.includes('pledge')) action = 'Pledge Created'
-
-                            insiders.push({
-                                ticker: cleanTicker,
-                                holder: trade.acquirerName || trade.personName || trade.acqName || 'Unknown',
-                                relation: trade.personCategory || trade.acquirerCategory || trade.categoryperson || 'Promoter',
-                                action,
-                                shares: Math.abs(shares),
-                                value: Math.abs(value),
-                                date: txnDate.toISOString()
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-                })
-
-                await Promise.all(batchPromises)
-
-                // Delay between batches to avoid rate limiting
-                if (i + BATCH_SIZE < indianTickers.length) {
-                    await delay(BATCH_DELAY)
-                }
+                console.log('[Pulse] NSE India connected — fetching data for', indianTickers.length, 'tickers')
+                const nseData = await fetchNSEData(nse, indianTickers)
+                events.push(...nseData.events)
+                insiders.push(...nseData.insiders)
+                shockers.push(...nseData.shockers)
+                nseSuccess = true
+            } catch (e) {
+                console.warn('[Pulse] NSE package failed, falling back to Yahoo Finance:', (e as Error).message)
             }
-        } else if (indianTickers.length > 0) {
-            // ─── FALLBACK: Yahoo Finance for Indian stocks if NSE session fails ───
-            console.warn('[Pulse] NSE session failed, falling back to Yahoo Finance')
 
-            const holdingPromises = indianTickers.map(async (ticker) => {
-                const cleanTicker = toNSESymbol(ticker)
-                const yahooTicker = ticker.includes('.') ? ticker : ticker + '.NS'
-                const quote = await fetchYahooQuote(yahooTicker)
-
-                if (quote) {
-                    if (quote.volumeRatio > 2.5 && quote.volume > 10000) {
-                        shockers.push({
-                            ticker: cleanTicker,
-                            volume: quote.volume,
-                            avgVolume: quote.avgVolume,
-                            ratio: quote.volumeRatio.toFixed(1) + 'x',
-                            change: quote.change
-                        })
-                    }
-                }
-            })
-            await Promise.all(holdingPromises)
+            // FALLBACK to Yahoo if NSE failed
+            if (!nseSuccess) {
+                const yahooData = await fetchYahooFallback(indianTickers)
+                events.push(...yahooData.events)
+                insiders.push(...yahooData.insiders)
+                shockers.push(...yahooData.shockers)
+            }
         }
 
-        // ─── 3. NON-INDIAN TICKERS (Yahoo for commodities, forex) ───
+        // ─── 3. NON-INDIAN TICKERS (Commodities, forex — always Yahoo) ───
         if (nonIndianTickers.length > 0) {
             const nonIndianPromises = nonIndianTickers.map(async (ticker) => {
                 const quote = await fetchYahooQuote(ticker)
@@ -463,7 +408,6 @@ export async function POST(request: Request) {
         insiders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
 
-        // Deduplicate events (same ticker + type + date)
         const uniqueEvents = events.filter((event, index, self) =>
             index === self.findIndex((e) =>
                 e.ticker === event.ticker &&
@@ -472,7 +416,6 @@ export async function POST(request: Request) {
             )
         )
 
-        // Deduplicate insiders (same ticker + holder + date)
         const uniqueInsiders = insiders.filter((item, index, self) =>
             index === self.findIndex((e) =>
                 e.ticker === item.ticker &&
