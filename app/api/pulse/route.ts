@@ -73,6 +73,55 @@ async function fetchYahooEvents(symbol: string): Promise<{ dividends: any[], spl
 }
 
 // ════════════════════════════════════════════════════════════════
+//  YAHOO CRUMB + QUOTESUMMARY (for insider trading fallback)
+// ════════════════════════════════════════════════════════════════
+
+let cachedCrumb: string | null = null
+let cachedCookies: string | null = null
+let crumbExpiry: number = 0
+
+async function getYahooCrumb(): Promise<{ crumb: string; cookies: string } | null> {
+    if (cachedCrumb && cachedCookies && Date.now() < crumbExpiry) {
+        return { crumb: cachedCrumb, cookies: cachedCookies }
+    }
+    try {
+        const initRes = await fetch('https://finance.yahoo.com/quote/AAPL', {
+            headers: YAHOO_HEADERS, redirect: 'follow'
+        })
+        if (!initRes.ok) return null
+        const setCookies = initRes.headers.getSetCookie?.() || []
+        const cookieString = setCookies.map(c => c.split(';')[0]).join('; ')
+        const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+            headers: { ...YAHOO_HEADERS, 'Cookie': cookieString }
+        })
+        if (!crumbRes.ok) return null
+        const crumb = await crumbRes.text()
+        if (!crumb || crumb.includes('error')) return null
+        cachedCrumb = crumb
+        cachedCookies = cookieString
+        crumbExpiry = Date.now() + 30 * 60 * 1000
+        return { crumb, cookies: cookieString }
+    } catch (e) {
+        return null
+    }
+}
+
+async function fetchYahooInsiders(symbol: string, auth: { crumb: string; cookies: string }): Promise<any[]> {
+    try {
+        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=insiderTransactions&crumb=${encodeURIComponent(auth.crumb)}`
+        const res = await fetch(url, {
+            headers: { ...YAHOO_HEADERS, 'Cookie': auth.cookies },
+            next: { revalidate: 300 }
+        })
+        if (!res.ok) return []
+        const data = await res.json()
+        return data?.quoteSummary?.result?.[0]?.insiderTransactions?.transactions || []
+    } catch (e) {
+        return []
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
 //  HELPERS
 // ════════════════════════════════════════════════════════════════
 
@@ -109,7 +158,7 @@ async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
     const shockers: any[] = []
 
     const now = Date.now()
-    const sixtyDaysAgo = new Date(now - 60 * 86400000)
+    const sevenDaysAgo = new Date(now - 7 * 86400000)
     const ninetyDaysFromNow = new Date(now + 90 * 86400000)
     const oneEightyDaysAgo = new Date(now - 180 * 86400000)
 
@@ -159,7 +208,7 @@ async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
                 const actions = corpInfo?.corporate_actions?.data || []
                 actions.forEach((action: any) => {
                     const exDate = parseDate(action.exdate)
-                    if (!exDate || exDate < sixtyDaysAgo || exDate > ninetyDaysFromNow) return
+                    if (!exDate || exDate < sevenDaysAgo || exDate > ninetyDaysFromNow) return
 
                     const purpose = (action.purpose || '').toLowerCase()
                     let type = 'Corporate Action'
@@ -194,7 +243,7 @@ async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
                 const meetings = corpInfo?.borad_meeting?.data || []
                 meetings.forEach((meeting: any) => {
                     const meetingDate = parseDate(meeting.meetingdate)
-                    if (!meetingDate || meetingDate < sixtyDaysAgo || meetingDate > ninetyDaysFromNow) return
+                    if (!meetingDate || meetingDate < sevenDaysAgo || meetingDate > ninetyDaysFromNow) return
 
                     events.push({
                         ticker: nseSymbol,
@@ -210,7 +259,7 @@ async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
                 const results = corpInfo?.financial_results?.data || []
                 results.slice(0, 2).forEach((result: any) => {
                     const toDate = parseDate(result.to_date)
-                    if (!toDate || toDate < sixtyDaysAgo) return
+                    if (!toDate || toDate < sevenDaysAgo) return
 
                     events.push({
                         ticker: nseSymbol,
@@ -268,12 +317,15 @@ async function fetchNSEData(nse: NseIndia, indianTickers: string[]) {
 
 async function fetchYahooFallback(indianTickers: string[]) {
     const events: any[] = []
+    const insiders: any[] = []
     const shockers: any[] = []
 
     const now = Date.now()
-    const sixtyDaysAgo = new Date(now - 60 * 86400000)
-    const thirtyDaysFromNow = new Date(now + 30 * 86400000)
+    const sevenDaysAgo = new Date(now - 7 * 86400000)
+    const ninetyDaysFromNow = new Date(now + 90 * 86400000)
+    const oneEightyDaysAgo = new Date(now - 180 * 86400000)
 
+    // ─── Volume + Events (no auth needed) ───
     const promises = indianTickers.map(async (ticker) => {
         const cleanTicker = toNSESymbol(ticker)
         const yahooTicker = ticker.includes('.') ? ticker : ticker + '.NS'
@@ -297,7 +349,7 @@ async function fetchYahooFallback(indianTickers: string[]) {
 
         dividends.forEach((div: any) => {
             const date = new Date(div.date * 1000)
-            if (date > sixtyDaysAgo && date < thirtyDaysFromNow) {
+            if (date > sevenDaysAgo && date < ninetyDaysFromNow) {
                 events.push({
                     ticker: cleanTicker,
                     type: 'Dividend',
@@ -309,7 +361,7 @@ async function fetchYahooFallback(indianTickers: string[]) {
 
         splits.forEach((split: any) => {
             const date = new Date(split.date * 1000)
-            if (date > sixtyDaysAgo && date < thirtyDaysFromNow) {
+            if (date > sevenDaysAgo && date < ninetyDaysFromNow) {
                 events.push({
                     ticker: cleanTicker,
                     type: 'Split',
@@ -319,9 +371,48 @@ async function fetchYahooFallback(indianTickers: string[]) {
             }
         })
     })
-
     await Promise.all(promises)
-    return { events, insiders: [], shockers }
+
+    // ─── Insider Trading (needs crumb auth) ───
+    const auth = await getYahooCrumb()
+    if (auth) {
+        // Scan all tickers for insider data
+        for (const ticker of indianTickers) {
+            const cleanTicker = toNSESymbol(ticker)
+            const yahooTicker = ticker.includes('.') ? ticker : ticker + '.NS'
+
+            try {
+                const txns = await fetchYahooInsiders(yahooTicker, auth)
+
+                txns.forEach((t: any) => {
+                    let txnDate: Date | null = null
+                    if (t.startDate?.raw) txnDate = new Date(t.startDate.raw * 1000)
+                    else if (t.startDate?.fmt) txnDate = new Date(t.startDate.fmt)
+                    if (!txnDate || isNaN(txnDate.getTime()) || txnDate < oneEightyDaysAgo) return
+
+                    const shares = t.shares?.raw ?? t.shares ?? 0
+                    let value = t.value?.raw ?? t.value ?? 0
+
+                    insiders.push({
+                        ticker: cleanTicker,
+                        holder: t.filerName || t.name || 'Unknown',
+                        relation: t.filerRelation || t.relation || 'N/A',
+                        action: t.transactionText || t.text || 'Transaction',
+                        shares: Math.abs(shares),
+                        value: Math.abs(value),
+                        date: txnDate.toISOString()
+                    })
+                })
+            } catch (e) { /* skip this ticker */ }
+
+            // Small delay to avoid rate limiting
+            await delay(100)
+        }
+    } else {
+        console.warn('[Pulse] Yahoo crumb auth failed — insider data unavailable')
+    }
+
+    return { events, insiders, shockers }
 }
 
 // ════════════════════════════════════════════════════════════════
