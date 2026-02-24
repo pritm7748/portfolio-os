@@ -1,0 +1,26 @@
+﻿=== BOARD MEETINGS BROAD ===
+OK: /api/corporate-board-meetings?index=equities
+  count=20
+  Keys: bm_symbol, bm_date, bm_purpose, bm_desc, sm_indusrty, bm_timestamp, sm_name, sm_isin, attachment, ixbrl, diff, sysTime, attFileSize, ixbrlFileSize, meetingType, intimationType, oriiginalMeetingDate, proposedMeetingDate
+  First: {"bm_symbol":"OSIAHYPER","bm_date":"24-Feb-2026","bm_purpose":"Fund Raising","bm_desc":"OSIAHYPER : 24-Feb-2026 :  The Company has informed the Exchange that a Board meeting to be held on February 23, 2026 has been re-scheduled. Further, the Company has informed the Exchange that the meeting of the 
+  Second: {"bm_symbol":"FRACTAL","bm_date":"05-Mar-2026","bm_purpose":"Board Meeting Intimation","bm_desc":"Fractal Analytics Limited has informed the Exchange about Board Meeting to be held on 05-Mar-2026 to inter-alia consider and approve the Unaudited Financial results of the Company for the Quarterly ende
+FAIL: /api/corporates-boardMeetings?index=equities => Request failed with status code 404
+FAIL: /api/corporates-board-meetings?index=equities => Request failed with status code 404
+FAIL: /api/corporates-boardMeeting?index=equities => Request failed with status code 404
+
+=== INSIDER TRADING ALTERNATIVES ===
+FAIL: /api/corporates-insider?index=equities => Request failed with status code 404
+FAIL: /api/corporates-insiderTrading?index=equities => Request failed with status code 404
+FAIL: /api/insider-trading?index=equities => Request failed with status code 404
+FAIL: /api/corporates-insider-trading?index=equities => Request failed with status code 404
+FAIL: /api/corporates-pledgedata?index=equities&symbol=RELIANCE => Request failed with status code 404
+FAIL: /api/corporates-pledgedata?index=equities => Request failed with status code 404
+
+=== BROAD CORPORATE ACTIONS (today + future) ===
+  from=24-02-2026 to=25-05-2026
+  Count: 8
+  [0] symbol=HILTON exDate=24-Feb-2026 subject=Rights 29:60 @ Premium Rs 6.68/-
+  [1] symbol=NBCC exDate=25-Feb-2026 subject=Interim Dividend - Re 0.12 Per Share
+  [2] symbol=BHANDARI exDate=25-Feb-2026 subject=Rights 4:5 @ Premium Rs 1.56/-
+  [3] symbol=ANGELONE exDate=26-Feb-2026 subject=Face Value Split (Sub-Division) - From Rs 10/- Per Share To 
+  [4] symbol=DVL exDate=27-Feb-2026 subject=Interim Dividend - Rs 3.50 Per Share

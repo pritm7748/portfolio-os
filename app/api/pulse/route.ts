@@ -20,7 +20,7 @@ const YAHOO_HEADERS = {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  YAHOO HELPERS (macro + avg volume)
+//  YAHOO: Macro + Average Volume (v8 chart — no auth needed)
 // ════════════════════════════════════════════════════════════════
 
 async function fetchYahooQuote(symbol: string): Promise<any | null> {
@@ -91,172 +91,206 @@ export async function POST(request: Request) {
         const shockers: any[] = []
         const macro: any[] = []
 
-        const now = Date.now()
-        const sevenDaysAgo = new Date(now - 7 * 86400000)
-        const ninetyDaysFromNow = new Date(now + 90 * 86400000)
-        const oneEightyDaysAgo = new Date(now - 180 * 86400000)
-
         const indianTickers = uniqueTickers.filter(isIndianStock)
         const nonIndianTickers = uniqueTickers.filter(t => !isIndianStock(t))
 
-        // ═══════════════════════════════════════════════════════
-        //  PHASE 1: Fire macro + NSE init in parallel (zero blocking)
-        // ═══════════════════════════════════════════════════════
+        // Build a Set of NSE symbols for fast lookup when filtering broad data
+        const userSymbols = new Set(indianTickers.map(toNSESymbol))
 
         const nse = new NseIndia()
 
-        // Macro + non-Indian shockers fire in parallel with NSE data
-        const macroPromise = Promise.all(MACRO_TICKERS.map(async (m) => {
-            const quote = await fetchYahooQuote(m.symbol)
-            if (quote) {
-                macro.push({
-                    name: m.name, price: quote.price, change: quote.change,
-                    type: m.type, prefix: m.prefix, suffix: m.suffix
-                })
-            }
-        }))
-
-        const nonIndianPromise = Promise.all(nonIndianTickers.map(async (ticker) => {
-            const quote = await fetchYahooQuote(ticker)
-            if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
-                shockers.push({
-                    ticker: ticker.replace('.NS', '').replace('.BO', ''),
-                    volume: quote.volume, avgVolume: quote.avgVolume,
-                    ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
-                })
-            }
-        }))
-
         // ═══════════════════════════════════════════════════════
-        //  PHASE 2: NSE data — parallel batches of 5
+        //  ALL PHASES IN PARALLEL — zero sequential blocking
         // ═══════════════════════════════════════════════════════
 
-        const nsePromise = (async () => {
-            if (indianTickers.length === 0) return
+        await Promise.all([
 
-            const BATCH = 5
-            const BATCH_DELAY = 300
+            // ─── A. MACRO DATA (Yahoo) ───
+            ...MACRO_TICKERS.map(async (m) => {
+                const quote = await fetchYahooQuote(m.symbol)
+                if (quote) {
+                    macro.push({
+                        name: m.name, price: quote.price, change: quote.change,
+                        type: m.type, prefix: m.prefix, suffix: m.suffix
+                    })
+                }
+            }),
 
-            for (let i = 0; i < indianTickers.length; i += BATCH) {
-                const batch = indianTickers.slice(i, i + BATCH)
+            // ─── B. VOLUME SHOCKERS (NSE trade info + Yahoo avg volume) ───
+            ...indianTickers.map(async (ticker) => {
+                const sym = toNSESymbol(ticker)
+                try {
+                    const [tradeInfo, details, yahoo] = await Promise.all([
+                        nse.getEquityTradeInfo(sym),
+                        nse.getEquityDetails(sym),
+                        fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
+                    ])
 
-                await Promise.all(batch.map(async (ticker) => {
-                    const sym = toNSESymbol(ticker)
+                    const volume = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
+                    const lastPrice = details?.priceInfo?.lastPrice || 0
+                    const previousClose = details?.priceInfo?.previousClose || 0
+                    const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
+                    const avgVolume = yahoo?.avgVolume || volume
+                    const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0
 
-                    // ── VOLUME SHOCKER ──
-                    try {
-                        const [tradeInfo, details, yahoo] = await Promise.all([
-                            nse.getEquityTradeInfo(sym),
-                            nse.getEquityDetails(sym),
-                            fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
-                        ])
+                    if (volumeRatio > 2.5 && volume > 10000) {
+                        shockers.push({
+                            ticker: sym, volume, avgVolume,
+                            ratio: volumeRatio.toFixed(1) + 'x', change
+                        })
+                    }
+                } catch (e) { /* skip */ }
+            }),
 
-                        const volume = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
-                        const lastPrice = details?.priceInfo?.lastPrice || 0
-                        const previousClose = details?.priceInfo?.previousClose || 0
-                        const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
-                        const avgVolume = yahoo?.avgVolume || volume
-                        const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0
+            // ─── C. NON-INDIAN VOLUME SHOCKERS (Yahoo) ───
+            ...nonIndianTickers.map(async (ticker) => {
+                const quote = await fetchYahooQuote(ticker)
+                if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
+                    shockers.push({
+                        ticker: ticker.replace('.NS', '').replace('.BO', ''),
+                        volume: quote.volume, avgVolume: quote.avgVolume,
+                        ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
+                    })
+                }
+            }),
 
-                        if (volumeRatio > 2.5 && volume > 10000) {
-                            shockers.push({
-                                ticker: sym, volume, avgVolume,
-                                ratio: volumeRatio.toFixed(1) + 'x', change
-                            })
+            // ─── D. UPCOMING EVENTS — BROAD NSE endpoint (all stocks → filter by user tickers) ───
+            (async () => {
+                if (indianTickers.length === 0) return
+                try {
+                    const actionsData: any = await nse.getDataByEndpoint(
+                        '/api/corporates-corporateActions?index=equities'
+                    )
+                    const actions = Array.isArray(actionsData) ? actionsData : []
+
+                    actions.forEach((action: any) => {
+                        // Only include events for user's stocks
+                        if (!userSymbols.has(action.symbol)) return
+
+                        const exDate = parseDate(action.exDate)
+                        if (!exDate) return
+
+                        const subject = (action.subject || '').toLowerCase()
+                        let type = 'Corporate Action'
+                        let desc = action.subject || 'Corporate Action'
+
+                        if (subject.includes('dividend') || subject.includes('interim dividend')) {
+                            type = 'Dividend'
+                        } else if (subject.includes('split') || subject.includes('sub-division')) {
+                            type = 'Split'
+                        } else if (subject.includes('bonus')) {
+                            type = 'Bonus'
+                        } else if (subject.includes('rights')) {
+                            type = 'Rights'
+                        } else if (subject.includes('buyback')) {
+                            type = 'Buyback'
                         }
-                    } catch (e) { /* skip */ }
 
-                    // ── CORPORATE INFO (actions, board meetings, financials) ──
-                    try {
-                        const corpInfo = await nse.getEquityCorporateInfo(sym)
-
-                        // Corporate Actions
-                        const actions = corpInfo?.corporate_actions?.data || []
-                        actions.forEach((action: any) => {
-                            const exDate = parseDate(action.exdate)
-                            if (!exDate || exDate < sevenDaysAgo || exDate > ninetyDaysFromNow) return
-
-                            const purpose = (action.purpose || '').toLowerCase()
-                            let type = 'Corporate Action', desc = action.purpose || 'Corporate Action'
-
-                            if (purpose.includes('dividend')) { type = 'Dividend'; desc = `Ex-Dividend: ${action.purpose}` }
-                            else if (purpose.includes('split') || purpose.includes('sub-division')) { type = 'Split'; desc = `Stock Split: ${action.purpose}` }
-                            else if (purpose.includes('bonus')) { type = 'Bonus'; desc = `Bonus Issue: ${action.purpose}` }
-                            else if (purpose.includes('rights')) { type = 'Rights'; desc = `Rights Issue: ${action.purpose}` }
-                            else if (purpose.includes('buyback')) { type = 'Buyback'; desc = `Buyback: ${action.purpose}` }
-
-                            events.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 80 ? desc.substring(0, 77) + '...' : desc })
+                        events.push({
+                            ticker: action.symbol,
+                            type,
+                            date: exDate.toISOString(),
+                            desc: desc.length > 80 ? desc.substring(0, 77) + '...' : desc
                         })
+                    })
+                } catch (e) {
+                    console.warn('[Pulse] Broad corporate actions failed:', (e as Error).message)
+                }
+            })(),
 
-                        // Board Meetings
-                        const meetings = corpInfo?.borad_meeting?.data || []
-                        meetings.forEach((meeting: any) => {
-                            const meetingDate = parseDate(meeting.meetingdate)
-                            if (!meetingDate || meetingDate < sevenDaysAgo || meetingDate > ninetyDaysFromNow) return
-                            const purpose = meeting.purpose || 'Board Meeting'
-                            events.push({
-                                ticker: sym, type: 'Board Meeting',
-                                date: meetingDate.toISOString(),
-                                desc: purpose.length > 80 ? purpose.substring(0, 77) + '...' : purpose
+            // ─── E. UPCOMING BOARD MEETINGS — BROAD NSE endpoint ───
+            (async () => {
+                if (indianTickers.length === 0) return
+                try {
+                    const meetingsData: any = await nse.getDataByEndpoint(
+                        '/api/corporate-board-meetings?index=equities'
+                    )
+                    const meetings = Array.isArray(meetingsData) ? meetingsData : []
+
+                    meetings.forEach((meeting: any) => {
+                        // Only include for user's stocks
+                        if (!userSymbols.has(meeting.bm_symbol)) return
+
+                        const meetingDate = parseDate(meeting.bm_date)
+                        if (!meetingDate) return
+
+                        const purpose = meeting.bm_purpose || 'Board Meeting'
+
+                        events.push({
+                            ticker: meeting.bm_symbol,
+                            type: 'Board Meeting',
+                            date: meetingDate.toISOString(),
+                            desc: purpose.length > 80 ? purpose.substring(0, 77) + '...' : purpose
+                        })
+                    })
+                } catch (e) {
+                    console.warn('[Pulse] Broad board meetings failed:', (e as Error).message)
+                }
+            })(),
+
+            // ─── F. INSIDER-LIKE DATA — NSE announcements (partial substitute) ───
+            (async () => {
+                if (indianTickers.length === 0) return
+
+                const BATCH = 5
+                for (let i = 0; i < indianTickers.length; i += BATCH) {
+                    const batch = indianTickers.slice(i, i + BATCH)
+
+                    await Promise.all(batch.map(async (ticker) => {
+                        const sym = toNSESymbol(ticker)
+                        try {
+                            const corpInfo = await nse.getEquityCorporateInfo(sym)
+
+                            // Latest announcements — filter for SAST / insider-related
+                            const announcements = corpInfo?.latest_announcements?.data || []
+                            const oneEightyDaysAgo = new Date(Date.now() - 180 * 86400000)
+
+                            announcements.forEach((ann: any) => {
+                                const subject = (ann.subject || '').toLowerCase()
+                                const date = parseDate(ann.broadcastdate)
+                                if (!date || date < oneEightyDaysAgo) return
+
+                                // Filter for insider/SAST/acquisition-related announcements
+                                const isInsiderRelated = (
+                                    subject.includes('acquisition') ||
+                                    subject.includes('sast') ||
+                                    subject.includes('insider') ||
+                                    subject.includes('promoter') ||
+                                    subject.includes('pledge') ||
+                                    subject.includes('shareholding') ||
+                                    subject.includes('substantial')
+                                )
+
+                                if (isInsiderRelated) {
+                                    // Determine action type from subject
+                                    let action = 'Disclosure'
+                                    if (subject.includes('pledge')) action = 'Pledge Update'
+                                    else if (subject.includes('acquisition')) action = 'Acquisition'
+                                    else if (subject.includes('sast') || subject.includes('substantial')) action = 'SAST Disclosure'
+                                    else if (subject.includes('promoter') && subject.includes('holding')) action = 'Promoter Holding Update'
+                                    else if (subject.includes('insider')) action = 'Insider Disclosure'
+
+                                    insiders.push({
+                                        ticker: sym,
+                                        holder: ann.symbol || sym,
+                                        relation: 'Company Disclosure',
+                                        action,
+                                        shares: 0,
+                                        value: 0,
+                                        date: date.toISOString()
+                                    })
+                                }
                             })
-                        })
+                        } catch (e) { /* skip */ }
+                    }))
 
-                        // Financial Results → Earnings
-                        const results = corpInfo?.financial_results?.data || []
-                        results.slice(0, 1).forEach((result: any) => {
-                            const toDate = parseDate(result.to_date)
-                            if (!toDate || toDate < sevenDaysAgo) return
-                            events.push({
-                                ticker: sym, type: 'Earnings',
-                                date: toDate.toISOString(),
-                                desc: `Results: Income ₹${Number(result.income || 0).toLocaleString('en-IN')}Cr | EPS ₹${result.reDilEPS || 'N/A'}`
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-
-                    // ── INSIDER TRADING ──
-                    try {
-                        const insiderData: any = await nse.getDataByEndpoint(
-                            `/api/corporates-insider-trading?index=equities&symbol=${encodeURIComponent(sym)}`
-                        )
-                        const trades = Array.isArray(insiderData) ? insiderData : (insiderData?.data || [])
-
-                        trades.forEach((trade: any) => {
-                            const txnDate = parseDate(
-                                trade.acqfromDt || trade.date || trade.intimDt || trade.acquisitionfromDate
-                            )
-                            if (!txnDate || txnDate < oneEightyDaysAgo) return
-
-                            const shares = Number(trade.secAcq || trade.noOfSecurities || trade.securityAcq || 0)
-                            const value = Number(trade.secVal || trade.befAcqSharesNo || 0)
-                            const acqMode = (trade.acqMode || trade.acquisitionMode || '').trim()
-
-                            insiders.push({
-                                ticker: sym,
-                                holder: trade.acquirerName || trade.acqName || trade.personName || 'Unknown',
-                                relation: trade.personCategory || trade.categoryOfPerson || 'Promoter',
-                                action: acqMode || 'Transaction',
-                                shares: Math.abs(shares),
-                                value: Math.abs(value),
-                                date: txnDate.toISOString()
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-                }))
-
-                // Small delay between batches
-                if (i + BATCH < indianTickers.length) await delay(BATCH_DELAY)
-            }
-        })()
+                    if (i + BATCH < indianTickers.length) await delay(200)
+                }
+            })(),
+        ])
 
         // ═══════════════════════════════════════════════════════
-        //  Wait for everything
-        // ═══════════════════════════════════════════════════════
-
-        await Promise.all([macroPromise, nonIndianPromise, nsePromise])
-
-        // ═══════════════════════════════════════════════════════
-        //  PHASE 3: Sort & Deduplicate
+        //  SORT & DEDUPLICATE
         // ═══════════════════════════════════════════════════════
 
         events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
