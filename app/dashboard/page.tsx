@@ -314,10 +314,15 @@ export default function DashboardPage() {
         const totalPnlPercent = totalInvested > 0 ? ((totalCurrent - totalInvested) / totalInvested) * 100 : 0
         const dayPnlPercent = totalCurrent > 0 ? (totalDayPnl / (totalCurrent - totalDayPnl)) * 100 : 0
 
-        // Top Movers: sorted by today's change %
-        const sorted = [...holdingsForHeatmap].filter(h => h.dayChangePercent !== 0)
-        const topGainers = sorted.sort((a, b) => b.dayChangePercent - a.dayChangePercent).slice(0, 3)
-        const topLosers = sorted.sort((a, b) => a.dayChangePercent - b.dayChangePercent).slice(0, 3)
+        // Top Movers: filter by direction THEN sort
+        const topGainers = [...holdingsForHeatmap]
+            .filter(h => h.dayChangePercent > 0)
+            .sort((a, b) => b.dayChangePercent - a.dayChangePercent)
+            .slice(0, 3)
+        const topLosers = [...holdingsForHeatmap]
+            .filter(h => h.dayChangePercent < 0)
+            .sort((a, b) => a.dayChangePercent - b.dayChangePercent)
+            .slice(0, 3)
 
         // Win Rate
         const winners = holdingsForPnl.filter(h => h.pnlPercent > 0).length

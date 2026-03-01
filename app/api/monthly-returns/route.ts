@@ -101,11 +101,14 @@ export async function POST(request: Request) {
         const currentYear = now.getFullYear()
         const currentMonth = now.getMonth()
 
-        // Build monthly portfolio values
+        // Build monthly portfolio values — EXCLUDE current month (incomplete Yahoo data)
         const monthlyPortfolioValue: Record<string, number> = {}
+        // Only compute up to LAST completed month
+        const lastCompleteMonth = currentMonth === 0 ? 11 : currentMonth - 1
+        const lastCompleteYear = currentMonth === 0 ? currentYear - 1 : currentYear
 
-        for (let y = Math.max(startYear, currentYear - 2); y <= currentYear; y++) {
-            const maxMonth = y === currentYear ? currentMonth : 11
+        for (let y = Math.max(startYear, currentYear - 2); y <= lastCompleteYear; y++) {
+            const maxMonth = y === lastCompleteYear ? lastCompleteMonth : 11
             const startMonth = y === startYear ? firstDate.getMonth() : 0
 
             for (let m = startMonth; m <= maxMonth; m++) {
@@ -166,7 +169,8 @@ export async function POST(request: Request) {
         const matrix = matrixYears.map(year => {
             let ytd = 0
             const months = Array.from({ length: 12 }, (_, m) => {
-                if (year === currentYear && m > currentMonth) return null
+                // Exclude current month (incomplete) and future months
+                if (year === currentYear && m >= currentMonth) return null
                 if (year === startYear && m < firstDate.getMonth()) return null
 
                 const key = `${year}-${m}`
