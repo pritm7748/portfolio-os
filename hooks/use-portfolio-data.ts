@@ -315,15 +315,13 @@ export function useActiveAssets() {
     })
 
     return useMemo(() => {
-        // Map Key = Root Symbol (e.g. "TCS") to prevent exchange duplicates
-        const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
-        // Track root symbols of stocks that were traded but fully sold
-        const soldRoots = new Set<string>()
+        console.log('[useActiveAssets] transactions count:', transactions?.length, 'watchlist count:', watchlistItems?.length)
 
-        // Helper to get root symbol (strips .NS, .BO)
+        const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
+        const soldRoots = new Set<string>()
         const getRoot = (t: string) => t.toUpperCase().replace('.NS', '').replace('.BO', '')
 
-        // 1. Process Holdings (Net Quantity > 0)
+        // 1. Process Holdings
         if (transactions) {
             const qtyMap: Record<string, number> = {}
             const metaMap: Record<string, any> = {}
@@ -341,38 +339,49 @@ export function useActiveAssets() {
                 else if (t.transaction_type === 'Sell') qtyMap[ticker] -= q
             })
 
+            console.log('[useActiveAssets] Net quantities:', JSON.stringify(qtyMap))
+
             Object.entries(qtyMap).forEach(([ticker, netQty]) => {
                 const root = getRoot(ticker)
                 if (netQty > 0.0001) {
-                    // User still holds this stock
                     uniqueMap.set(root, {
                         ticker,
                         name: metaMap[ticker].name,
                         type: 'Holding'
                     })
                 } else {
-                    // User traded this stock but fully sold it — mark as sold
                     soldRoots.add(root)
                 }
             })
+
+            console.log('[useActiveAssets] Active holdings:', Array.from(uniqueMap.keys()))
+            console.log('[useActiveAssets] Sold roots:', Array.from(soldRoots))
         }
 
         // 2. Merge Watchlist Items — skip sold holdings
         if (watchlistItems) {
+            const addedFromWatchlist: string[] = []
+            const skippedFromWatchlist: string[] = []
             watchlistItems.forEach(w => {
                 const root = getRoot(w.ticker)
-                // Skip if already present as a holding OR if user fully sold this stock
                 if (!uniqueMap.has(root) && !soldRoots.has(root)) {
                     uniqueMap.set(root, {
                         ticker: w.ticker,
                         name: w.name,
                         type: 'Watchlist'
                     })
+                    addedFromWatchlist.push(root)
+                } else {
+                    skippedFromWatchlist.push(root)
                 }
             })
+            console.log('[useActiveAssets] Added from watchlist:', addedFromWatchlist)
+            console.log('[useActiveAssets] Skipped from watchlist:', skippedFromWatchlist)
         }
 
-        return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+        const result = Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+        console.log('[useActiveAssets] FINAL result:', result.map(r => `${r.ticker}(${r.type})`))
+        return result
     }, [transactions, watchlistItems])
 }
 
