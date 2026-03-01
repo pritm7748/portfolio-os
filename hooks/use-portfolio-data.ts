@@ -295,8 +295,24 @@ export function usePulse(tickers: string[]) {
 }
 
 export function useActiveAssets() {
-    const { data: transactions } = useTransactions()
+    const supabase = createClient()
     const { data: watchlistItems } = useAllWatchlistItems()
+
+    // Fetch ALL transactions across ALL portfolios (not portfolio-scoped like useTransactions)
+    const { data: transactions } = useQuery({
+        queryKey: ['all_transactions_for_active_assets'],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user')
+            const { data, error } = await supabase
+                .from('transactions')
+                .select(`*, assets ( ticker, name, asset_type, sector, industry )`)
+                .order('date', { ascending: true })
+            if (error) throw error
+            return data as Transaction[]
+        },
+        staleTime: 5 * 60 * 1000,
+    })
 
     return useMemo(() => {
         // Map Key = Root Symbol (e.g. "TCS") to prevent exchange duplicates
