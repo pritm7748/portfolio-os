@@ -2,62 +2,55 @@
 
 import { Treemap, ResponsiveContainer, Tooltip } from 'recharts'
 
-// Custom SVG renderer for the Treemap blocks
-const CustomizedContent = (props: any) => {
-    const { x, y, width, height, name, dayChangePercent } = props
+// Color scale with more intensity levels
+const getColor = (change: number) => {
+    if (change >= 4) return '#15803d'   // Green 700
+    if (change >= 2) return '#16a34a'   // Green 600
+    if (change >= 0.5) return '#22c55e' // Green 500
+    if (change > 0) return '#4ade80'    // Green 400
+    if (change === 0) return '#64748b'  // Slate 500
+    if (change > -0.5) return '#f87171' // Red 400
+    if (change > -2) return '#ef4444'   // Red 500
+    if (change > -4) return '#dc2626'   // Red 600
+    return '#b91c1c'                     // Red 700
+}
 
-    // FIX: Recharts creates a parent 'root' node that lacks our custom properties.
-    // We must safely fallback to 0 or empty strings to prevent undefined crashes.
+const CustomizedContent = (props: any) => {
+    const { x, y, width, height, name, dayChangePercent, pnlPercent } = props
     const change = dayChangePercent || 0
     const displayName = name ? String(name).split('.')[0] : ''
 
-    // Determine color based on Daily Change Intensity
-    let fill = '#94a3b8' // Neutral Grey
-    if (change >= 2) fill = '#16a34a' // Strong Green
-    else if (change > 0) fill = '#4ade80' // Light Green
-    else if (change <= -2) fill = '#dc2626' // Strong Red
-    else if (change < 0) fill = '#f87171' // Light Red
+    if (!name || width < 2 || height < 2) return null
 
-    // Don't render text if the box is too tiny
-    const showText = width > 45 && height > 35
-    const showSubText = width > 55 && height > 50
-
-    // If there is no name (e.g., it's a structural root node), don't render anything
-    if (!name) return null
+    const fill = getColor(change)
+    const showTicker = width > 40 && height > 28
+    const showChange = width > 50 && height > 42
 
     return (
         <g>
             <rect
-                x={x}
-                y={y}
-                width={width}
-                height={height}
+                x={x} y={y} width={width} height={height}
                 fill={fill}
                 stroke="var(--bg-background, #ffffff)"
                 strokeWidth={2}
-                className="transition-all hover:opacity-80 cursor-pointer dark:stroke-slate-900"
+                className="transition-opacity hover:opacity-80 cursor-pointer dark:stroke-slate-900"
+                rx={3}
             />
-            {showText && (
+            {showTicker && (
                 <text
-                    x={x + width / 2}
-                    y={y + height / 2 - (showSubText ? 4 : -4)}
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize={12}
-                    fontWeight="bold"
-                    className="pointer-events-none drop-shadow-md"
+                    x={x + width / 2} y={y + height / 2 - (showChange ? 6 : 0)}
+                    textAnchor="middle" dominantBaseline="central"
+                    fill="#ffffff" fontSize={11} fontWeight="bold"
+                    className="pointer-events-none drop-shadow-sm"
                 >
                     {displayName}
                 </text>
             )}
-            {showSubText && (
+            {showChange && (
                 <text
-                    x={x + width / 2}
-                    y={y + height / 2 + 12}
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize={10}
-                    fontWeight="medium"
+                    x={x + width / 2} y={y + height / 2 + 11}
+                    textAnchor="middle" dominantBaseline="central"
+                    fill="#ffffff" fontSize={9.5} fontWeight="500"
                     opacity={0.9}
                     className="pointer-events-none"
                 >
@@ -68,29 +61,34 @@ const CustomizedContent = (props: any) => {
     )
 }
 
-// Custom Tooltip for hovering over blocks
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
-        const data = payload[0].payload
-        // Safe fallback for tooltip as well
-        const change = data.dayChangePercent || 0
+        const d = payload[0].payload
+        const change = d.dayChangePercent || 0
+        const pnl = d.pnlPercent || 0
 
         return (
-            <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl text-sm z-50 min-w-[150px]">
-                <p className="font-bold text-slate-800 dark:text-white mb-2 pb-1 border-b border-slate-100 dark:border-slate-800">
-                    {data.name || 'Asset'}
+            <div className="bg-white dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl text-xs z-50 min-w-[160px]">
+                <p className="font-bold text-slate-800 dark:text-white mb-2 pb-1.5 border-b border-slate-100 dark:border-slate-800">
+                    {d.name || 'Asset'}
                 </p>
-                <div className="flex justify-between gap-4 text-xs mb-1">
-                    <span className="text-slate-500">Total Value:</span>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                        ₹{(data.value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                    </span>
-                </div>
-                <div className="flex justify-between gap-4 text-xs">
-                    <span className="text-slate-500">Day's Move:</span>
-                    <span className={`font-bold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {change >= 0 ? '+' : ''}{change.toFixed(2)}%
-                    </span>
+                <div className="space-y-1.5">
+                    <div className="flex justify-between">
+                        <span className="text-slate-500">Value</span>
+                        <span className="font-bold text-slate-900 dark:text-white">₹{(d.value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-slate-500">Today</span>
+                        <span className={`font-bold ${change >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                            {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+                        </span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-slate-500">Total P&L</span>
+                        <span className={`font-bold ${pnl >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
+                        </span>
+                    </div>
                 </div>
             </div>
         )
@@ -99,14 +97,14 @@ const CustomTooltip = ({ active, payload }: any) => {
 }
 
 export default function PortfolioHeatmap({ data }: { data: any[] }) {
-    if (!data || data.length === 0) return <div className="text-center text-xs text-slate-400 mt-10">No data available</div>
+    if (!data || data.length === 0) return <div className="text-center text-xs text-slate-400 mt-10">No holdings to display</div>
 
-    // Map holdings into the format Recharts Treemap requires
     const treeData = data.map(d => ({
         name: d.ticker,
-        size: Math.max(d.currentValue, 1), // Size dictates block area (cannot be 0)
-        value: d.currentValue, // Used for tooltip display
-        dayChangePercent: d.dayChangePercent || 0
+        size: Math.max(d.currentValue, 1),
+        value: d.currentValue,
+        dayChangePercent: d.dayChangePercent || 0,
+        pnlPercent: d.pnlPercent || 0,
     }))
 
     return (
@@ -115,7 +113,7 @@ export default function PortfolioHeatmap({ data }: { data: any[] }) {
                 data={treeData}
                 dataKey="size"
                 aspectRatio={4 / 3}
-                stroke="#fff"
+                stroke="transparent"
                 content={<CustomizedContent />}
                 isAnimationActive={false}
             >

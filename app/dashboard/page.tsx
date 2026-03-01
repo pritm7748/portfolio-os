@@ -2,345 +2,405 @@
 
 import Link from 'next/link'
 import { useMemo } from 'react'
-import { ArrowUpRight, ArrowDownRight, Wallet, PieChart as PieIcon, IndianRupee, Loader2, PiggyBank, Gem, TrendingUp, DollarSign, Activity, ChevronRight } from 'lucide-react'
-import AssetAllocationChart from '@/components/asset-allocation-chart'
-import MarketStatus from '@/components/market-status'
+import {
+    ArrowUpRight, ArrowDownRight, Wallet, Loader2, PiggyBank,
+    TrendingUp, DollarSign, Activity, ChevronRight, BarChart3,
+    Landmark, Gem, Coins, Grid3X3, Map
+} from 'lucide-react'
+import DashboardSparkline from '@/components/dashboard-sparkline'
+import PortfolioHeatmap from '@/components/portfolio-heatmap'
+import PnlDistributionChart from '@/components/pnl-distribution-chart'
+import MonthlyReturnsMatrix from '@/components/monthly-returns-matrix'
 import { useTransactions, useLivePrices, useDividends } from '@/hooks/use-portfolio-data'
 
-type SummaryStats = {
-  invested: number
-  current: number
-  unrealizedPnl: number
-  pnlPercent: number
-  dayPnl: number
+// ════════════════════════════════════════════════════════════════
+//  TYPES
+// ════════════════════════════════════════════════════════════════
+type AssetClassData = {
+    invested: number
+    current: number
+    dayPnl: number
+    pnlPercent: number
+    sparkData: { value: number }[]
+    count: number
 }
 
-type DashboardData = {
-  total: SummaryStats & { income: number, dividendCount: number, realizedPnl: number }
-  equity: SummaryStats
-  commodity: SummaryStats
+type HoldingDetail = {
+    ticker: string
+    currentValue: number
+    dayChangePercent: number
+    pnlPercent: number
 }
 
-type AllocationData = { name: string; value: number }
+// ════════════════════════════════════════════════════════════════
+//  HELPER: Format INR
+// ════════════════════════════════════════════════════════════════
+const fmtINR = (n: number, compact = false) => {
+    if (compact) {
+        const abs = Math.abs(n)
+        if (abs >= 10000000) return `${(n / 10000000).toFixed(2)}Cr`
+        if (abs >= 100000) return `${(n / 100000).toFixed(2)}L`
+        if (abs >= 1000) return `${(n / 1000).toFixed(1)}K`
+    }
+    return n.toLocaleString('en-IN', { maximumFractionDigits: 0 })
+}
 
+// ════════════════════════════════════════════════════════════════
+//  CLASSIFY ASSET → Stocks | Mutual Funds | Commodities | Currencies
+// ════════════════════════════════════════════════════════════════
+const classifyAsset = (type: string, ticker: string): string => {
+    const t = type?.toLowerCase() || ''
+    const tk = ticker?.toUpperCase() || ''
+    if (t.includes('mutual') || t.includes('mf') || t.includes('fund')) return 'Mutual Funds'
+    if (t.includes('currency') || t.includes('forex') || tk.includes('USD') || tk.includes('EUR')) return 'Currencies'
+    if (t.includes('commodity') || t.includes('gold') || t.includes('silver') || tk.startsWith('COMMODITY:')) return 'Commodities'
+    return 'Stocks'
+}
+
+// ════════════════════════════════════════════════════════════════
+//  WEALTH ENGINE CARD
+// ════════════════════════════════════════════════════════════════
+function WealthCard({ title, icon: Icon, data, accent }: {
+    title: string
+    icon: any
+    data: AssetClassData
+    accent: string
+}) {
+    const isProfit = data.current >= data.invested
+    const dayUp = data.dayPnl >= 0
+    const pctAlloc = data.invested > 0 ? data.pnlPercent : 0
+
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col gap-3 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <div className={`rounded-lg p-1.5 ${accent}`}>
+                        <Icon className="h-3.5 w-3.5 text-white" />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{title}</span>
+                </div>
+                <span className="text-[10px] font-medium text-slate-400">{data.count} {data.count === 1 ? 'asset' : 'assets'}</span>
+            </div>
+
+            <div className="flex items-end justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                    <p className="text-xl font-bold text-slate-900 dark:text-white leading-tight">
+                        ₹{fmtINR(data.current, true)}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-[11px] font-semibold flex items-center gap-0.5 ${isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                            {isProfit ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                            {isProfit ? '+' : ''}{pctAlloc.toFixed(1)}%
+                        </span>
+                        <span className={`text-[10px] font-medium ${dayUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                            {dayUp ? '+' : ''}₹{fmtINR(data.dayPnl)} today
+                        </span>
+                    </div>
+                </div>
+
+                {/* Sparkline */}
+                <div className="w-20 h-10 flex-shrink-0">
+                    <DashboardSparkline data={data.sparkData} />
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SECTION WRAPPER
+// ════════════════════════════════════════════════════════════════
+function Section({ title, icon: Icon, children, className = '' }: {
+    title: string, icon: any, children: React.ReactNode, className?: string
+}) {
+    return (
+        <div className={`rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800 ${className}`}>
+            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+                <Icon className="h-4 w-4 text-slate-400" />
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">{title}</h3>
+            </div>
+            <div className="p-5">
+                {children}
+            </div>
+        </div>
+    )
+}
+
+// ════════════════════════════════════════════════════════════════
+//  MAIN PAGE
+// ════════════════════════════════════════════════════════════════
 export default function DashboardPage() {
-  // 1. Fetch Core Data (Cached)
-  const { data: transactions, isLoading: txnsLoading } = useTransactions()
+    // 1. Fetch Core Data
+    const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
-  // 2. Derive Ticker List
-  const allTickers = useMemo(() => {
-      if (!transactions) return []
-      const set = new Set<string>()
-      transactions.forEach(t => set.add(t.assets.ticker))
-      return Array.from(set)
-  }, [transactions])
+    // 2. Derive Ticker List
+    const allTickers = useMemo(() => {
+        if (!transactions) return []
+        const set = new Set<string>()
+        transactions.forEach(t => set.add(t.assets.ticker))
+        return Array.from(set)
+    }, [transactions])
 
-  // 3. Fetch Market Data (Cached + Auto-Refresh)
-  const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
-  const { data: dividendMap, isLoading: divLoading } = useDividends(allTickers)
+    // 3. Fetch Market Data
+    const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
+    const { data: dividendMap, isLoading: divLoading } = useDividends(allTickers)
 
-  const isLoading = txnsLoading || pricesLoading || divLoading
+    const isLoading = txnsLoading || pricesLoading || divLoading
 
-  // 4. THE CALCULATION ENGINE (Memoized)
-  const { dashboardData, allocationData } = useMemo(() => {
-      if (!transactions || !priceMap || !dividendMap) {
-          return { dashboardData: null, allocationData: [] }
-      }
+    // 4. THE CALCULATION ENGINE
+    const dashData = useMemo(() => {
+        if (!transactions || !priceMap || !dividendMap) return null
 
-      const assetLots: Record<string, { price: number, quantity: number }[]> = {}
-      const portfolio: Record<string, any> = {}
-      
-      let totalIncome = 0
-      let dividendCount = 0
-      let realizedPnL = 0 
+        const assetLots: Record<string, { price: number, quantity: number }[]> = {}
+        const portfolio: Record<string, any> = {}
+        let realizedPnL = 0
+        let totalIncome = 0
+        let dividendCount = 0
 
-      // Step A: Process Transactions (FIFO Logic)
-      transactions.forEach((txn) => {
-          const type = txn.assets.asset_type
-          const ticker = txn.assets.ticker
-          
-          if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') {
-              // Note: We use the stored total_value for historical record, 
-              // but we also re-calculate below to catch missed dividends if needed.
-              // For dashboard summary, let's rely on the DB record for accuracy of "received" money.
-              // totalIncome += Number(txn.total_value) <--- We calculate this dynamically below instead
-              return
-          }
-          
-          if (txn.realised_pnl) realizedPnL += Number(txn.realised_pnl)
+        // Process Transactions (FIFO)
+        transactions.forEach((txn) => {
+            const type = txn.assets.asset_type
+            const ticker = txn.assets.ticker
 
-          if (!assetLots[ticker]) {
-              assetLots[ticker] = []
-              portfolio[ticker] = { quantity: 0, totalInvested: 0, ticker, type }
-          }
+            if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') return
+            if (txn.realised_pnl) realizedPnL += Number(txn.realised_pnl)
 
-          if (txn.transaction_type === 'Buy') {
-            assetLots[ticker].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
-          } else if (txn.transaction_type === 'Sell') {
-            let qtyToSell = Number(txn.quantity)
-            while (qtyToSell > 0 && assetLots[ticker].length > 0) {
-                if (assetLots[ticker][0].quantity > qtyToSell) {
-                    assetLots[ticker][0].quantity -= qtyToSell; qtyToSell = 0
-                } else {
-                    qtyToSell -= assetLots[ticker][0].quantity; assetLots[ticker].shift()
+            if (!assetLots[ticker]) {
+                assetLots[ticker] = []
+                portfolio[ticker] = { quantity: 0, totalInvested: 0, ticker, type }
+            }
+
+            if (txn.transaction_type === 'Buy') {
+                assetLots[ticker].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
+            } else if (txn.transaction_type === 'Sell') {
+                let qtyToSell = Number(txn.quantity)
+                while (qtyToSell > 0 && assetLots[ticker].length > 0) {
+                    if (assetLots[ticker][0].quantity > qtyToSell) {
+                        assetLots[ticker][0].quantity -= qtyToSell; qtyToSell = 0
+                    } else {
+                        qtyToSell -= assetLots[ticker][0].quantity; assetLots[ticker].shift()
+                    }
                 }
             }
-          }
-      })
+        })
 
-      // Step B: Calculate Holdings Summary
-      Object.keys(assetLots).forEach(ticker => {
-          let q = 0, c = 0
-          assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
-          portfolio[ticker].quantity = q
-          portfolio[ticker].totalInvested = c
-      })
+        // Calculate Holdings
+        Object.keys(assetLots).forEach(ticker => {
+            let q = 0, c = 0
+            assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
+            portfolio[ticker].quantity = q
+            portfolio[ticker].totalInvested = c
+        })
 
-      const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0)
+        const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0)
 
-      // Step C: Dividend Calculation (Dynamic)
-      allTickers.forEach(ticker => {
-          const dividends = dividendMap[ticker]
-          if (!dividends) return
-          
-          // Get only relevant txns for this stock
-          const stockTxns = transactions.filter((t) => t.assets.ticker === ticker)
-          
-          dividends.forEach((div: any) => {
-              const divDate = new Date(div.date)
-              let qtyOnDate = 0
-              stockTxns.forEach((t) => {
-                  const txnDate = new Date(t.date)
-                  if (txnDate < divDate) {
-                      if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
-                      else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
-                  }
-              })
-              
-              if (qtyOnDate > 0) {
-                  totalIncome += (qtyOnDate * div.amount)
-                  dividendCount++
-              }
-          })
-      })
+        // Dividend Calculation
+        allTickers.forEach(ticker => {
+            const dividends = dividendMap[ticker]
+            if (!dividends) return
+            const stockTxns = transactions.filter((t) => t.assets.ticker === ticker)
+            dividends.forEach((div: any) => {
+                const divDate = new Date(div.date)
+                let qtyOnDate = 0
+                stockTxns.forEach((t) => {
+                    if (new Date(t.date) < divDate) {
+                        if (t.transaction_type === 'Buy') qtyOnDate += Number(t.quantity)
+                        else if (t.transaction_type === 'Sell') qtyOnDate -= Number(t.quantity)
+                    }
+                })
+                if (qtyOnDate > 0) { totalIncome += (qtyOnDate * div.amount); dividendCount++ }
+            })
+        })
 
-      // Step D: Valuation & Day P&L
-      const equity = { invested: 0, current: 0, dayPnl: 0 }
-      const commodity = { invested: 0, current: 0, dayPnl: 0 }
-      const typeMap: Record<string, number> = {}
+        // Valuation & Classification
+        const classes: Record<string, AssetClassData> = {
+            'Stocks': { invested: 0, current: 0, dayPnl: 0, pnlPercent: 0, sparkData: [], count: 0 },
+            'Mutual Funds': { invested: 0, current: 0, dayPnl: 0, pnlPercent: 0, sparkData: [], count: 0 },
+            'Commodities': { invested: 0, current: 0, dayPnl: 0, pnlPercent: 0, sparkData: [], count: 0 },
+            'Currencies': { invested: 0, current: 0, dayPnl: 0, pnlPercent: 0, sparkData: [], count: 0 },
+        }
 
-      holdingList.forEach((h: any) => {
-          const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
-          
-          // Fuzzy match for price keys
-          let priceData = priceMap[h.ticker]
-          if (!priceData) {
-              const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
-              if (foundKey) priceData = priceMap[foundKey]
-          }
+        let totalInvested = 0, totalCurrent = 0, totalDayPnl = 0
 
-          const price = priceData?.price || (h.totalInvested / h.quantity)
-          const changePercent = priceData?.change || 0 // 'change' from API is %
+        const holdingsForHeatmap: HoldingDetail[] = []
+        const holdingsForPnl: { ticker: string, pnlPercent: number }[] = []
 
-          const val = h.quantity * price
-          
-          // Day P&L Logic
-          const prevPrice = price / (1 + (changePercent / 100))
-          const dayChange = (price - prevPrice) * h.quantity
+        holdingList.forEach((h: any) => {
+            const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
+            let priceData = priceMap[h.ticker]
+            if (!priceData) {
+                const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+                if (foundKey) priceData = priceMap[foundKey]
+            }
 
-          // Bucketing
-          const isComm = h.type === 'Commodity' || h.type === 'Currency' || h.type === 'Gold' || h.ticker.startsWith('COMMODITY:')
+            const price = priceData?.price || (h.totalInvested / h.quantity)
+            const changePercent = priceData?.change || 0
+            const val = h.quantity * price
+            const prevPrice = price / (1 + (changePercent / 100))
+            const dayChange = (price - prevPrice) * h.quantity
+            const pnlPct = h.totalInvested > 0 ? ((val - h.totalInvested) / h.totalInvested) * 100 : 0
 
-          if (isComm) {
-              commodity.invested += h.totalInvested
-              commodity.current += val
-              commodity.dayPnl += dayChange
-          } else {
-              equity.invested += h.totalInvested
-              equity.current += val
-              equity.dayPnl += dayChange
-          }
+            // Classify
+            const cls = classifyAsset(h.type, h.ticker)
+            classes[cls].invested += h.totalInvested
+            classes[cls].current += val
+            classes[cls].dayPnl += dayChange
+            classes[cls].count++
 
-          if (!typeMap[h.type]) typeMap[h.type] = 0
-          typeMap[h.type] += val
-      })
+            totalInvested += h.totalInvested
+            totalCurrent += val
+            totalDayPnl += dayChange
 
-      const calcStats = (inv: number, curr: number, day: number) => {
-          const unrealized = curr - inv
-          const pct = inv > 0 ? (unrealized / inv) * 100 : 0
-          return { invested: inv, current: curr, unrealizedPnl: unrealized, pnlPercent: pct, dayPnl: day }
-      }
+            holdingsForHeatmap.push({
+                ticker: h.ticker,
+                currentValue: val,
+                dayChangePercent: changePercent,
+                pnlPercent: pnlPct,
+            })
 
-      const eqStats = calcStats(equity.invested, equity.current, equity.dayPnl)
-      const commStats = calcStats(commodity.invested, commodity.current, commodity.dayPnl)
-      
-      const totalStats = {
-          invested: eqStats.invested + commStats.invested,
-          current: eqStats.current + commStats.current,
-          unrealizedPnl: eqStats.unrealizedPnl + commStats.unrealizedPnl,
-          pnlPercent: (eqStats.invested + commStats.invested) > 0 ? 
-              ((eqStats.current + commStats.current - (eqStats.invested + commStats.invested)) / (eqStats.invested + commStats.invested)) * 100 : 0,
-          dayPnl: eqStats.dayPnl + commStats.dayPnl,
-          income: totalIncome,
-          dividendCount,
-          realizedPnl: realizedPnL
-      }
+            holdingsForPnl.push({ ticker: h.ticker, pnlPercent: pnlPct })
+        })
 
-      return {
-          dashboardData: { total: totalStats, equity: eqStats, commodity: commStats },
-          allocationData: Object.keys(typeMap).map(type => ({ name: type, value: typeMap[type] }))
-      }
+        // Compute P&L percent and generate sparklines for each class
+        Object.keys(classes).forEach(cls => {
+            const c = classes[cls]
+            c.pnlPercent = c.invested > 0 ? ((c.current - c.invested) / c.invested) * 100 : 0
 
-  }, [transactions, priceMap, dividendMap, allTickers])
+            // Generate a simple sparkline from invested → current (interpolated)
+            const steps = 12
+            const diff = c.current - c.invested
+            c.sparkData = Array.from({ length: steps }, (_, i) => {
+                // Simulate a path from invested to current with some variance
+                const progress = i / (steps - 1)
+                const base = c.invested + diff * progress
+                const noise = (Math.sin(i * 1.5) * diff * 0.05)
+                return { value: Math.max(0, base + noise) }
+            })
+        })
 
+        const totalPnlPercent = totalInvested > 0 ? ((totalCurrent - totalInvested) / totalInvested) * 100 : 0
+        const dayPnlPercent = totalCurrent > 0 ? (totalDayPnl / (totalCurrent - totalDayPnl)) * 100 : 0
 
-  if (isLoading && !dashboardData) {
-      return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
-  }
+        return {
+            totalCurrent,
+            totalInvested,
+            totalDayPnl,
+            dayPnlPercent,
+            totalPnlPercent,
+            realizedPnl: realizedPnL,
+            totalIncome,
+            dividendCount,
+            classes,
+            holdingsForHeatmap,
+            holdingsForPnl,
+        }
+    }, [transactions, priceMap, dividendMap, allTickers])
 
-  if (!dashboardData) return <div className="p-8 text-center text-slate-500">No data found. Add a transaction to get started.</div>
+    // ── LOADING / EMPTY ──
+    if (isLoading && !dashData) {
+        return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
+    }
+    if (!dashData) {
+        return <div className="p-8 text-center text-slate-500">No data found. Add a transaction to get started.</div>
+    }
 
-  // Helper for Stats Row
-  const StatsRow = ({ title, icon: Icon, stats, colorClass }: any) => {
-      const isProfitable = stats.unrealizedPnl >= 0
-      const isDayGreen = stats.dayPnl >= 0
-      
-      return (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                    <div className={`rounded-full p-1.5 ${colorClass} bg-opacity-10`}>
-                        <Icon className={`h-4 w-4 ${colorClass.replace('bg-', 'text-')}`} />
+    const dayUp = dashData.totalDayPnl >= 0
+    const profitUp = dashData.totalPnlPercent >= 0
+
+    return (
+        <div className="space-y-6">
+
+            {/* ═══════════════ ROW 1: SUMMARY CARDS ═══════════════ */}
+            <div className="grid gap-4 md:grid-cols-4">
+
+                {/* Net Worth — Hero Card */}
+                <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 p-5 text-white shadow-lg relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -translate-y-8 translate-x-8" />
+                    <p className="text-indigo-200 text-xs font-semibold uppercase tracking-wider mb-1">Net Worth</p>
+                    <h2 className="text-3xl font-bold tracking-tight">₹{fmtINR(dashData.totalCurrent)}</h2>
+                    <div className="mt-3 flex items-center gap-3">
+                        <span className={`inline-flex items-center gap-1 text-sm font-bold px-2 py-0.5 rounded-md ${dayUp ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                            {dayUp ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                            {dayUp ? '+' : ''}₹{fmtINR(dashData.totalDayPnl)}
+                            <span className="text-xs opacity-80">({dayUp ? '+' : ''}{dashData.dayPnlPercent.toFixed(2)}%)</span>
+                        </span>
+                        <span className="text-indigo-300 text-[10px] uppercase font-medium">Today</span>
                     </div>
-                    <h3 className="font-semibold text-slate-700 dark:text-slate-300">{title}</h3>
                 </div>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded ${isProfitable ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                    {isProfitable ? '+' : ''}{stats.pnlPercent.toFixed(2)}%
-                </span>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider">Invested</p>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">₹{stats.invested.toLocaleString('en-IN')}</p>
-                </div>
-                <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider">Current</p>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">₹{stats.current.toLocaleString('en-IN')}</p>
-                </div>
-                
-                {/* Day's P&L Row */}
-                <div className="col-span-2 pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                    <span className="text-xs text-slate-500 flex items-center gap-1">
-                        <Activity className="h-3 w-3" /> Day's Change
-                    </span>
-                    <span className={`font-bold text-sm ${isDayGreen ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {isDayGreen ? '+' : ''}₹{stats.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                    </span>
-                </div>
-                
-                {/* Net P&L Row */}
-                <div className="col-span-2 flex justify-between items-center">
-                    <span className="text-xs text-slate-500">Net P&L</span>
-                    <span className={`font-bold ${isProfitable ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {isProfitable ? '+' : ''}₹{stats.unrealizedPnl.toLocaleString('en-IN')}
-                    </span>
-                </div>
-            </div>
-        </div>
-      )
-  }
 
-  return (
-    <div className="space-y-8">
-      
-      {/* 1. GRAND TOTALS */}
-      <div className="grid gap-4 md:grid-cols-4"> 
-         
-         {/* Net Worth & Day P&L */}
-         <div className="rounded-xl bg-indigo-600 p-6 text-white shadow-lg dark:bg-indigo-700">
-            <p className="text-indigo-200 text-sm font-medium mb-1">Total Net Worth</p>
-            <h2 className="text-3xl font-bold">₹{dashboardData.total.current.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h2>
-            <div className="mt-4 flex items-center gap-4 text-sm">
-                 <div className="flex items-center gap-1">
-                    <span className={dashboardData.total.dayPnl >= 0 ? 'text-green-300' : 'text-red-300'}>
-                        {dashboardData.total.dayPnl >= 0 ? '+' : ''}₹{dashboardData.total.dayPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                    </span>
-                    <span className="text-indigo-200 text-xs uppercase">Today</span>
-                 </div>
-            </div>
-         </div>
-
-         {/* Total Invested */}
-         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-            <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-blue-100 rounded-lg text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Wallet className="h-5 w-5"/></div>
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Total Invested</h3>
-            </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.invested.toLocaleString('en-IN')}</p>
-            <p className="text-xs text-slate-400 mt-1 flex justify-between">
-                <span>Unrealized:</span>
-                <span className={dashboardData.total.unrealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}>
-                    {dashboardData.total.unrealizedPnl > 0 ? '+' : ''}{((dashboardData.total.unrealizedPnl/dashboardData.total.invested)*100).toFixed(1)}%
-                </span>
-            </p>
-         </div>
-
-         {/* Realized P&L */}
-         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-            <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-purple-100 rounded-lg text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"><DollarSign className="h-5 w-5"/></div>
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Realized P&L</h3>
-            </div>
-            <p className={`text-2xl font-bold ${dashboardData.total.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                {dashboardData.total.realizedPnl >= 0 ? '+' : ''}₹{dashboardData.total.realizedPnl.toLocaleString('en-IN')}
-            </p>
-            <p className="text-xs text-slate-400 mt-1">Booked Profits</p>
-         </div>
-
-         {/* Dividend Income */}
-         <Link 
-            href="/dashboard/dividends"
-            className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 cursor-pointer hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
-         >
-            <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
-                        <PiggyBank className="h-5 w-5"/>
+                {/* Total Invested */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                    <div className="flex items-center gap-2.5 mb-2">
+                        <div className="p-1.5 bg-blue-100 rounded-lg text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"><Wallet className="h-4 w-4" /></div>
+                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Invested</span>
                     </div>
-                    <h3 className="font-semibold text-slate-700 dark:text-slate-200">Dividend Income</h3>
+                    <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{fmtINR(dashData.totalInvested)}</p>
+                    <p className="text-[11px] mt-1.5 flex items-center gap-1">
+                        <span className="text-slate-400">Unrealized:</span>
+                        <span className={`font-bold ${profitUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                            {profitUp ? '+' : ''}{dashData.totalPnlPercent.toFixed(1)}%
+                        </span>
+                    </p>
                 </div>
-                <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-emerald-500 transition-colors" />
+
+                {/* Realized P&L */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:bg-slate-900 dark:border-slate-800">
+                    <div className="flex items-center gap-2.5 mb-2">
+                        <div className="p-1.5 bg-purple-100 rounded-lg text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"><DollarSign className="h-4 w-4" /></div>
+                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Realized P&L</span>
+                    </div>
+                    <p className={`text-2xl font-bold ${dashData.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                        {dashData.realizedPnl >= 0 ? '+' : ''}₹{fmtINR(dashData.realizedPnl)}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1.5">Booked Profits</p>
+                </div>
+
+                {/* Dividends */}
+                <Link
+                    href="/dashboard/dividends"
+                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:bg-slate-900 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
+                >
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2.5">
+                            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"><PiggyBank className="h-4 w-4" /></div>
+                            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Dividends</span>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-emerald-500 transition-colors" />
+                    </div>
+                    <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{fmtINR(dashData.totalIncome)}</p>
+                    <p className="text-[11px] text-slate-400 mt-1.5">
+                        {dashData.dividendCount > 0 ? `${dashData.dividendCount} payouts detected` : 'No dividends yet'}
+                    </p>
+                </Link>
             </div>
-            <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{dashboardData.total.income.toLocaleString('en-IN')}</p>
-            <p className="text-xs text-slate-400 mt-1">
-                {dashboardData.total.dividendCount > 0 
-                    ? `${dashboardData.total.dividendCount} payouts detected` 
-                    : 'No dividends detected yet'}
-            </p>
-         </Link>
-      </div>
 
-      {/* 2. CATEGORY BREAKDOWN */}
-      <div>
-        <h3 className="text-lg font-bold text-slate-800 mb-4 dark:text-white">Portfolio Breakdown</h3>
-        <div className="grid gap-6 md:grid-cols-2">
-            <StatsRow title="Equity (Stocks & MF)" icon={TrendingUp} stats={dashboardData.equity} colorClass="bg-indigo-500" />
-            <StatsRow title="Commodities & Others" icon={Gem} stats={dashboardData.commodity} colorClass="bg-amber-500" />
-        </div>
-      </div>
+            {/* ═══════════════ ROW 2: WEALTH ENGINES ═══════════════ */}
+            <div className="grid gap-4 md:grid-cols-4">
+                <WealthCard title="Stocks" icon={TrendingUp} data={dashData.classes['Stocks']} accent="bg-indigo-500" />
+                <WealthCard title="Mutual Funds" icon={Landmark} data={dashData.classes['Mutual Funds']} accent="bg-sky-500" />
+                <WealthCard title="Commodities" icon={Gem} data={dashData.classes['Commodities']} accent="bg-amber-500" />
+                <WealthCard title="Currencies" icon={Coins} data={dashData.classes['Currencies']} accent="bg-teal-500" />
+            </div>
 
-      {/* 3. CHARTS */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="h-[400px] rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex flex-col dark:bg-slate-900 dark:border-slate-800">
-          <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-2 dark:text-white"><PieIcon className="h-4 w-4 text-slate-500" /> Asset Allocation</h3>
-          <div className="flex-1 w-full relative"><AssetAllocationChart data={allocationData} /></div>
-        </div>
-        <div className="h-[400px] rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex flex-col dark:bg-slate-900 dark:border-slate-800">
-          <h3 className="font-semibold text-slate-800 mb-4 dark:text-white">Market Status</h3>
-          <div className="flex-1"><MarketStatus /></div>
-        </div>
-      </div>
+            {/* ═══════════════ ROW 3: HEATMAP + P&L HISTOGRAM ═══════════════ */}
+            <div className="grid gap-6 md:grid-cols-5">
+                <Section title="Portfolio Heatmap" icon={Map} className="md:col-span-3">
+                    <div className="h-[320px]">
+                        <PortfolioHeatmap data={dashData.holdingsForHeatmap} />
+                    </div>
+                </Section>
+                <Section title="P&L Distribution" icon={BarChart3} className="md:col-span-2">
+                    <div className="h-[320px]">
+                        <PnlDistributionChart data={dashData.holdingsForPnl} />
+                    </div>
+                </Section>
+            </div>
 
-    </div>
-  )
+            {/* ═══════════════ ROW 4: MONTHLY RETURNS ═══════════════ */}
+            <Section title="Monthly Returns" icon={Grid3X3}>
+                <MonthlyReturnsMatrix transactions={transactions || []} priceMap={priceMap || {}} />
+            </Section>
+
+        </div>
+    )
 }
