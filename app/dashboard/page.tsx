@@ -35,6 +35,8 @@ type HoldingDetail = {
 // ════════════════════════════════════════════════════════════════
 //  HELPER: Format INR
 // ════════════════════════════════════════════════════════════════
+const getRoot = (t: string) => t.toUpperCase().replace('.NS', '').replace('.BO', '')
+
 const fmtINR = (n: number, compact = false) => {
     if (compact) {
         const abs = Math.abs(n)
@@ -69,9 +71,20 @@ function WealthCard({ title, icon: Icon, data, accent }: {
     const isProfit = data.current >= data.invested
     const dayUp = data.dayPnl >= 0
     const pctAlloc = data.invested > 0 ? data.pnlPercent : 0
+    const unrealizedPnl = data.current - data.invested
+
+    if (data.count === 0) {
+        return (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 dark:bg-slate-900/50 dark:border-slate-800 flex flex-col justify-center items-center gap-2 opacity-60">
+                <div className={`rounded-lg p-1.5 ${accent}`}><Icon className="h-3.5 w-3.5 text-white" /></div>
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</span>
+                <span className="text-[10px] text-slate-400">No assets</span>
+            </div>
+        )
+    }
 
     return (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col gap-3 hover:shadow-md transition-shadow">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col gap-2.5 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <div className={`rounded-lg p-1.5 ${accent}`}>
@@ -82,26 +95,27 @@ function WealthCard({ title, icon: Icon, data, accent }: {
                 <span className="text-[10px] font-medium text-slate-400">{data.count} {data.count === 1 ? 'asset' : 'assets'}</span>
             </div>
 
-            <div className="flex items-end justify-between gap-4">
+            <div className="flex items-end justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                    <p className="text-xl font-bold text-slate-900 dark:text-white leading-tight">
+                    <p className="text-lg font-bold text-slate-900 dark:text-white leading-tight">
                         ₹{fmtINR(data.current, true)}
                     </p>
-                    <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-[11px] font-semibold flex items-center gap-0.5 ${isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                            {isProfit ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                            {isProfit ? '+' : ''}{pctAlloc.toFixed(1)}%
-                        </span>
-                        <span className={`text-[10px] font-medium ${dayUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                            {dayUp ? '+' : ''}₹{fmtINR(data.dayPnl)} today
-                        </span>
-                    </div>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Invested: ₹{fmtINR(data.invested, true)}</p>
                 </div>
-
-                {/* Sparkline */}
                 <div className="w-20 h-10 flex-shrink-0">
                     <DashboardSparkline data={data.sparkData} />
                 </div>
+            </div>
+
+            {/* Bottom stats row */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className={`text-[11px] font-semibold flex items-center gap-0.5 ${isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                    {isProfit ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                    {isProfit ? '+' : ''}₹{fmtINR(unrealizedPnl, true)} ({isProfit ? '+' : ''}{pctAlloc.toFixed(1)}%)
+                </span>
+                <span className={`text-[10px] font-medium ${dayUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                    {dayUp ? '+' : ''}₹{fmtINR(data.dayPnl)} today
+                </span>
             </div>
         </div>
     )
@@ -157,42 +171,43 @@ export default function DashboardPage() {
         let totalIncome = 0
         let dividendCount = 0
 
-        // Process Transactions (FIFO)
+        // Process Transactions (FIFO) — aggregate by ROOT symbol to handle cross-exchange trades
         transactions.forEach((txn) => {
             const type = txn.assets.asset_type
             const ticker = txn.assets.ticker
+            const root = getRoot(ticker)
 
             if (txn.transaction_type === 'Dividend' || txn.transaction_type === 'Interest') return
             if (txn.realised_pnl) realizedPnL += Number(txn.realised_pnl)
 
-            if (!assetLots[ticker]) {
-                assetLots[ticker] = []
-                portfolio[ticker] = { quantity: 0, totalInvested: 0, ticker, type }
+            if (!assetLots[root]) {
+                assetLots[root] = []
+                portfolio[root] = { quantity: 0, totalInvested: 0, ticker, type }
             }
 
             if (txn.transaction_type === 'Buy') {
-                assetLots[ticker].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
+                assetLots[root].push({ price: Number(txn.price), quantity: Number(txn.quantity) })
             } else if (txn.transaction_type === 'Sell') {
                 let qtyToSell = Number(txn.quantity)
-                while (qtyToSell > 0 && assetLots[ticker].length > 0) {
-                    if (assetLots[ticker][0].quantity > qtyToSell) {
-                        assetLots[ticker][0].quantity -= qtyToSell; qtyToSell = 0
+                while (qtyToSell > 0 && assetLots[root].length > 0) {
+                    if (assetLots[root][0].quantity > qtyToSell) {
+                        assetLots[root][0].quantity -= qtyToSell; qtyToSell = 0
                     } else {
-                        qtyToSell -= assetLots[ticker][0].quantity; assetLots[ticker].shift()
+                        qtyToSell -= assetLots[root][0].quantity; assetLots[root].shift()
                     }
                 }
             }
         })
 
         // Calculate Holdings
-        Object.keys(assetLots).forEach(ticker => {
+        Object.keys(assetLots).forEach(root => {
             let q = 0, c = 0
-            assetLots[ticker].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
-            portfolio[ticker].quantity = q
-            portfolio[ticker].totalInvested = c
+            assetLots[root].forEach(lot => { q += lot.quantity; c += (lot.quantity * lot.price) })
+            portfolio[root].quantity = q
+            portfolio[root].totalInvested = c
         })
 
-        const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0)
+        const holdingList = Object.values(portfolio).filter((h: any) => h.quantity > 0.0001)
 
         // Dividend Calculation
         allTickers.forEach(ticker => {
@@ -316,16 +331,18 @@ export default function DashboardPage() {
                 {/* Net Worth — Hero Card */}
                 <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 p-5 text-white shadow-lg relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -translate-y-8 translate-x-8" />
+                    <div className="absolute bottom-0 left-0 w-16 h-16 bg-white/5 rounded-full translate-y-6 -translate-x-6" />
                     <p className="text-indigo-200 text-xs font-semibold uppercase tracking-wider mb-1">Net Worth</p>
                     <h2 className="text-3xl font-bold tracking-tight">₹{fmtINR(dashData.totalCurrent)}</h2>
                     <div className="mt-3 flex items-center gap-3">
-                        <span className={`inline-flex items-center gap-1 text-sm font-bold px-2 py-0.5 rounded-md ${dayUp ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                        <span className="inline-flex items-center gap-1 text-sm font-bold px-2 py-0.5 rounded-md bg-white/10 text-white">
                             {dayUp ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
                             {dayUp ? '+' : ''}₹{fmtINR(dashData.totalDayPnl)}
                             <span className="text-xs opacity-80">({dayUp ? '+' : ''}{dashData.dayPnlPercent.toFixed(2)}%)</span>
                         </span>
                         <span className="text-indigo-300 text-[10px] uppercase font-medium">Today</span>
                     </div>
+                    <p className="text-indigo-300 text-[10px] mt-2">Overall: {profitUp ? '+' : ''}{dashData.totalPnlPercent.toFixed(1)}% return</p>
                 </div>
 
                 {/* Total Invested */}
@@ -335,12 +352,20 @@ export default function DashboardPage() {
                         <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Invested</span>
                     </div>
                     <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{fmtINR(dashData.totalInvested)}</p>
-                    <p className="text-[11px] mt-1.5 flex items-center gap-1">
-                        <span className="text-slate-400">Unrealized:</span>
-                        <span className={`font-bold ${profitUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                            {profitUp ? '+' : ''}{dashData.totalPnlPercent.toFixed(1)}%
-                        </span>
-                    </p>
+                    <div className="text-[11px] mt-1.5 space-y-0.5">
+                        <p className="flex justify-between">
+                            <span className="text-slate-400">Unrealized P&L</span>
+                            <span className={`font-bold ${profitUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                                {profitUp ? '+' : ''}₹{fmtINR(dashData.totalCurrent - dashData.totalInvested)}
+                            </span>
+                        </p>
+                        <p className="flex justify-between">
+                            <span className="text-slate-400">Return</span>
+                            <span className={`font-bold ${profitUp ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                                {profitUp ? '+' : ''}{dashData.totalPnlPercent.toFixed(1)}%
+                            </span>
+                        </p>
+                    </div>
                 </div>
 
                 {/* Realized P&L */}
@@ -352,7 +377,7 @@ export default function DashboardPage() {
                     <p className={`text-2xl font-bold ${dashData.realizedPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
                         {dashData.realizedPnl >= 0 ? '+' : ''}₹{fmtINR(dashData.realizedPnl)}
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-1.5">Booked Profits</p>
+                    <p className="text-[11px] text-slate-400 mt-1.5">From {dashData.holdingsForPnl.length + (dashData.realizedPnl !== 0 ? ' trades' : ' positions')}</p>
                 </div>
 
                 {/* Dividends */}
@@ -368,9 +393,19 @@ export default function DashboardPage() {
                         <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-emerald-500 transition-colors" />
                     </div>
                     <p className="text-2xl font-bold text-slate-900 dark:text-white">₹{fmtINR(dashData.totalIncome)}</p>
-                    <p className="text-[11px] text-slate-400 mt-1.5">
-                        {dashData.dividendCount > 0 ? `${dashData.dividendCount} payouts detected` : 'No dividends yet'}
-                    </p>
+                    <div className="text-[11px] mt-1.5 space-y-0.5">
+                        <p className="text-slate-400">
+                            {dashData.dividendCount > 0 ? `${dashData.dividendCount} payouts detected` : 'No dividends yet'}
+                        </p>
+                        {dashData.totalInvested > 0 && dashData.totalIncome > 0 && (
+                            <p className="flex justify-between">
+                                <span className="text-slate-400">Yield</span>
+                                <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                    {((dashData.totalIncome / dashData.totalInvested) * 100).toFixed(2)}%
+                                </span>
+                            </p>
+                        )}
+                    </div>
                 </Link>
             </div>
 
