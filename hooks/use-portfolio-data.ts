@@ -315,53 +315,44 @@ export function useActiveAssets() {
     })
 
     return useMemo(() => {
-        console.log('[useActiveAssets] transactions count:', transactions?.length, 'watchlist count:', watchlistItems?.length)
-
         const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
         const soldRoots = new Set<string>()
         const getRoot = (t: string) => t.toUpperCase().replace('.NS', '').replace('.BO', '')
 
-        // 1. Process Holdings
+        // 1. Aggregate by ROOT symbol (merges cross-exchange transactions)
         if (transactions) {
             const qtyMap: Record<string, number> = {}
-            const metaMap: Record<string, any> = {}
+            const metaMap: Record<string, { ticker: string, name: string }> = {}
 
             transactions.forEach(t => {
                 const ticker = t.assets.ticker
+                const root = getRoot(ticker)
                 const q = Number(t.quantity)
 
-                if (!qtyMap[ticker]) {
-                    qtyMap[ticker] = 0
-                    metaMap[ticker] = t.assets
+                if (!qtyMap[root]) {
+                    qtyMap[root] = 0
+                    metaMap[root] = { ticker, name: t.assets.name }
                 }
 
-                if (t.transaction_type === 'Buy') qtyMap[ticker] += q
-                else if (t.transaction_type === 'Sell') qtyMap[ticker] -= q
+                if (t.transaction_type === 'Buy') qtyMap[root] += q
+                else if (t.transaction_type === 'Sell') qtyMap[root] -= q
             })
 
-            console.log('[useActiveAssets] Net quantities:', JSON.stringify(qtyMap))
-
-            Object.entries(qtyMap).forEach(([ticker, netQty]) => {
-                const root = getRoot(ticker)
+            Object.entries(qtyMap).forEach(([root, netQty]) => {
                 if (netQty > 0.0001) {
                     uniqueMap.set(root, {
-                        ticker,
-                        name: metaMap[ticker].name,
+                        ticker: metaMap[root].ticker,
+                        name: metaMap[root].name,
                         type: 'Holding'
                     })
                 } else {
                     soldRoots.add(root)
                 }
             })
-
-            console.log('[useActiveAssets] Active holdings:', Array.from(uniqueMap.keys()))
-            console.log('[useActiveAssets] Sold roots:', Array.from(soldRoots))
         }
 
         // 2. Merge Watchlist Items — skip sold holdings
         if (watchlistItems) {
-            const addedFromWatchlist: string[] = []
-            const skippedFromWatchlist: string[] = []
             watchlistItems.forEach(w => {
                 const root = getRoot(w.ticker)
                 if (!uniqueMap.has(root) && !soldRoots.has(root)) {
@@ -370,18 +361,11 @@ export function useActiveAssets() {
                         name: w.name,
                         type: 'Watchlist'
                     })
-                    addedFromWatchlist.push(root)
-                } else {
-                    skippedFromWatchlist.push(root)
                 }
             })
-            console.log('[useActiveAssets] Added from watchlist:', addedFromWatchlist)
-            console.log('[useActiveAssets] Skipped from watchlist:', skippedFromWatchlist)
         }
 
-        const result = Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
-        console.log('[useActiveAssets] FINAL result:', result.map(r => `${r.ticker}(${r.type})`))
-        return result
+        return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
     }, [transactions, watchlistItems])
 }
 
