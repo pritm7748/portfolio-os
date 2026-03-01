@@ -13,14 +13,14 @@ export type Transaction = {
     total_value: number
     realised_pnl: number | null
     portfolio_id: number
-    asset_id: number 
+    asset_id: number
     assets: {
         ticker: string
         name: string
         asset_type: string
         // NEW FIELDS ADDED HERE
-        sector?: string   
-        industry?: string 
+        sector?: string
+        industry?: string
     }
 }
 
@@ -51,31 +51,31 @@ export type WatchlistGroup = {
 
 // --- 1. Transactions Hook (Core Data) ---
 export function useTransactions() {
-  const { selectedPortfolio } = usePortfolio()
-  const supabase = createClient()
+    const { selectedPortfolio } = usePortfolio()
+    const supabase = createClient()
 
-  return useQuery({
-    queryKey: ['transactions', selectedPortfolio.id],
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('No user found')
+    return useQuery({
+        queryKey: ['transactions', selectedPortfolio.id],
+        queryFn: async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('No user found')
 
-      let query = supabase
-        .from('transactions')
-        // FETCH SECTOR & INDUSTRY
-        .select(`*, assets ( ticker, name, asset_type, sector, industry )`)
-        .order('date', { ascending: true })
+            let query = supabase
+                .from('transactions')
+                // FETCH SECTOR & INDUSTRY
+                .select(`*, assets ( ticker, name, asset_type, sector, industry )`)
+                .order('date', { ascending: true })
 
-      if (selectedPortfolio.id !== 'all') {
-        query = query.eq('portfolio_id', selectedPortfolio.id)
-      }
+            if (selectedPortfolio.id !== 'all') {
+                query = query.eq('portfolio_id', selectedPortfolio.id)
+            }
 
-      const { data, error } = await query
-      if (error) throw error
-      return data as Transaction[]
-    },
-    staleTime: 5 * 60 * 1000, 
-  })
+            const { data, error } = await query
+            if (error) throw error
+            return data as Transaction[]
+        },
+        staleTime: 5 * 60 * 1000,
+    })
 }
 
 // --- 2. Live Prices Hook (Auto-Refresh) ---
@@ -85,20 +85,20 @@ export function useLivePrices(tickers: string[]) {
 
     return useQuery({
         queryKey: ['prices', sortedTickers.join(',')],
-        
+
         queryFn: async () => {
             if (tickers.length === 0) return {}
-            const res = await fetch('/api/prices', { 
-                method: 'POST', 
-                body: JSON.stringify({ tickers, detailed: true }) 
+            const res = await fetch('/api/prices', {
+                method: 'POST',
+                body: JSON.stringify({ tickers, detailed: true })
             })
             if (!res.ok) throw new Error('Price fetch failed')
             return res.json()
         },
-        
+
         enabled: tickers.length > 0,
         refetchInterval: 60 * 1000, // Refresh every 60s automatically
-        staleTime: 30 * 1000 
+        staleTime: 30 * 1000
     })
 }
 
@@ -109,9 +109,9 @@ export function useDividends(tickers: string[]) {
         queryKey: ['dividends', sortedTickers.join(',')],
         queryFn: async () => {
             if (tickers.length === 0) return {}
-            const res = await fetch('/api/dividends', { 
-                method: 'POST', 
-                body: JSON.stringify({ tickers }) 
+            const res = await fetch('/api/dividends', {
+                method: 'POST',
+                body: JSON.stringify({ tickers })
             })
             return res.json()
         },
@@ -127,36 +127,36 @@ export function useWatchlist(watchlistId?: number) {
         queryKey: ['watchlist', watchlistId],
         queryFn: async () => {
             if (!watchlistId) return []
-            
+
             const { data, error } = await supabase
                 .from('watchlist')
                 .select('*')
                 .eq('watchlist_id', watchlistId)
                 .order('created_at', { ascending: false })
-            
+
             if (error) throw error
             return data as WatchlistItem[]
         },
         enabled: !!watchlistId,
-        staleTime: 10 * 60 * 1000 
+        staleTime: 10 * 60 * 1000
     })
 }
 
 // --- NEW: Fetch ALL Watchlist Items for User (for News/Pulse) ---
 export function useAllWatchlistItems() {
     const supabase = createClient()
-    
+
     return useQuery({
         queryKey: ['all_watchlist_items'],
         queryFn: async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) throw new Error('No user')
-            
+
             const { data, error } = await supabase
                 .from('watchlist')
                 .select('*')
                 .order('created_at', { ascending: false })
-            
+
             if (error) throw error
             return data as WatchlistItem[]
         },
@@ -167,20 +167,20 @@ export function useAllWatchlistItems() {
 // --- 5. Market History Hook (For Sparkline Charts) ---
 export function useMarketHistory(tickers: string[], range: string = '1d') {
     const sortedTickers = tickers.slice().sort()
-    
+
     return useQuery({
         queryKey: ['marketHistory', sortedTickers.join(','), range],
         queryFn: async () => {
             if (tickers.length === 0) return {}
-            const res = await fetch('/api/history', { 
-                method: 'POST', 
-                body: JSON.stringify({ tickers, range, detailed: true }) 
+            const res = await fetch('/api/history', {
+                method: 'POST',
+                body: JSON.stringify({ tickers, range, detailed: true })
             })
             if (!res.ok) throw new Error('History fetch failed')
             return res.json()
         },
         enabled: tickers.length > 0,
-        refetchInterval: 5 * 60 * 1000, 
+        refetchInterval: 5 * 60 * 1000,
         staleTime: 2 * 60 * 1000
     })
 }
@@ -188,18 +188,18 @@ export function useMarketHistory(tickers: string[], range: string = '1d') {
 // --- NEW: Alerts Hook ---
 export function useAlerts() {
     const supabase = createClient()
-    
+
     return useQuery({
         queryKey: ['alerts'],
         queryFn: async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) throw new Error('No user')
-            
+
             const { data, error } = await supabase
                 .from('price_alerts')
                 .select('*')
                 .order('created_at', { ascending: false })
-            
+
             if (error) throw error
             return data as PriceAlert[]
         },
@@ -214,13 +214,13 @@ export function useProfile() {
         queryFn: async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) throw new Error('No user')
-            
+
             const { data: profile, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', user.id)
                 .single()
-            
+
             if (error) throw error
             return { user, profile }
         },
@@ -236,19 +236,19 @@ export function useNewsPreferences() {
         queryFn: async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) throw new Error('No user')
-            
+
             const { data } = await supabase
                 .from('news_settings')
                 .select('*')
                 .eq('user_id', user.id)
-            
+
             const map: Record<string, { is_muted: boolean, is_favorite: boolean }> = {}
             data?.forEach((row: any) => {
                 map[row.ticker] = { is_muted: row.is_muted, is_favorite: row.is_favorite }
             })
             return map
         },
-        staleTime: Infinity 
+        staleTime: Infinity
     })
 }
 
@@ -274,7 +274,7 @@ export function useNews(names: string[]) {
 export function usePulse(tickers: string[]) {
     // Stable cache key
     const sortedTickers = tickers.slice().sort().join(',')
-    
+
     return useQuery({
         queryKey: ['pulse', sortedTickers],
         queryFn: async () => {
@@ -296,11 +296,13 @@ export function usePulse(tickers: string[]) {
 
 export function useActiveAssets() {
     const { data: transactions } = useTransactions()
-    const { data: watchlistItems } = useAllWatchlistItems()  // ✅ Fixed!
+    const { data: watchlistItems } = useAllWatchlistItems()
 
     return useMemo(() => {
         // Map Key = Root Symbol (e.g. "TCS") to prevent exchange duplicates
         const uniqueMap = new Map<string, { ticker: string, name: string, type: 'Holding' | 'Watchlist' }>()
+        // Track root symbols of stocks that were traded but fully sold
+        const soldRoots = new Set<string>()
 
         // Helper to get root symbol (strips .NS, .BO)
         const getRoot = (t: string) => t.toUpperCase().replace('.NS', '').replace('.BO', '')
@@ -313,7 +315,7 @@ export function useActiveAssets() {
             transactions.forEach(t => {
                 const ticker = t.assets.ticker
                 const q = Number(t.quantity)
-                
+
                 if (!qtyMap[ticker]) {
                     qtyMap[ticker] = 0
                     metaMap[ticker] = t.assets
@@ -324,35 +326,38 @@ export function useActiveAssets() {
             })
 
             Object.entries(qtyMap).forEach(([ticker, netQty]) => {
-                // Only add if user still owns it
+                const root = getRoot(ticker)
                 if (netQty > 0.0001) {
-                    const root = getRoot(ticker)
-                    uniqueMap.set(root, { 
-                        ticker, 
-                        name: metaMap[ticker].name, 
-                        type: 'Holding' 
+                    // User still holds this stock
+                    uniqueMap.set(root, {
+                        ticker,
+                        name: metaMap[ticker].name,
+                        type: 'Holding'
                     })
+                } else {
+                    // User traded this stock but fully sold it — mark as sold
+                    soldRoots.add(root)
                 }
             })
         }
 
-        // 2. Merge Watchlist Items (Check against Root Symbol)
+        // 2. Merge Watchlist Items — skip sold holdings
         if (watchlistItems) {
             watchlistItems.forEach(w => {
                 const root = getRoot(w.ticker)
-                // Only add if NOT already present (Holding takes priority)
-                if (!uniqueMap.has(root)) {
-                    uniqueMap.set(root, { 
-                        ticker: w.ticker, 
-                        name: w.name, 
-                        type: 'Watchlist' 
+                // Skip if already present as a holding OR if user fully sold this stock
+                if (!uniqueMap.has(root) && !soldRoots.has(root)) {
+                    uniqueMap.set(root, {
+                        ticker: w.ticker,
+                        name: w.name,
+                        type: 'Watchlist'
                     })
                 }
             })
         }
 
         return Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
-    }, [transactions, watchlistItems])  // ✅ Updated dependency
+    }, [transactions, watchlistItems])
 }
 
 export function useChartData(symbol: string, interval: string, range: string) {
@@ -381,20 +386,20 @@ export function useWatchlists() {
         queryFn: async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) throw new Error('No user')
-            
+
             const { data, error } = await supabase
                 .from('watchlists')
                 .select('*')
                 .order('created_at', { ascending: true })
-            
+
             if (error) throw error
             // If no watchlists exist (new user), create default
             if (data.length === 0) {
-               const { data: newWl } = await supabase.from('watchlists').insert({ user_id: user.id, name: 'Main Watchlist' }).select().single()
-               return [newWl] as WatchlistGroup[]
+                const { data: newWl } = await supabase.from('watchlists').insert({ user_id: user.id, name: 'Main Watchlist' }).select().single()
+                return [newWl] as WatchlistGroup[]
             }
             return data as WatchlistGroup[]
         },
-        staleTime: Infinity 
+        staleTime: Infinity
     })
 }
