@@ -4,9 +4,9 @@ import { useMemo, useState } from 'react'
 // FIX: Imported useActiveAssets instead of useTransactions
 import { useActiveAssets, usePulse } from '@/hooks/use-portfolio-data'
 import {
-    Loader2, Calendar, TrendingUp, TrendingDown, Briefcase, Zap, Globe, Activity,
-    HelpCircle, Gift, FileText, ArrowRightLeft, ChevronDown, ChevronUp, Lock, Unlock,
-    AlertTriangle, ShieldCheck, Layers, RefreshCcw, Scissors, Users, Landmark, Gavel,
+    Loader2, Calendar, TrendingUp, TrendingDown, Zap, Globe, Activity,
+    Gift, FileText, ChevronDown, ChevronUp,
+    Scissors, Users, Landmark, ExternalLink,
     DollarSign, PieChart, ArrowDownRight
 } from 'lucide-react'
 
@@ -27,64 +27,7 @@ const EVENT_CONFIG: Record<string, { icon: any; color: string; bg: string }> = {
 
 const getEventConfig = (type: string) => EVENT_CONFIG[type] || EVENT_CONFIG['Corporate Action']
 
-// ════════════════════════════════════════════════════════════════
-//  2. FORENSIC TRANSACTION CLASSIFIER (Insider Activity)
-// ════════════════════════════════════════════════════════════════
-
-const getTransactionType = (txn: any) => {
-    // Clean inputs
-    const raw = (txn.action || '').toLowerCase().trim()
-    const shares = Number(txn.shares) || 0
-    const value = Number(txn.value) || 0
-    const price = shares !== 0 ? Math.abs(value / shares) : 0
-
-    // Helper: Regex Matcher
-    const is = (pattern: RegExp) => pattern.test(raw)
-
-    // --- PRIORITY 1: BLOCK & BULK DEALS ---
-    if (is(/block|bulk/)) {
-        if (is(/sale|sold|dispos|divest/)) return { label: 'Block Deal (Sell)', color: 'text-red-700 bg-red-50', icon: Layers }
-        if (is(/purchase|buy|acqui/)) return { label: 'Block Deal (Buy)', color: 'text-green-700 bg-green-50', icon: Layers }
-        return { label: 'Block Deal', color: 'text-indigo-700 bg-indigo-50', icon: Layers }
-    }
-
-    // --- PRIORITY 2: PLEDGES ---
-    if (is(/invok/)) return { label: 'Pledge Invoked', color: 'text-red-700 bg-red-50', icon: AlertTriangle }
-    if (is(/revok|release|clos/)) return { label: 'Pledge Revoked', color: 'text-green-600 bg-green-50', icon: Unlock }
-    if (is(/creat|pledge/)) return { label: 'Pledge Created', color: 'text-orange-600 bg-orange-50', icon: Lock }
-
-    // --- PRIORITY 3: TRANSFERS (Must check before Buy/Sell) ---
-    if (is(/inter-se|inter se/)) return { label: 'Inter-se Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
-    if (is(/off market|off-market/)) return { label: 'Off-Market Deal', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
-    if (is(/gift|donat/)) return { label: 'Gift / Donation', color: 'text-pink-600 bg-pink-50', icon: Gift }
-    if (is(/transfer|transmission/)) return { label: 'Transfer', color: 'text-slate-600 bg-slate-100', icon: ArrowRightLeft }
-
-    // --- PRIORITY 4: NEGATIVE ACTIONS (Sell/Disposal) ---
-    if (is(/dispos|sell|sold|sale|divest/)) return { label: 'Strategic Sell', color: 'text-red-600 bg-red-50', icon: TrendingDown }
-
-    // --- PRIORITY 5: POSITIVE ACTIONS (Buy/Acquisition) ---
-    if (is(/creeping/)) return { label: 'Creeping Acq.', color: 'text-green-700 bg-green-50', icon: TrendingUp }
-    if (is(/market purchase|open market/)) return { label: 'Market Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
-    if (is(/acqui|buy|bought|purchase|subscri/)) return { label: 'Strategic Buy', color: 'text-green-600 bg-green-50', icon: TrendingUp }
-
-    // --- PRIORITY 6: CORPORATE ACTIONS ---
-    if (is(/esop|exercise|vest|employee/)) return { label: 'ESOP Exercise', color: 'text-blue-600 bg-blue-50', icon: FileText }
-    if (is(/rights/)) return { label: 'Rights Issue', color: 'text-indigo-600 bg-indigo-50', icon: FileText }
-    if (is(/bonus/)) return { label: 'Bonus Issue', color: 'text-indigo-600 bg-indigo-50', icon: Gift }
-    if (is(/allotment|preferential|conversion|warrant/)) return { label: 'Pref. Allotment', color: 'text-indigo-600 bg-indigo-50', icon: ShieldCheck }
-
-    // --- PRIORITY 7: FALLBACKS ---
-    if (price < 0.5 && shares > 0) return { label: 'Non-Market Add', color: 'text-slate-500 bg-slate-100', icon: Activity }
-    if (shares < 0) return { label: 'Strategic Sell', color: 'text-orange-600 bg-orange-50', icon: TrendingDown }
-    if (shares > 0) return { label: 'Strategic Add', color: 'text-teal-600 bg-teal-50', icon: TrendingUp }
-
-    const cleanText = (txn.action || '').replace(/acquisition|disposal|shares|of/gi, '').trim()
-    return {
-        label: cleanText.length > 20 ? 'Update' : (cleanText || 'Reporting'),
-        color: 'text-slate-500 bg-slate-50',
-        icon: HelpCircle
-    }
-}
+// (Insider classifier removed — replaced by Company Filings)
 
 // ════════════════════════════════════════════════════════════════
 //  3. RESPONSIVE SECTION COMPONENT
@@ -230,49 +173,40 @@ export default function PulsePage() {
                     </div>
                 </Section>
 
-                {/* INSIDERS */}
-                <Section title="Insider Activity" icon={Briefcase} badge={data?.insiders?.length || 0} isOpen={openSection === 'insiders'} onToggle={() => toggleSection('insiders')}>
+                {/* COMPANY FILINGS */}
+                <Section title="Company Filings" icon={FileText} badge={data?.publications?.length || 0} isOpen={openSection === 'filings'} onToggle={() => toggleSection('filings')}>
                     <div className="space-y-3">
-                        {!data?.insiders || data.insiders.length === 0 ? (
-                            <div className="text-center py-8"><p className="text-sm text-slate-400">No recent insider trades.</p></div>
+                        {!data?.publications || data.publications.length === 0 ? (
+                            <div className="text-center py-8"><p className="text-sm text-slate-400">No recent filings found.</p></div>
                         ) : (
-                            data.insiders.map((txn: any, i: number) => {
-                                const { label, color, icon: Icon } = getTransactionType(txn)
-                                return (
-                                    <div key={i} className="rounded-lg border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div className="flex-1 min-w-0 mr-2">
-                                                <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate">{txn.ticker}</h4>
-                                                <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1" title={txn.holder}>
-                                                    {txn.holder} <span className="opacity-70">({txn.relation})</span>
-                                                </p>
-                                            </div>
-                                            <span className="shrink-0 text-[10px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
-                                                {new Date(txn.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-slate-800">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${color}`}>
-                                                    <Icon className="h-3 w-3" /> {label}
+                            data.publications.map((pub: any, i: number) => (
+                                <div key={i} className="rounded-lg border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 transition-colors">
+                                    <div className="flex justify-between items-start gap-2 mb-1.5">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-0.5">
+                                                <h4 className="font-bold text-sm text-slate-900 dark:text-white">{pub.ticker}</h4>
+                                                <span className="shrink-0 text-[10px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
+                                                    {new Date(pub.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                                 </span>
                                             </div>
-                                            <div className="text-right">
-                                                {(txn.value || 0) > 0 && !label.includes('Update') ? (
-                                                    <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-300">
-                                                        {txn.value > 10000000 ? `₹${(txn.value / 10000000).toFixed(2)}Cr` : `₹${(txn.value / 100000).toFixed(2)}L`}
-                                                    </span>
-                                                ) : (
-                                                    <span className="block text-[10px] text-slate-400 italic">Reported</span>
-                                                )}
-                                                <span className="block text-[9px] text-slate-400 font-medium">
-                                                    {Math.abs(txn.shares || 0) > 1000 ? (Math.abs(txn.shares || 0) / 1000).toFixed(1) + 'k' : Math.abs(txn.shares || 0)} Shares
-                                                </span>
-                                            </div>
+                                            <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">{pub.title}</p>
                                         </div>
                                     </div>
-                                )
-                            })
+                                    {pub.pdfUrl && (
+                                        <div className="pt-2 border-t border-slate-50 dark:border-slate-800">
+                                            <a
+                                                href={pub.pdfUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors"
+                                            >
+                                                <ExternalLink className="h-3 w-3" />
+                                                View Document
+                                            </a>
+                                        </div>
+                                    )}
+                                </div>
+                            ))
                         )}
                     </div>
                 </Section>
