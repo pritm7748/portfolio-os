@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { useMemo } from 'react'
 import {
     ArrowUpRight, ArrowDownRight, Wallet, Loader2, PiggyBank,
-    TrendingUp, DollarSign, Activity, ChevronRight, BarChart3,
-    Landmark, Gem, Coins, Grid3X3, Map
+    TrendingUp, DollarSign, ChevronRight, BarChart3,
+    Landmark, Gem, Coins, Grid3X3, Map, Trophy, Clock, Flame, Target
 } from 'lucide-react'
 import DashboardSparkline from '@/components/dashboard-sparkline'
 import PortfolioHeatmap from '@/components/portfolio-heatmap'
@@ -27,9 +27,12 @@ type AssetClassData = {
 
 type HoldingDetail = {
     ticker: string
+    name: string
     currentValue: number
     dayChangePercent: number
     pnlPercent: number
+    dayPnlRupees: number
+    firstBuyDate: string
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -240,8 +243,20 @@ export default function DashboardPage() {
         const holdingsForHeatmap: HoldingDetail[] = []
         const holdingsForPnl: { ticker: string, pnlPercent: number }[] = []
 
+        // Find earliest buy date per root for portfolio age
+        const firstBuyDates: Record<string, string> = {}
+        transactions.forEach(txn => {
+            if (txn.transaction_type === 'Buy') {
+                const root = getRoot(txn.assets.ticker)
+                if (!firstBuyDates[root] || new Date(txn.date) < new Date(firstBuyDates[root])) {
+                    firstBuyDates[root] = txn.date
+                }
+            }
+        })
+
         holdingList.forEach((h: any) => {
             const cleanTicker = h.ticker.toUpperCase().replace(/\s/g, '')
+            const root = getRoot(h.ticker)
             let priceData = priceMap[h.ticker]
             if (!priceData) {
                 const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
@@ -268,9 +283,12 @@ export default function DashboardPage() {
 
             holdingsForHeatmap.push({
                 ticker: h.ticker,
+                name: h.ticker.split('.')[0],
                 currentValue: val,
                 dayChangePercent: changePercent,
                 pnlPercent: pnlPct,
+                dayPnlRupees: dayChange,
+                firstBuyDate: firstBuyDates[root] || '',
             })
 
             holdingsForPnl.push({ ticker: h.ticker, pnlPercent: pnlPct })
@@ -296,6 +314,25 @@ export default function DashboardPage() {
         const totalPnlPercent = totalInvested > 0 ? ((totalCurrent - totalInvested) / totalInvested) * 100 : 0
         const dayPnlPercent = totalCurrent > 0 ? (totalDayPnl / (totalCurrent - totalDayPnl)) * 100 : 0
 
+        // Top Movers: sorted by today's change %
+        const sorted = [...holdingsForHeatmap].filter(h => h.dayChangePercent !== 0)
+        const topGainers = sorted.sort((a, b) => b.dayChangePercent - a.dayChangePercent).slice(0, 3)
+        const topLosers = sorted.sort((a, b) => a.dayChangePercent - b.dayChangePercent).slice(0, 3)
+
+        // Win Rate
+        const winners = holdingsForPnl.filter(h => h.pnlPercent > 0).length
+        const winRate = holdingsForPnl.length > 0 ? (winners / holdingsForPnl.length) * 100 : 0
+
+        // Portfolio Age: avg days since first buy
+        const now = new Date()
+        const holdingAges = holdingsForHeatmap
+            .filter(h => h.firstBuyDate)
+            .map(h => (now.getTime() - new Date(h.firstBuyDate).getTime()) / (1000 * 60 * 60 * 24))
+        const avgHoldingDays = holdingAges.length > 0
+            ? Math.round(holdingAges.reduce((s, d) => s + d, 0) / holdingAges.length)
+            : 0
+        const oldestDays = holdingAges.length > 0 ? Math.round(Math.max(...holdingAges)) : 0
+
         return {
             totalCurrent,
             totalInvested,
@@ -308,6 +345,13 @@ export default function DashboardPage() {
             classes,
             holdingsForHeatmap,
             holdingsForPnl,
+            topGainers,
+            topLosers,
+            winRate,
+            winners,
+            totalHoldings: holdingsForPnl.length,
+            avgHoldingDays,
+            oldestDays,
         }
     }, [transactions, priceMap, dividendMap, allTickers])
 
@@ -431,7 +475,96 @@ export default function DashboardPage() {
                 </Section>
             </div>
 
-            {/* ═══════════════ ROW 4: MONTHLY RETURNS ═══════════════ */}
+            {/* ═══════════════ ROW 4: TOP MOVERS + PORTFOLIO STATS ═══════════════ */}
+            <div className="grid gap-6 md:grid-cols-5">
+                {/* Top Movers */}
+                <Section title="Today's Movers" icon={Flame} className="md:col-span-3">
+                    <div className="grid grid-cols-2 gap-4">
+                        {/* Gainers */}
+                        <div>
+                            <p className="text-[10px] font-semibold text-green-600 dark:text-green-400 uppercase tracking-wider mb-2">▲ Top Gainers</p>
+                            <div className="space-y-2">
+                                {dashData.topGainers.length > 0 ? dashData.topGainers.map(h => (
+                                    <div key={h.ticker} className="flex items-center justify-between rounded-lg bg-green-50 dark:bg-green-900/10 px-3 py-2">
+                                        <span className="text-xs font-bold text-slate-800 dark:text-white">{h.name}</span>
+                                        <div className="text-right">
+                                            <span className="text-xs font-bold text-green-600 dark:text-green-400">+{h.dayChangePercent.toFixed(2)}%</span>
+                                            <p className="text-[10px] text-green-600/70">+₹{fmtINR(h.dayPnlRupees)}</p>
+                                        </div>
+                                    </div>
+                                )) : <p className="text-[10px] text-slate-400">No gainers today</p>}
+                            </div>
+                        </div>
+                        {/* Losers */}
+                        <div>
+                            <p className="text-[10px] font-semibold text-red-500 dark:text-red-400 uppercase tracking-wider mb-2">▼ Top Losers</p>
+                            <div className="space-y-2">
+                                {dashData.topLosers.length > 0 ? dashData.topLosers.map(h => (
+                                    <div key={h.ticker} className="flex items-center justify-between rounded-lg bg-red-50 dark:bg-red-900/10 px-3 py-2">
+                                        <span className="text-xs font-bold text-slate-800 dark:text-white">{h.name}</span>
+                                        <div className="text-right">
+                                            <span className="text-xs font-bold text-red-500 dark:text-red-400">{h.dayChangePercent.toFixed(2)}%</span>
+                                            <p className="text-[10px] text-red-500/70">₹{fmtINR(h.dayPnlRupees)}</p>
+                                        </div>
+                                    </div>
+                                )) : <p className="text-[10px] text-slate-400">No losers today</p>}
+                            </div>
+                        </div>
+                    </div>
+                </Section>
+
+                {/* Portfolio Stats */}
+                <Section title="Portfolio Stats" icon={Target} className="md:col-span-2">
+                    <div className="space-y-4">
+                        {/* Win Rate */}
+                        <div className="flex items-center gap-3">
+                            <div className="rounded-full p-2.5 bg-amber-100 dark:bg-amber-900/20">
+                                <Trophy className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <div className="flex-1">
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Win Rate</p>
+                                <p className="text-lg font-bold text-slate-900 dark:text-white">{dashData.winRate.toFixed(0)}%</p>
+                            </div>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                {dashData.winners}/{dashData.totalHoldings} profitable
+                            </span>
+                        </div>
+                        {/* Win Rate Bar */}
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                            <div
+                                className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all"
+                                style={{ width: `${Math.min(dashData.winRate, 100)}%` }}
+                            />
+                        </div>
+
+                        <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+                            {/* Avg Holding Period */}
+                            <div className="flex items-center gap-3">
+                                <div className="rounded-full p-2.5 bg-indigo-100 dark:bg-indigo-900/20">
+                                    <Clock className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                                </div>
+                                <div className="flex-1">
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Avg Holding Period</p>
+                                    <p className="text-lg font-bold text-slate-900 dark:text-white">
+                                        {dashData.avgHoldingDays > 365
+                                            ? `${(dashData.avgHoldingDays / 365).toFixed(1)} yrs`
+                                            : `${dashData.avgHoldingDays} days`
+                                        }
+                                    </p>
+                                </div>
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Oldest: {dashData.oldestDays > 365
+                                        ? `${(dashData.oldestDays / 365).toFixed(1)} yrs`
+                                        : `${dashData.oldestDays}d`
+                                    }
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </Section>
+            </div>
+
+            {/* ═══════════════ ROW 5: MONTHLY RETURNS ═══════════════ */}
             <Section title="Monthly Returns" icon={Grid3X3}>
                 <MonthlyReturnsMatrix transactions={transactions || []} priceMap={priceMap || {}} />
             </Section>
