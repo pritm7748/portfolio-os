@@ -126,32 +126,34 @@ async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Pro
 
 export async function POST(request: Request) {
     try {
-        const { tickers } = await request.json()
+        const { tickers, names } = await request.json()
 
         if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
             return NextResponse.json({ error: 'No tickers provided' }, { status: 400 })
         }
 
+        const nameMap: Record<string, string> = names || {}
         const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
         const funds: FundXray[] = []
 
         // Process one at a time to be gentle on Groww
         for (const ticker of tickers) {
-            // Step 1: Find slug
-            const slug = await findGrowwSlug(ticker)
+            // Use the human-readable fund name for search, fallback to ticker
+            const searchName = nameMap[ticker] || ticker
+            const slug = await findGrowwSlug(searchName)
 
             if (!slug) {
                 funds.push({
                     ticker,
-                    fundName: ticker,
+                    fundName: searchName,
                     holdings: [],
                     sectorWeights: [],
-                    error: `Could not find "${ticker}" on Groww`,
+                    error: `Could not find "${searchName}" on Groww`,
                 })
                 continue
             }
 
-            // Step 2: Fetch holdings from SSR
+            // Fetch holdings from SSR
             const fundData = await fetchHoldingsFromGroww(slug, ticker)
             funds.push(fundData)
 

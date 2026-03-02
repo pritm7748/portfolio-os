@@ -98,10 +98,10 @@ export default function AnalyticsPage() {
     }
 
     // --- CALCULATION ENGINE ---
-    const { metrics, sectorData, conglomerateData, aiSummary, mfTickers, mfWeights, directStocks } = useMemo(() => {
+    const { metrics, sectorData, conglomerateData, aiSummary, mfTickers, mfWeights, mfNames, directStocks } = useMemo(() => {
         const emptyMetrics = { totalXirr: 0, equityXirr: 0, commXirr: 0, netWorth: 0, unrealized: 0, realized: 0, totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 }
 
-        if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null, mfTickers: [], mfWeights: {}, directStocks: [] }
+        if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null, mfTickers: [], mfWeights: {}, mfNames: {}, directStocks: [] }
 
         const flowsTotal: any[] = []; const flowsEquity: any[] = []; const flowsComm: any[] = []
         let totalRealizedPnL = 0; let totalDividends = 0
@@ -240,6 +240,7 @@ export default function AnalyticsPage() {
         // MF X-Ray data
         const mfTickers: string[] = []
         const mfWeights: Record<string, number> = {}
+        const mfNames: Record<string, string> = {}
         const directStocks: { ticker: string, name: string, weight: number }[] = []
 
         Object.values(portfolio).forEach((h: any) => {
@@ -252,12 +253,13 @@ export default function AnalyticsPage() {
             if (cleanType.includes('mutual') || cleanType.includes('fund') || cleanType.includes('mf')) {
                 mfTickers.push(h.ticker)
                 mfWeights[h.ticker] = weight
+                mfNames[h.ticker] = h.name || h.ticker
             } else if (cleanType.includes('stock') || cleanType === '' || cleanType === 'equity') {
                 directStocks.push({ ticker: h.ticker, name: h.name, weight })
             }
         })
 
-        return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary, mfTickers, mfWeights, directStocks }
+        return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary, mfTickers, mfWeights, mfNames, directStocks }
 
     }, [transactions, priceMap])
 
@@ -727,6 +729,7 @@ export default function AnalyticsPage() {
                 <div className="mt-8">
                     <MfXray
                         mfTickers={mfTickers}
+                        mfNames={mfNames || {}}
                         mfWeights={mfWeights || {}}
                         directStocks={directStocks || []}
                     />

@@ -5,6 +5,7 @@ import { Loader2, AlertTriangle, Layers, PieChart, Grid3X3, Eye } from 'lucide-r
 
 type Props = {
     mfTickers: string[]                    // MF tickers from user's portfolio
+    mfNames: Record<string, string>        // ticker → human-readable fund name
     mfWeights: Record<string, number>      // ticker → portfolio weight (0-100)
     directStocks: { ticker: string, name: string, weight: number }[]  // direct stock holdings
 }
@@ -21,7 +22,7 @@ type FundData = {
 
 const fmtPct = (n: number) => `${n.toFixed(1)}%`
 
-export default function MfXray({ mfTickers, mfWeights, directStocks }: Props) {
+export default function MfXray({ mfTickers, mfNames, mfWeights, directStocks }: Props) {
     const [funds, setFunds] = useState<FundData[]>([])
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -34,7 +35,7 @@ export default function MfXray({ mfTickers, mfWeights, directStocks }: Props) {
         fetch('/api/mf-xray', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tickers: mfTickers }),
+            body: JSON.stringify({ tickers: mfTickers, names: mfNames }),
         })
             .then(r => r.json())
             .then(data => {
@@ -59,10 +60,11 @@ export default function MfXray({ mfTickers, mfWeights, directStocks }: Props) {
         validFunds.forEach(fund => {
             const fundWeight = mfWeights[fund.ticker] || 0
             fund.holdings.forEach(h => {
-                const key = (h.symbol || h.name).toUpperCase()
+                const key = h.name.toUpperCase()
                 if (!stockExposure[key]) stockExposure[key] = { weight: 0, sources: [] }
                 stockExposure[key].weight += (h.weight * fundWeight) / 100
-                stockExposure[key].sources.push(fund.ticker.replace('.BO', '').replace('.NS', '').substring(0, 12))
+                const fundLabel = fund.fundName.replace(/\s*(Direct|Growth|Plan|Regular|-)\s*/gi, ' ').trim().substring(0, 20)
+                if (!stockExposure[key].sources.includes(fundLabel)) stockExposure[key].sources.push(fundLabel)
             })
         })
 
@@ -95,14 +97,15 @@ export default function MfXray({ mfTickers, mfWeights, directStocks }: Props) {
         const overlapMatrix: { fund1: string, fund2: string, overlap: number }[] = []
         for (let i = 0; i < validFunds.length; i++) {
             for (let j = i + 1; j < validFunds.length; j++) {
-                const f1Holdings = new Set(validFunds[i].holdings.map(h => (h.symbol || h.name).toUpperCase()))
-                const f2Holdings = new Set(validFunds[j].holdings.map(h => (h.symbol || h.name).toUpperCase()))
+                const f1Holdings = new Set(validFunds[i].holdings.map(h => h.name.toUpperCase()))
+                const f2Holdings = new Set(validFunds[j].holdings.map(h => h.name.toUpperCase()))
                 const commonCount = [...f1Holdings].filter(h => f2Holdings.has(h)).length
                 const totalUnique = new Set([...f1Holdings, ...f2Holdings]).size
                 const overlap = totalUnique > 0 ? (commonCount / totalUnique) * 100 : 0
+                const label = (f: FundData) => f.fundName.replace(/\s*(Direct|Growth|Plan|Regular|-)\s*/gi, ' ').trim().substring(0, 25)
                 overlapMatrix.push({
-                    fund1: validFunds[i].ticker.replace('.BO', '').replace('.NS', '').substring(0, 12),
-                    fund2: validFunds[j].ticker.replace('.BO', '').replace('.NS', '').substring(0, 12),
+                    fund1: label(validFunds[i]),
+                    fund2: label(validFunds[j]),
                     overlap
                 })
             }
