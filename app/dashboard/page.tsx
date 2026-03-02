@@ -128,14 +128,15 @@ function WealthCard({ title, icon: Icon, data, accent }: {
 // ════════════════════════════════════════════════════════════════
 //  SECTION WRAPPER
 // ════════════════════════════════════════════════════════════════
-function Section({ title, icon: Icon, children, className = '' }: {
-    title: string, icon: any, children: React.ReactNode, className?: string
+function Section({ title, icon: Icon, children, className = '', actions }: {
+    title: string, icon: any, children: React.ReactNode, className?: string, actions?: React.ReactNode
 }) {
     return (
         <div className={`rounded-xl border border-slate-200 bg-white shadow-sm dark:bg-slate-900 dark:border-slate-800 ${className}`}>
             <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
-                <Icon className="h-4 w-4 text-slate-400" />
-                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">{title}</h3>
+                <Icon className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex-shrink-0">{title}</h3>
+                {actions && <div className="ml-auto flex items-center gap-1.5 min-w-0">{actions}</div>}
             </div>
             <div className="p-5">
                 {children}
@@ -470,11 +471,9 @@ export default function DashboardPage() {
 
             {/* ═══════════════ ROW 3: HEATMAP + P&L HISTOGRAM ═══════════════ */}
             <div className="grid gap-6 md:grid-cols-5">
-                <Section title="Portfolio Heatmap" icon={Map} className="md:col-span-3">
-                    <div className="h-[320px]">
-                        <PortfolioHeatmap data={dashData.holdingsForHeatmap} />
-                    </div>
-                </Section>
+                <div className="md:col-span-3">
+                    <PortfolioHeatmap data={dashData.holdingsForHeatmap} />
+                </div>
                 <Section title="P&L Distribution" icon={BarChart3} className="md:col-span-2">
                     <div className="h-[320px]">
                         <PnlDistributionChart data={dashData.holdingsForPnl} />
