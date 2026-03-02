@@ -2,19 +2,20 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { calculateXIRR } from '@/lib/xirr'
-import { 
-    calculateBeta, calculateSharpe, calculateDrawdown, calculateCorrelationMatrix, 
-    getReturns, stdDev 
+import {
+    calculateBeta, calculateSharpe, calculateDrawdown, calculateCorrelationMatrix,
+    getReturns, stdDev
 } from '@/lib/analytics-math'
 import RiskAnalysis from '@/components/risk-analysis'
 import WealthSimulator from '@/components/wealth-simulator'
 import StressTest from '@/components/stress-test'
 import EfficiencyPlot from '@/components/efficiency-plot'
 import GhostPortfolio from '@/components/ghost-portfolio' // --- ADDED IMPORT ---
+import MfXray from '@/components/mf-xray'
 
 import { Loader2, TrendingUp, BarChart3, Gem, Building2, Briefcase, Info, TrendingDown } from 'lucide-react'
-import { 
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Sector
 } from 'recharts'
 import { usePortfolio } from '@/context/portfolio-context'
@@ -97,10 +98,10 @@ export default function AnalyticsPage() {
     }
 
     // --- CALCULATION ENGINE ---
-    const { metrics, sectorData, conglomerateData, aiSummary } = useMemo(() => {
+    const { metrics, sectorData, conglomerateData, aiSummary, mfTickers, mfWeights, directStocks } = useMemo(() => {
         const emptyMetrics = { totalXirr: 0, equityXirr: 0, commXirr: 0, netWorth: 0, unrealized: 0, realized: 0, totalProfit: 0, investment: 0, currentVal: 0, xirr: 0 }
 
-        if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null }
+        if (!transactions || !priceMap) return { metrics: emptyMetrics, sectorData: [], conglomerateData: [], aiSummary: null, mfTickers: [], mfWeights: {}, directStocks: [] }
 
         const flowsTotal: any[] = []; const flowsEquity: any[] = []; const flowsComm: any[] = []
         let totalRealizedPnL = 0; let totalDividends = 0
@@ -208,7 +209,7 @@ export default function AnalyticsPage() {
 
         const unrealized = valTotal - costTotal
         const totalProfit = unrealized + totalRealizedPnL + totalDividends
-        
+
         const xirrTotal = (flowsTotal.length > 0 && valTotal >= 0) ? calculateXIRR(flowsTotal, valTotal) : 0
         const xirrEq = (flowsEquity.length > 0 && valEq >= 0) ? calculateXIRR(flowsEquity, valEq) : 0
         const xirrComm = (flowsComm.length > 0 && valComm >= 0) ? calculateXIRR(flowsComm, valComm) : 0
@@ -236,7 +237,27 @@ export default function AnalyticsPage() {
             sectors: formattedSectors, holdings: topHoldings
         }
 
-        return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary }
+        // MF X-Ray data
+        const mfTickers: string[] = []
+        const mfWeights: Record<string, number> = {}
+        const directStocks: { ticker: string, name: string, weight: number }[] = []
+
+        Object.values(portfolio).forEach((h: any) => {
+            if (h.quantity <= 0) return
+            const cleanType = (h.type || '').toLowerCase()
+            const price = priceMap[h.ticker]?.price || 0
+            const currentVal = h.quantity * price
+            const weight = valTotal > 0 ? (currentVal / valTotal) * 100 : 0
+
+            if (cleanType.includes('mutual') || cleanType.includes('fund') || cleanType.includes('mf')) {
+                mfTickers.push(h.ticker)
+                mfWeights[h.ticker] = weight
+            } else if (cleanType.includes('stock') || cleanType === '' || cleanType === 'equity') {
+                directStocks.push({ ticker: h.ticker, name: h.name, weight })
+            }
+        })
+
+        return { metrics: finalMetrics, sectorData: formattedSectors, conglomerateData: formattedGroups, aiSummary: summary, mfTickers, mfWeights, directStocks }
 
     }, [transactions, priceMap])
 
@@ -246,7 +267,7 @@ export default function AnalyticsPage() {
 
         const equityCurve = chartData.map(d => ({ date: d.date, value: d.value }))
         const validBenchmarkPoints = chartData.filter(d => d.benchmark && d.benchmark > 0)
-        
+
         if (validBenchmarkPoints.length < 5) return null
 
         const equityReturns = getReturns(equityCurve)
@@ -278,7 +299,7 @@ export default function AnalyticsPage() {
 
             const assetReturns = []
             for (let i = 1; i < series.length; i++) {
-                const prev = series[i-1].value || series[i-1].price || 0
+                const prev = series[i - 1].value || series[i - 1].price || 0
                 const curr = series[i].value || series[i].price || 0
                 if (prev > 0) assetReturns.push((curr - prev) / prev)
             }
@@ -286,10 +307,10 @@ export default function AnalyticsPage() {
             if (assetReturns.length === 0) return null
 
             const meanDailyRet = assetReturns.reduce((a, b) => a + b, 0) / assetReturns.length
-            const annualReturn = (Math.pow(1 + meanDailyRet, 252) - 1) * 100 
-            
+            const annualReturn = (Math.pow(1 + meanDailyRet, 252) - 1) * 100
+
             const variance = assetReturns.reduce((sum, r) => sum + Math.pow(r - meanDailyRet, 2), 0) / (assetReturns.length - 1)
-            const annualVol = Math.sqrt(variance * 252) * 100 
+            const annualVol = Math.sqrt(variance * 252) * 100
 
             // Approximate Weight
             let qty = 0
@@ -337,18 +358,18 @@ export default function AnalyticsPage() {
                 return false
             })
 
-            if (relevantTickers.size === 0) { 
+            if (relevantTickers.size === 0) {
                 setChartData([])
                 setChartLoading(false)
-                return 
+                return
             }
 
             const tickersToFetch = Array.from(relevantTickers)
             if (category === 'equity') tickersToFetch.push(BENCHMARK_TICKER)
 
-            const res = await fetch('/api/history', { 
-                method: 'POST', 
-                body: JSON.stringify({ tickers: tickersToFetch, range }) 
+            const res = await fetch('/api/history', {
+                method: 'POST',
+                body: JSON.stringify({ tickers: tickersToFetch, range })
             })
             const rawHistoryMap = await res.json()
             setHistoryMap(rawHistoryMap)
@@ -362,7 +383,7 @@ export default function AnalyticsPage() {
 
             const priceLookup: Record<string, Record<string, number>> = {}
             const allDatesSet = new Set<string>()
-            
+
             Object.entries(rawHistoryMap).forEach(([ticker, history]: [string, any]) => {
                 if (ticker === BENCHMARK_TICKER) return
                 if (!Array.isArray(history)) return
@@ -424,9 +445,9 @@ export default function AnalyticsPage() {
                     const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
                     const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue : 0
 
-                    finalChartData.push({ 
-                        date, 
-                        invested: Math.max(0, runningInvested), 
+                    finalChartData.push({
+                        date,
+                        invested: Math.max(0, runningInvested),
                         value: dailyValue,
                         benchmark: category === 'equity' ? normalizedBenchmark : undefined,
                         portfolioReturn: portfolioReturnPct,
@@ -446,10 +467,10 @@ export default function AnalyticsPage() {
             }
 
             setChartData(finalChartData)
-        } catch (e) { 
-            console.error(e) 
-        } finally { 
-            setChartLoading(false) 
+        } catch (e) {
+            console.error(e)
+        } finally {
+            setChartLoading(false)
         }
     }
 
@@ -520,9 +541,9 @@ export default function AnalyticsPage() {
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                         <Briefcase className="h-5 w-5 text-indigo-500" /> Decision Intelligence
                     </h3>
-                    
+
                     <div className="grid lg:grid-cols-2 gap-6">
-                        <WealthSimulator 
+                        <WealthSimulator
                             currentValue={metrics.netWorth}
                             stats={{
                                 expectedReturn: metrics.xirr / 100,
@@ -531,14 +552,14 @@ export default function AnalyticsPage() {
                         />
                         <div className="flex flex-col gap-6">
                             <div className="flex-1">
-                                <StressTest 
+                                <StressTest
                                     beta={riskMetrics.stats.beta}
                                     netWorth={metrics.netWorth}
                                 />
                             </div>
                             {/* NEW: GHOST PORTFOLIO INTEGRATION */}
                             <div className="flex-1">
-                                <GhostPortfolio 
+                                <GhostPortfolio
                                     transactions={transactions || []}
                                     priceMap={priceMap || {}}
                                 />
@@ -554,13 +575,13 @@ export default function AnalyticsPage() {
                     <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 mt-8">
                         <Briefcase className="h-5 w-5 text-indigo-500" /> Institutional Risk Analysis
                     </h3>
-                    <RiskAnalysis 
+                    <RiskAnalysis
                         metrics={riskMetrics.stats}
                         drawdownCurve={riskMetrics.drawdownCurve}
                         correlationMatrix={riskMetrics.correlationMatrix}
                         tickers={riskMetrics.topTickers}
                     />
-                    
+
                     {riskMetrics.efficiencyData && (
                         <div className="mt-6 h-[400px]">
                             <EfficiencyPlot data={riskMetrics.efficiencyData} />
@@ -573,7 +594,7 @@ export default function AnalyticsPage() {
             {aiSummary && <AIAnalyst data={aiSummary} />}
 
             {/* 6. FINANCIAL SUMMARY & COMPOSITION */}
-             <div className="grid gap-6 md:grid-cols-3 mt-6">
+            <div className="grid gap-6 md:grid-cols-3 mt-6">
                 <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800">
                     <h4 className="text-xs font-bold text-slate-400 uppercase">Net Worth</h4>
                     <div className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">₹{metrics.currentVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
@@ -592,7 +613,7 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
-             <div className="grid gap-6 md:grid-cols-2 mt-6">
+            <div className="grid gap-6 md:grid-cols-2 mt-6">
                 {/* SECTOR EXPOSURE */}
                 <div className="min-h-[500px] md:h-[450px] rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:bg-slate-900 dark:border-slate-800 flex flex-col">
                     <h3 className="mb-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
@@ -700,6 +721,17 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
             </div>
+
+            {/* ═══════════ ROW: MF X-RAY ═══════════ */}
+            {mfTickers && mfTickers.length > 0 && (
+                <div className="mt-8">
+                    <MfXray
+                        mfTickers={mfTickers}
+                        mfWeights={mfWeights || {}}
+                        directStocks={directStocks || []}
+                    />
+                </div>
+            )}
         </div>
     )
 }
