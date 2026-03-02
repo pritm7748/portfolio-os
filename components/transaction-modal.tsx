@@ -16,7 +16,7 @@ type SearchResult = { symbol: string; name: string; type: string; exch: string }
 export default function TransactionModal({ isOpen, onClose, onSuccess }: TransactionModalProps) {
     const { selectedPortfolio, portfolios, refreshPortfolios } = usePortfolio()
     const [loading, setLoading] = useState(false)
-    
+
     // Form States
     const [targetPortfolioId, setTargetPortfolioId] = useState<number>(0)
     const [ticker, setTicker] = useState('')
@@ -27,7 +27,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     const [price, setPrice] = useState('')
     const [otherCharges, setOtherCharges] = useState('') // Brokerage/Taxes
     const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-    
+
     // Search States
     const [results, setResults] = useState<SearchResult[]>([])
     const [showResults, setShowResults] = useState(false)
@@ -63,7 +63,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                 .from('assets')
                 .select('id')
                 .in('ticker', searchTickers)
-            
+
             if (!assets || assets.length === 0) {
                 setExistingHolding(null)
                 return
@@ -74,8 +74,8 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                 .from('transactions')
                 .select('transaction_type, quantity, price')
                 .eq('portfolio_id', targetPortfolioId)
-                .in('asset_id', assetIds) 
-            
+                .in('asset_id', assetIds)
+
             if (!txns || txns.length === 0) {
                 setExistingHolding(null)
                 return
@@ -83,7 +83,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
             let totalQty = 0
             let totalCost = 0
-            
+
             txns.forEach(t => {
                 const q = Number(t.quantity)
                 const p = Number(t.price)
@@ -111,18 +111,59 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
     }, [ticker, targetPortfolioId, isOpen])
 
 
-    // --- CALCULATOR PREVIEW ---
+    // --- AUTO-COMPUTED INDIAN STATUTORY CHARGES ---
+    const computedCharges = useMemo(() => {
+        const qty = Number(quantity) || 0
+        const p = Number(price) || 0
+        const brokerage = Number(otherCharges) || 0
+        const tradeValue = qty * p
+
+        if (tradeValue <= 0) return null
+
+        const isBuy = action === 'Buy'
+        const isSell = action === 'Sell'
+        const isEquity = type === 'Stock'
+        const isMF = type === 'Mutual Fund'
+
+        // STT: 0.1% on both buy and sell for equity delivery
+        const stt = isEquity ? tradeValue * 0.001 : (isMF && isSell ? tradeValue * 0.001 : 0)
+        // Stamp Duty: 0.015% on buy only
+        const stampDuty = isBuy ? tradeValue * 0.00015 : 0
+        // SEBI Turnover Fee: 0.0001% (₹10 per crore)
+        const sebiFee = tradeValue * 0.000001
+        // Exchange Txn Charges: ~0.00345% (NSE avg)
+        const exchangeCharges = isEquity ? tradeValue * 0.0000345 : 0
+        // GST: 18% on brokerage + exchange charges + SEBI fees
+        const gst = (brokerage + exchangeCharges + sebiFee) * 0.18
+
+        const totalCharges = stt + stampDuty + sebiFee + exchangeCharges + gst + brokerage
+        const totalAmount = isBuy ? tradeValue + totalCharges : tradeValue - totalCharges
+
+        return {
+            tradeValue,
+            stt: Math.round(stt * 100) / 100,
+            stampDuty: Math.round(stampDuty * 100) / 100,
+            sebiFee: Math.round(sebiFee * 100) / 100,
+            exchangeCharges: Math.round(exchangeCharges * 100) / 100,
+            gst: Math.round(gst * 100) / 100,
+            brokerage,
+            totalCharges: Math.round(totalCharges * 100) / 100,
+            totalAmount: Math.round(totalAmount * 100) / 100,
+        }
+    }, [quantity, price, otherCharges, action, type])
+
+    // --- CALCULATOR PREVIEW (only for existing holdings) ---
     const projectedStats = useMemo(() => {
-        if (action !== 'Buy') return null
-        
+        if (action !== 'Buy' || !existingHolding) return null
+
         const newQty = Number(quantity) || 0
         const newPrice = Number(price) || 0
         const extra = Number(otherCharges) || 0
-        
+
         if (newQty <= 0 || newPrice <= 0) return null
 
-        const currentQty = existingHolding?.qty || 0
-        const currentAvg = existingHolding?.avg || 0
+        const currentQty = existingHolding.qty
+        const currentAvg = existingHolding.avg
         const currentTotal = currentQty * currentAvg
 
         const newInvested = (newQty * newPrice) + extra
@@ -139,7 +180,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
     // Search Logic
     useEffect(() => {
-        if (type === 'Commodity') return 
+        if (type === 'Commodity') return
 
         const timer = setTimeout(async () => {
             if (ticker.length > 2 && showResults) {
@@ -148,7 +189,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     const res = await fetch(`/api/search?q=${ticker}`)
                     const data = await res.json()
                     setResults(data)
-                } catch (e) { console.error(e) } 
+                } catch (e) { console.error(e) }
                 finally { setSearching(false) }
             } else if (ticker.length === 0) {
                 setResults([])
@@ -180,7 +221,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
         if (item.type === 'MUTUALFUND') setType('Mutual Fund')
         else if (item.type === 'CURRENCY') setType('Currency')
         else if (item.type === 'COMMODITY' || item.type === 'FUTURE') setType('Commodity')
-        else setType('Stock') 
+        else setType('Stock')
     }
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -213,7 +254,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     const meta = await res.json()
                     if (meta.sector) sector = meta.sector
                     if (meta.industry) industry = meta.industry
-                } catch(e) {}
+                } catch (e) { }
             }
 
             // 1. Upsert Asset
@@ -233,7 +274,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
             if (action === 'Buy' && finalQty > 0) {
                 finalPrice = ((finalPrice * finalQty) + fees) / finalQty
             }
-            
+
             // --- FIX: EXCHANGE AGNOSTIC SELL VALIDATION ---
             if (action === 'Sell') {
                 // Find all root matching assets (TCS.NS, TCS.BO, etc.)
@@ -254,14 +295,14 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     .in('asset_id', relatedAssetIds)
                     .eq('portfolio_id', finalPortfolioId)
                     .order('date', { ascending: true })
-                
+
                 const lots: any[] = []
                 history?.forEach(h => {
                     if (h.transaction_type === 'Buy') lots.push({ price: Number(h.price), quantity: Number(h.quantity) })
                     else if (h.transaction_type === 'Sell') {
                         let sellQty = Number(h.quantity)
                         while (sellQty > 0 && lots.length > 0) {
-                            if (lots[0].quantity > sellQty) { lots[0].quantity -= sellQty; sellQty = 0 } 
+                            if (lots[0].quantity > sellQty) { lots[0].quantity -= sellQty; sellQty = 0 }
                             else { sellQty -= lots[0].quantity; lots.shift() }
                         }
                     }
@@ -279,7 +320,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     costBasis += (take * lot.price)
                     qtyToSell -= take
                 }
-                
+
                 // PnL = (Sell Value - Fees) - Cost Basis
                 const sellValue = (Number(price) * Number(quantity)) - fees
                 calculatedPnL = sellValue - costBasis
@@ -295,7 +336,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                 transaction_type: action,
                 date: date,
                 quantity: finalQty,
-                price: finalPrice, 
+                price: finalPrice,
                 realised_pnl: calculatedPnL
             })
 
@@ -315,9 +356,9 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
     const inputClass = "w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none dark:bg-slate-950 dark:border-slate-700 dark:text-white"
     const isIncome = action === 'Dividend' || action === 'Interest'
-    
-    const availableActions = (type === 'Commodity' || type === 'Currency') 
-        ? ['Buy', 'Sell'] 
+
+    const availableActions = (type === 'Commodity' || type === 'Currency')
+        ? ['Buy', 'Sell']
         : ['Buy', 'Sell', 'Dividend', 'Interest']
 
     if (!isOpen) return null
@@ -332,17 +373,17 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {portfolios.length > 1 && (
-                         <div>
+                        <div>
                             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Target Portfolio</label>
                             <select value={targetPortfolioId} onChange={(e) => setTargetPortfolioId(Number(e.target.value))} className={inputClass}>
                                 {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
-                         </div>
+                        </div>
                     )}
 
                     <div>
-                         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
-                         <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
+                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Asset Type</label>
+                        <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
                             <option value="Stock">Stock</option>
                             <option value="Mutual Fund">Mutual Fund</option>
                             <option value="Commodity">Commodity (Physical)</option>
@@ -354,7 +395,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Metal</label>
-                                <select 
+                                <select
                                     className={inputClass}
                                     onChange={(e) => {
                                         const val = e.target.value
@@ -379,18 +420,18 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                             <div className="relative">
                                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ticker / Asset</label>
                                 <div className="relative">
-                                    <input 
-                                        required type="text" placeholder="Search e.g. TCS, HDFC..." 
+                                    <input
+                                        required type="text" placeholder="Search e.g. TCS, HDFC..."
                                         value={ticker}
                                         onChange={(e) => { setTicker(e.target.value); setShowResults(true) }}
-                                        className={`${inputClass} pl-9 pr-8`} 
+                                        className={`${inputClass} pl-9 pr-8`}
                                         autoComplete="off"
                                     />
                                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                    
+
                                     {ticker && !searching && (
-                                        <button 
-                                            type="button" 
+                                        <button
+                                            type="button"
                                             onClick={() => { setTicker(''); setShowResults(false); }}
                                             className="absolute right-3 top-2.5 rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                                         >
@@ -410,7 +451,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                                     </ul>
                                 )}
                             </div>
-                            
+
                             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                                 <Info className="h-3 w-3 text-amber-500" />
                                 <span>Select tickers ending in <b>.NS</b> or <b>.BO</b> for Indian stocks.</span>
@@ -422,10 +463,10 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Action</label>
                         <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
                             {availableActions.map(act => (
-                                <button 
-                                    key={act} 
-                                    type="button" 
-                                    onClick={() => setAction(act)} 
+                                <button
+                                    key={act}
+                                    type="button"
+                                    onClick={() => setAction(act)}
                                     className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${action === act ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-white' : 'text-slate-500'}`}
                                 >
                                     {act}
@@ -437,10 +478,10 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                     <div className="grid grid-cols-2 gap-4">
                         {!isIncome && (
                             <div>
-                            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                                {type === 'Commodity' ? 'Qty (10g / Kg)' : 'Quantity'}
-                            </label>
-                            <input required type="number" step="any" placeholder="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
+                                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    {type === 'Commodity' ? 'Qty (10g / Kg)' : 'Quantity'}
+                                </label>
+                                <input required type="number" step="any" placeholder="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
                             </div>
                         )}
                         <div className={isIncome ? "col-span-2" : ""}>
@@ -453,7 +494,7 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Other (Fees/Tax)</label>
+                            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Brokerage (₹)</label>
                             <input type="number" step="any" placeholder="0.00" value={otherCharges} onChange={(e) => setOtherCharges(e.target.value)} className={inputClass} />
                         </div>
                         <div>
@@ -461,6 +502,78 @@ export default function TransactionModal({ isOpen, onClose, onSuccess }: Transac
                             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
                         </div>
                     </div>
+
+                    {/* CHARGES BREAKDOWN & TOTAL */}
+                    {computedCharges && !isIncome && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Calculator className="h-3.5 w-3.5 text-slate-500" />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Charges Breakdown</span>
+                            </div>
+                            <div className="space-y-1 text-xs">
+                                {computedCharges.stt > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>STT (0.1%)</span>
+                                        <span>₹{computedCharges.stt.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                {computedCharges.stampDuty > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>Stamp Duty (0.015%)</span>
+                                        <span>₹{computedCharges.stampDuty.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                {computedCharges.exchangeCharges > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>Exchange Txn</span>
+                                        <span>₹{computedCharges.exchangeCharges.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                {computedCharges.sebiFee > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>SEBI Fee</span>
+                                        <span>₹{computedCharges.sebiFee.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                {computedCharges.gst > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>GST (18%)</span>
+                                        <span>₹{computedCharges.gst.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                {computedCharges.brokerage > 0 && (
+                                    <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                                        <span>Brokerage</span>
+                                        <span>₹{computedCharges.brokerage.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                <div className="border-t border-slate-200 dark:border-slate-700 pt-1.5 mt-1.5 flex justify-between font-medium text-slate-600 dark:text-slate-300">
+                                    <span>Total Charges</span>
+                                    <span>₹{computedCharges.totalCharges.toFixed(2)}</span>
+                                </div>
+                            </div>
+
+                            {/* TOTAL AMOUNT */}
+                            <div className={`mt-3 rounded-lg p-2.5 text-center ${action === 'Buy' ? 'bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20' : 'bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20'}`}>
+                                <span className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                                    {action === 'Buy' ? 'Total Debit' : 'Net Credit'}
+                                </span>
+                                <span className={`text-lg font-bold ${action === 'Buy' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                                    ₹{computedCharges.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* INCOME TOTAL */}
+                    {isIncome && Number(price) > 0 && (
+                        <div className="rounded-lg bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 p-2.5 text-center">
+                            <span className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-0.5">Amount Received</span>
+                            <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                                ₹{Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
+                    )}
 
                     {/* PREVIEW CARD */}
                     {projectedStats && (
