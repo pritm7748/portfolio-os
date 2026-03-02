@@ -33,6 +33,7 @@ type HoldingDetail = {
     pnlPercent: number
     dayPnlRupees: number
     firstBuyDate: string
+    assetType: string
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -289,6 +290,7 @@ export default function DashboardPage() {
                 pnlPercent: pnlPct,
                 dayPnlRupees: dayChange,
                 firstBuyDate: firstBuyDates[root] || '',
+                assetType: cls,
             })
 
             holdingsForPnl.push({ ticker: h.ticker, pnlPercent: pnlPct })
