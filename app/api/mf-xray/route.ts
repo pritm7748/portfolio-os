@@ -23,17 +23,27 @@ interface FundXray {
 }
 
 /**
- * Step 1: Search Groww for the fund's search_id (slug).
- * User ticker might be "HDFCFLEXICAP.NS" — we strip suffixes and search.
+ * Search Groww for the fund's search_id (slug) using entity search.
+ * Strips Direct/Growth/Plan suffixes for cleaner matching.
  */
-async function findGrowwSlug(userTicker: string): Promise<string | null> {
-    const query = userTicker
+async function findGrowwSlug(fundName: string): Promise<string | null> {
+    // Clean fund name — remove plan/growth suffixes for better matching
+    const query = fundName
         .replace(/\.NS$|\.BO$/i, '')
-        .replace(/[-_]/g, ' ')
+        .replace(/\s*-\s*/g, ' ')
+        .replace(/\s*Direct\s*Plan\s*/gi, ' ')
+        .replace(/\s*Direct\s*/gi, ' ')
+        .replace(/\s*Growth\s*Option\s*/gi, ' ')
+        .replace(/\s*Growth\s*/gi, ' ')
+        .replace(/\s*Plan\s*/gi, ' ')
+        .replace(/\s+/g, ' ')
         .trim()
 
+    if (!query || query.length < 3) return null
+
     try {
-        const url = `https://groww.in/v1/api/search/v1/derived/scheme?page=0&query=${encodeURIComponent(query)}&size=5`
+        // Use the entity search endpoint which does REAL keyword matching
+        const url = `https://groww.in/v1/api/search/v1/entity?q=${encodeURIComponent(query)}&entity_type=scheme&size=5`
         const res = await fetch(url, {
             headers: { ...HEADERS, Accept: 'application/json' },
         })
@@ -41,15 +51,15 @@ async function findGrowwSlug(userTicker: string): Promise<string | null> {
         if (!res.ok) return null
 
         const data = await res.json()
-        const schemes = data?.content || []
+        const results = data?.content || []
 
-        if (schemes.length === 0) return null
+        if (results.length === 0) return null
 
-        // Prefer Direct plan schemes
-        const direct = schemes.find((s: any) =>
-            s.plan_type === 'Direct' || s.search_id?.includes('direct')
+        // Prefer Direct plan results
+        const direct = results.find((s: any) =>
+            s.search_id?.includes('direct') || s.title?.toLowerCase().includes('direct')
         )
-        return (direct || schemes[0])?.search_id || null
+        return (direct || results[0])?.search_id || null
     } catch {
         return null
     }
