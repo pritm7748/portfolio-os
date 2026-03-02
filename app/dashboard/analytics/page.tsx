@@ -408,14 +408,8 @@ export default function AnalyticsPage() {
             let firstBenchmarkValue = 0
             let lastKnownBenchmark = 0
 
-            // BUG FIX: TWR (Time-Weighted Return) tracking
-            let twrProduct = 1 // cumulative product of (1 + sub-period return)
-            let prevDayValue = 0
-            let dayFlowAmount = 0 // net cash flow on the current day
-
             for (const date of sortedDates) {
                 const dayStart = new Date(date).getTime()
-                dayFlowAmount = 0
 
                 while (txnIndex < categoryTxns.length) {
                     const t = categoryTxns[txnIndex]
@@ -427,14 +421,13 @@ export default function AnalyticsPage() {
                         runningHoldings[ticker] = (runningHoldings[ticker] || 0) + Number(t.quantity)
                         const cost = Number(t.price) * Number(t.quantity)
                         runningInvested += cost
-                        dayFlowAmount += cost // cash inflow to portfolio
                         // Track FIFO lots for cost basis
                         if (!costLots[ticker]) costLots[ticker] = []
                         costLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
                     } else if (t.transaction_type === 'Sell') {
                         const sellQty = Number(t.quantity)
                         runningHoldings[ticker] = (runningHoldings[ticker] || 0) - sellQty
-                        // BUG FIX: Reduce invested by FIFO cost basis, not sale price
+                        // Reduce invested by FIFO cost basis, not sale price
                         let qtyToSell = sellQty
                         let costReduction = 0
                         const lots = costLots[ticker] || []
@@ -450,7 +443,6 @@ export default function AnalyticsPage() {
                             }
                         }
                         runningInvested -= costReduction
-                        dayFlowAmount -= (Number(t.price) * sellQty) // cash outflow from portfolio at sale price
                     }
                     txnIndex++
                 }
@@ -472,22 +464,12 @@ export default function AnalyticsPage() {
                 else benchmarkValue = lastKnownBenchmark
 
                 if (runningInvested > 0 || dailyValue > 0) {
-                    // BUG FIX: TWR calculation — chain sub-period returns around cash flows
-                    if (prevDayValue > 0) {
-                        // Value before today's cash flows = dailyValue - dayFlowAmount
-                        const valueBeforeFlow = dailyValue - dayFlowAmount
-                        const subPeriodReturn = (valueBeforeFlow - prevDayValue) / prevDayValue
-                        twrProduct *= (1 + subPeriodReturn)
-                    } else if (dailyValue > 0) {
-                        // First day with value — initialize
-                        twrProduct = 1
-                    }
-                    prevDayValue = dailyValue
-
                     if (firstBenchmarkValue === 0 && benchmarkValue > 0) firstBenchmarkValue = benchmarkValue
 
-                    const portfolioReturnPct = (twrProduct - 1) * 100
+                    // Simple return: (value - invested) / invested — same as Groww/Zerodha
+                    const portfolioReturnPct = runningInvested > 0 ? ((dailyValue - runningInvested) / runningInvested) * 100 : 0
                     const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
+                    // Normalize benchmark: "if you'd invested ₹X in NIFTY instead"
                     const normalizedBenchmark = runningInvested > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * runningInvested : 0
 
                     finalChartData.push({
