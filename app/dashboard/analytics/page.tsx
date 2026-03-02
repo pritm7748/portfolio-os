@@ -358,7 +358,7 @@ export default function AnalyticsPage() {
                 const cat = getCategory(t.assets.asset_type)
                 if (cat === category) { relevantTickers.add(t.assets.ticker); return true }
                 return false
-            })
+            }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()) // BUG FIX: sort by date
 
             if (relevantTickers.size === 0) {
                 setChartData([])
@@ -400,25 +400,57 @@ export default function AnalyticsPage() {
             const finalChartData: any[] = []
             const runningHoldings: Record<string, number> = {}
             const lastKnownPrices: Record<string, number> = {}
+            // BUG FIX: Track cost basis per ticker using FIFO lots
+            const costLots: Record<string, { price: number, quantity: number }[]> = {}
 
             let runningInvested = 0
             let txnIndex = 0
             let firstBenchmarkValue = 0
-            let firstPortfolioValue = 0
             let lastKnownBenchmark = 0
+
+            // BUG FIX: TWR (Time-Weighted Return) tracking
+            let twrProduct = 1 // cumulative product of (1 + sub-period return)
+            let prevDayValue = 0
+            let dayFlowAmount = 0 // net cash flow on the current day
 
             for (const date of sortedDates) {
                 const dayStart = new Date(date).getTime()
+                dayFlowAmount = 0
+
                 while (txnIndex < categoryTxns.length) {
                     const t = categoryTxns[txnIndex]
                     const tTime = new Date(t.date).getTime()
                     if (tTime > dayStart + 86400000) break
+
+                    const ticker = t.assets.ticker
                     if (t.transaction_type === 'Buy') {
-                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) + Number(t.quantity)
-                        runningInvested += (Number(t.price) * Number(t.quantity))
+                        runningHoldings[ticker] = (runningHoldings[ticker] || 0) + Number(t.quantity)
+                        const cost = Number(t.price) * Number(t.quantity)
+                        runningInvested += cost
+                        dayFlowAmount += cost // cash inflow to portfolio
+                        // Track FIFO lots for cost basis
+                        if (!costLots[ticker]) costLots[ticker] = []
+                        costLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
                     } else if (t.transaction_type === 'Sell') {
-                        runningHoldings[t.assets.ticker] = (runningHoldings[t.assets.ticker] || 0) - Number(t.quantity)
-                        runningInvested -= (Number(t.price) * Number(t.quantity))
+                        const sellQty = Number(t.quantity)
+                        runningHoldings[ticker] = (runningHoldings[ticker] || 0) - sellQty
+                        // BUG FIX: Reduce invested by FIFO cost basis, not sale price
+                        let qtyToSell = sellQty
+                        let costReduction = 0
+                        const lots = costLots[ticker] || []
+                        while (qtyToSell > 0 && lots.length > 0) {
+                            if (lots[0].quantity > qtyToSell) {
+                                costReduction += lots[0].price * qtyToSell
+                                lots[0].quantity -= qtyToSell
+                                qtyToSell = 0
+                            } else {
+                                costReduction += lots[0].price * lots[0].quantity
+                                qtyToSell -= lots[0].quantity
+                                lots.shift()
+                            }
+                        }
+                        runningInvested -= costReduction
+                        dayFlowAmount -= (Number(t.price) * sellQty) // cash outflow from portfolio at sale price
                     }
                     txnIndex++
                 }
@@ -440,12 +472,23 @@ export default function AnalyticsPage() {
                 else benchmarkValue = lastKnownBenchmark
 
                 if (runningInvested > 0 || dailyValue > 0) {
-                    if (firstPortfolioValue === 0 && dailyValue > 0) firstPortfolioValue = dailyValue
+                    // BUG FIX: TWR calculation — chain sub-period returns around cash flows
+                    if (prevDayValue > 0) {
+                        // Value before today's cash flows = dailyValue - dayFlowAmount
+                        const valueBeforeFlow = dailyValue - dayFlowAmount
+                        const subPeriodReturn = (valueBeforeFlow - prevDayValue) / prevDayValue
+                        twrProduct *= (1 + subPeriodReturn)
+                    } else if (dailyValue > 0) {
+                        // First day with value — initialize
+                        twrProduct = 1
+                    }
+                    prevDayValue = dailyValue
+
                     if (firstBenchmarkValue === 0 && benchmarkValue > 0) firstBenchmarkValue = benchmarkValue
 
-                    const portfolioReturnPct = firstPortfolioValue > 0 ? ((dailyValue - firstPortfolioValue) / firstPortfolioValue) * 100 : 0
+                    const portfolioReturnPct = (twrProduct - 1) * 100
                     const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
-                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue : 0
+                    const normalizedBenchmark = runningInvested > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * runningInvested : 0
 
                     finalChartData.push({
                         date,
