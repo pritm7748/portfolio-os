@@ -28,9 +28,54 @@ interface FundXray {
     error?: string
 }
 
-async function fetchTopHoldings(ticker: string): Promise<FundXray> {
+/**
+ * Try to resolve a user's MF ticker (e.g. "HDFCFLEXICAP.NS", "SBI Bluechip")
+ * to the Yahoo Finance mutual fund ticker (e.g. "0P0000XVAP.BO").
+ * Yahoo's search endpoint returns results with quoteType=MUTUALFUND.
+ */
+async function resolveYahooTicker(userTicker: string): Promise<string | null> {
+    // First, strip .NS / .BO suffixes and clean up for search
+    const searchQuery = userTicker
+        .replace(/\.NS$|\.BO$/i, '')
+        .replace(/-/g, ' ')
+        .replace(/_/g, ' ')
+        .trim()
+
+    try {
+        // Use Yahoo's v1 search endpoint
+        const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(searchQuery)}&quotesCount=10&lang=en-US`
+        const res = await fetch(url, { headers: YAHOO_HEADERS })
+
+        if (!res.ok) return null
+
+        const data = await res.json()
+        const quotes = data?.quotes || []
+
+        // Find mutual fund type results
+        const mfResults = quotes.filter((q: any) =>
+            q.quoteType === 'MUTUALFUND' || q.typeDisp === 'Mutual Fund'
+        )
+
+        if (mfResults.length > 0) {
+            return mfResults[0].symbol
+        }
+
+        // If no MF result, try any result that looks like an Indian MF (starts with 0P)
+        const indiaFund = quotes.find((q: any) =>
+            q.symbol?.startsWith('0P') && (q.symbol?.endsWith('.BO') || q.symbol?.endsWith('.NS'))
+        )
+        if (indiaFund) return indiaFund.symbol
+
+        return null
+    } catch {
+        return null
+    }
+}
+
+async function fetchTopHoldings(ticker: string, resolvedTicker: string | null): Promise<FundXray> {
+    const yahooTicker = resolvedTicker || ticker
     const result: FundXray = {
-        ticker,
+        ticker,  // keep original user ticker for display
         fundName: ticker,
         holdings: [],
         sectorWeights: [],
@@ -39,12 +84,11 @@ async function fetchTopHoldings(ticker: string): Promise<FundXray> {
     }
 
     try {
-        // Try Yahoo quoteSummary with topHoldings module
-        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=topHoldings,assetProfile`
-        const res = await fetch(url, { headers: YAHOO_HEADERS, next: { revalidate: 86400 } }) // cache 24h
+        const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooTicker)}?modules=topHoldings,quoteType`
+        const res = await fetch(url, { headers: YAHOO_HEADERS, next: { revalidate: 86400 } })
 
         if (!res.ok) {
-            result.error = `Yahoo returned ${res.status}`
+            result.error = `Yahoo returned ${res.status} for ${yahooTicker}`
             return result
         }
 
@@ -57,15 +101,17 @@ async function fetchTopHoldings(ticker: string): Promise<FundXray> {
         }
 
         const topHoldings = quoteSummary.topHoldings
-        const assetProfile = quoteSummary.assetProfile
+        const quoteType = quoteSummary.quoteType
 
-        // Fund name
-        if (assetProfile?.longBusinessSummary) {
-            result.fundName = assetProfile.longBusinessSummary.substring(0, 100)
+        // Fund name from quoteType
+        if (quoteType?.shortName) {
+            result.fundName = quoteType.shortName
+        } else if (quoteType?.longName) {
+            result.fundName = quoteType.longName
         }
 
         if (!topHoldings) {
-            result.error = 'No topHoldings data'
+            result.error = 'No holdings data available'
             return result
         }
 
@@ -87,7 +133,6 @@ async function fetchTopHoldings(ticker: string): Promise<FundXray> {
         })
 
         // Equity/bond split
-        result.equityPercent = (topHoldings.equityHoldings?.priceToEarnings?.raw || 0) > 0 ? 100 : 0
         const stockPosition = topHoldings.stockPosition?.raw
         const bondPosition = topHoldings.bondPosition?.raw
         if (stockPosition !== undefined) result.equityPercent = stockPosition * 100
@@ -101,7 +146,6 @@ async function fetchTopHoldings(ticker: string): Promise<FundXray> {
 }
 
 function formatSectorName(key: string): string {
-    // Convert camelCase like "realestate" or "technology" to readable form
     const map: Record<string, string> = {
         realestate: 'Real Estate',
         consumer_cyclical: 'Consumer Cyclical',
@@ -126,19 +170,48 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'No tickers provided' }, { status: 400 })
         }
 
-        // Process in batches of 3 to be gentle on Yahoo
-        const results: FundXray[] = []
+        // Step 1: Resolve each user ticker to a Yahoo MF ticker
+        const tickerMap: Record<string, string | null> = {}
         const BATCH = 3
         const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
         for (let i = 0; i < tickers.length; i += BATCH) {
             const batch = tickers.slice(i, i + BATCH)
-            const batchResults = await Promise.all(batch.map(fetchTopHoldings))
-            results.push(...batchResults)
+            const results = await Promise.all(batch.map(async (t: string) => {
+                const resolved = await resolveYahooTicker(t)
+                return { original: t, resolved }
+            }))
+            results.forEach(r => { tickerMap[r.original] = r.resolved })
             if (i + BATCH < tickers.length) await delay(500)
         }
 
-        return NextResponse.json({ funds: results })
+        // Step 2: Fetch holdings for each resolved ticker
+        const fundResults: FundXray[] = []
+        const tickersToFetch = tickers.filter(t => tickerMap[t] !== null)
+
+        for (let i = 0; i < tickersToFetch.length; i += BATCH) {
+            const batch = tickersToFetch.slice(i, i + BATCH)
+            const batchResults = await Promise.all(
+                batch.map(t => fetchTopHoldings(t, tickerMap[t]))
+            )
+            fundResults.push(...batchResults)
+            if (i + BATCH < tickersToFetch.length) await delay(500)
+        }
+
+        // Add unresolved tickers with error
+        tickers.filter(t => tickerMap[t] === null).forEach(t => {
+            fundResults.push({
+                ticker: t,
+                fundName: t,
+                holdings: [],
+                sectorWeights: [],
+                equityPercent: 0,
+                bondPercent: 0,
+                error: `Could not find "${t}" on Yahoo Finance`
+            })
+        })
+
+        return NextResponse.json({ funds: fundResults })
     } catch (e: any) {
         return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 })
     }
