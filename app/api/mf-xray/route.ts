@@ -23,11 +23,40 @@ interface FundXray {
 }
 
 /**
+ * If the name looks like a MorningStar ID (e.g., "0P00008TMV.BO"),
+ * resolve it to a human-readable name via Yahoo search.
+ */
+async function resolveNameIfNeeded(name: string): Promise<string> {
+    // If it doesn't look like a MorningStar ID, return as-is
+    if (!name.match(/^0P[0-9A-Z]{8,}/i)) return name
+
+    try {
+        const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(name)}&quotesCount=3`
+        const res = await fetch(url, {
+            headers: { ...HEADERS, Accept: 'application/json' },
+        })
+        if (!res.ok) return name
+
+        const data = await res.json()
+        const quotes = data?.quotes || []
+        if (quotes.length > 0) {
+            const q = quotes[0]
+            const resolved = q.longname || q.shortname || q.name
+            if (resolved && !resolved.match(/^0P/)) {
+                console.log(`[MF-XRAY] Resolved MorningStar ID "${name}" -> "${resolved}"`)
+                return resolved
+            }
+        }
+    } catch { }
+
+    return name
+}
+
+/**
  * Search Groww for the fund's search_id (slug) using entity search.
  * Strips Direct/Growth/Plan suffixes for cleaner matching.
  */
 async function findGrowwSlug(fundName: string): Promise<string | null> {
-    // Clean fund name — remove plan/growth suffixes for better matching
     const query = fundName
         .replace(/\.NS$|\.BO$/i, '')
         .replace(/\s*-\s*/g, ' ')
@@ -41,17 +70,23 @@ async function findGrowwSlug(fundName: string): Promise<string | null> {
 
     if (!query || query.length < 3) return null
 
+    console.log(`[MF-XRAY] Groww search query: "${query}"`)
+
     try {
-        // Use the entity search endpoint which does REAL keyword matching
         const url = `https://groww.in/v1/api/search/v1/entity?q=${encodeURIComponent(query)}&entity_type=scheme&size=5`
         const res = await fetch(url, {
             headers: { ...HEADERS, Accept: 'application/json' },
         })
 
-        if (!res.ok) return null
+        if (!res.ok) {
+            console.log(`[MF-XRAY] Groww search status: ${res.status}`)
+            return null
+        }
 
         const data = await res.json()
         const results = data?.content || []
+
+        console.log(`[MF-XRAY] Groww results: ${results.length}`)
 
         if (results.length === 0) return null
 
@@ -59,15 +94,17 @@ async function findGrowwSlug(fundName: string): Promise<string | null> {
         const direct = results.find((s: any) =>
             s.search_id?.includes('direct') || s.title?.toLowerCase().includes('direct')
         )
-        return (direct || results[0])?.search_id || null
-    } catch {
+        const best = direct || results[0]
+        console.log(`[MF-XRAY] Best match: ${best.search_id} | ${best.title}`)
+        return best?.search_id || null
+    } catch (e: any) {
+        console.log(`[MF-XRAY] Groww search error: ${e.message}`)
         return null
     }
 }
 
 /**
- * Step 2: Fetch the Groww MF page and extract holdings from __NEXT_DATA__.
- * The SSR data lives at: pageProps.mfServerSideData.holdings[]
+ * Fetch the Groww MF page and extract holdings from __NEXT_DATA__.
  */
 async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Promise<FundXray> {
     const result: FundXray = {
@@ -88,8 +125,7 @@ async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Pro
 
         const html = await res.text()
 
-        // Extract __NEXT_DATA__ JSON
-        const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\\s\\S]*?)<\/script>/)
+        const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)
         if (!match) {
             result.error = 'Could not parse Groww page data'
             return result
@@ -103,10 +139,8 @@ async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Pro
             return result
         }
 
-        // Fund name
         result.fundName = mfData.scheme_name || mfData.meta_title || slug
 
-        // Holdings
         const rawHoldings = mfData.holdings || []
         result.holdings = rawHoldings
             .filter((h: any) => h.corpus_per > 0)
@@ -118,7 +152,6 @@ async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Pro
             }))
             .sort((a: HoldingItem, b: HoldingItem) => b.weight - a.weight)
 
-        // Aggregate sector weights
         const sectorMap: Record<string, number> = {}
         result.holdings.forEach(h => {
             sectorMap[h.sector] = (sectorMap[h.sector] || 0) + h.weight
@@ -146,11 +179,15 @@ export async function POST(request: Request) {
         const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
         const funds: FundXray[] = []
 
-        // Process one at a time to be gentle on Groww
         for (const ticker of tickers) {
-            // Use the human-readable fund name for search, fallback to ticker
-            const searchName = nameMap[ticker] || ticker
+            let searchName = nameMap[ticker] || ticker
+            console.log(`[MF-XRAY] Processing ticker="${ticker}" name="${searchName}"`)
+
+            // If name is a MorningStar ID (starts with 0P), resolve to human name
+            searchName = await resolveNameIfNeeded(searchName)
+
             const slug = await findGrowwSlug(searchName)
+            console.log(`[MF-XRAY] -> Final slug: ${slug || 'NOT FOUND'}`)
 
             if (!slug) {
                 funds.push({
@@ -163,11 +200,9 @@ export async function POST(request: Request) {
                 continue
             }
 
-            // Fetch holdings from SSR
             const fundData = await fetchHoldingsFromGroww(slug, ticker)
             funds.push(fundData)
 
-            // Polite delay between requests
             await delay(800)
         }
 
