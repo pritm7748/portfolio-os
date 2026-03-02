@@ -407,9 +407,13 @@ export default function AnalyticsPage() {
             let txnIndex = 0
             let firstBenchmarkValue = 0
             let lastKnownBenchmark = 0
+            // Range-aware return: track start-of-period value and new cash flows
+            let firstPortfolioValue = 0
+            let netNewFlows = 0 // money added/removed during visible period
 
             for (const date of sortedDates) {
                 const dayStart = new Date(date).getTime()
+                let dayFlow = 0
 
                 while (txnIndex < categoryTxns.length) {
                     const t = categoryTxns[txnIndex]
@@ -421,13 +425,12 @@ export default function AnalyticsPage() {
                         runningHoldings[ticker] = (runningHoldings[ticker] || 0) + Number(t.quantity)
                         const cost = Number(t.price) * Number(t.quantity)
                         runningInvested += cost
-                        // Track FIFO lots for cost basis
+                        dayFlow += cost
                         if (!costLots[ticker]) costLots[ticker] = []
                         costLots[ticker].push({ price: Number(t.price), quantity: Number(t.quantity) })
                     } else if (t.transaction_type === 'Sell') {
                         const sellQty = Number(t.quantity)
                         runningHoldings[ticker] = (runningHoldings[ticker] || 0) - sellQty
-                        // Reduce invested by FIFO cost basis, not sale price
                         let qtyToSell = sellQty
                         let costReduction = 0
                         const lots = costLots[ticker] || []
@@ -443,6 +446,7 @@ export default function AnalyticsPage() {
                             }
                         }
                         runningInvested -= costReduction
+                        dayFlow -= (Number(t.price) * sellQty)
                     }
                     txnIndex++
                 }
@@ -464,13 +468,22 @@ export default function AnalyticsPage() {
                 else benchmarkValue = lastKnownBenchmark
 
                 if (runningInvested > 0 || dailyValue > 0) {
+                    // Capture start-of-period value (first visible data point)
+                    if (firstPortfolioValue === 0 && dailyValue > 0) {
+                        firstPortfolioValue = dailyValue
+                    } else {
+                        // Only count flows AFTER the first data point
+                        netNewFlows += dayFlow
+                    }
                     if (firstBenchmarkValue === 0 && benchmarkValue > 0) firstBenchmarkValue = benchmarkValue
 
-                    // Simple return: (value - invested) / invested — same as Groww/Zerodha
-                    const portfolioReturnPct = runningInvested > 0 ? ((dailyValue - runningInvested) / runningInvested) * 100 : 0
+                    // Range-aware return: growth of portfolio excluding new money
+                    // (endValue - startValue - newMoney) / startValue
+                    const portfolioReturnPct = firstPortfolioValue > 0
+                        ? ((dailyValue - firstPortfolioValue - netNewFlows) / firstPortfolioValue) * 100
+                        : 0
                     const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
-                    // Normalize benchmark: "if you'd invested ₹X in NIFTY instead"
-                    const normalizedBenchmark = runningInvested > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * runningInvested : 0
+                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue : 0
 
                     finalChartData.push({
                         date,
