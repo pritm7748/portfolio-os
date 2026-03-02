@@ -1,209 +1,263 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useTransactions, useLivePrices } from '@/hooks/use-portfolio-data'
-import { Loader2, Target, Calculator } from 'lucide-react'
+import { Loader2, Target, Calculator, TrendingUp, BarChart3 } from 'lucide-react'
 import { ResponsiveContainer, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart } from 'recharts'
+import SipStepupSimulator from '@/components/sip-stepup-simulator'
+import SipInsights from '@/components/sip-insights'
+
+const TABS = [
+    { id: 'planner', label: 'Goal Planner', icon: Target },
+    { id: 'stepup', label: 'Step-up Simulator', icon: TrendingUp },
+    { id: 'insights', label: 'SIP Insights', icon: BarChart3 },
+] as const
 
 export default function GoalsPage() {
-  const [loading, setLoading] = useState(true)
-  
-  // Goal Inputs
-  const [targetAmount, setTargetAmount] = useState(10000000) 
-  const [years, setYears] = useState(10)
-  const [expectedReturn, setExpectedReturn] = useState(12) 
-  const [monthlySip, setMonthlySip] = useState(50000)
-  
-  // 1. DATA HOOKS
-  const { data: transactions, isLoading: txnsLoading } = useTransactions()
+    const [activeTab, setActiveTab] = useState<string>('planner')
 
-  // 2. Derive Tickers
-  const allTickers = useMemo(() => {
-      if (!transactions) return []
-      const set = new Set<string>()
-      transactions.forEach(t => set.add(t.assets.ticker))
-      return Array.from(set)
-  }, [transactions])
+    // Goal Inputs
+    const [targetAmount, setTargetAmount] = useState(10000000)
+    const [years, setYears] = useState(10)
+    const [expectedReturn, setExpectedReturn] = useState(12)
+    const [monthlySip, setMonthlySip] = useState(50000)
 
-  // 3. Fetch Prices
-  const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
+    // 1. DATA HOOKS
+    const { data: transactions, isLoading: txnsLoading } = useTransactions()
 
-  // 4. CALCULATE CURRENT NET WORTH
-  const currentNetWorth = useMemo(() => {
-      if (!transactions || !priceMap) return 0
-      
-      const holdings: Record<string, number> = {}
-      transactions.forEach(t => {
-          if (t.transaction_type === 'Buy') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) + Number(t.quantity)
-          else if (t.transaction_type === 'Sell') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
-      })
+    // 2. Derive Tickers
+    const allTickers = useMemo(() => {
+        if (!transactions) return []
+        const set = new Set<string>()
+        transactions.forEach(t => set.add(t.assets.ticker))
+        return Array.from(set)
+    }, [transactions])
 
-      let total = 0
-      Object.keys(holdings).forEach(t => {
-          if (holdings[t] > 0) {
-              const cleanTicker = t.toUpperCase().replace(/\s/g, '')
-              let price = priceMap[t]?.price
-              if (!price) {
-                  const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
-                  if (foundKey) price = priceMap[foundKey]?.price
-              }
-              total += (holdings[t] * (price || 0))
-          }
-      })
-      return total
-  }, [transactions, priceMap])
+    // 3. Fetch Prices
+    const { data: priceMap, isLoading: pricesLoading } = useLivePrices(allTickers)
 
-  // 5. PROJECTION ENGINE
-  const { projection, projectedWealth, shortfall } = useMemo(() => {
-      const monthlyRate = expectedReturn / 100 / 12
-      const months = years * 12
-      const data = []
-      
-      let wealth = currentNetWorth
-      let invested = currentNetWorth 
+    // 4. CALCULATE CURRENT NET WORTH
+    const currentNetWorth = useMemo(() => {
+        if (!transactions || !priceMap) return 0
 
-      for (let i = 1; i <= months; i++) {
-          wealth = (wealth + monthlySip) * (1 + monthlyRate)
-          invested += monthlySip
+        const holdings: Record<string, number> = {}
+        transactions.forEach(t => {
+            if (t.transaction_type === 'Buy') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) + Number(t.quantity)
+            else if (t.transaction_type === 'Sell') holdings[t.assets.ticker] = (holdings[t.assets.ticker] || 0) - Number(t.quantity)
+        })
 
-          if (i % 12 === 0) { 
-              data.push({
-                  year: `Year ${i/12}`,
-                  invested: Math.round(invested),
-                  wealth: Math.round(wealth),
-                  target: targetAmount 
-              })
-          }
-      }
-      return { projection: data, projectedWealth: wealth, shortfall: targetAmount - wealth }
-  }, [currentNetWorth, targetAmount, years, expectedReturn, monthlySip])
+        let total = 0
+        Object.keys(holdings).forEach(t => {
+            if (holdings[t] > 0) {
+                const cleanTicker = t.toUpperCase().replace(/\s/g, '')
+                let price = priceMap[t]?.price
+                if (!price) {
+                    const foundKey = Object.keys(priceMap).find(k => k.includes(cleanTicker.split('.')[0]))
+                    if (foundKey) price = priceMap[foundKey]?.price
+                }
+                total += (holdings[t] * (price || 0))
+            }
+        })
+        return total
+    }, [transactions, priceMap])
 
-  const handleFormattedInput = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: number) => void) => {
-      const rawValue = e.target.value.replace(/,/g, '').replace(/[^0-9.]/g, '')
-      setter(rawValue === '' ? 0 : Number(rawValue))
-  }
+    // 5. PROJECTION ENGINE
+    const { projection, projectedWealth, shortfall } = useMemo(() => {
+        const monthlyRate = expectedReturn / 100 / 12
+        const months = years * 12
+        const data = []
 
-  const isLoading = txnsLoading || pricesLoading
-  if (isLoading && currentNetWorth === 0) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600"/></div>
+        let wealth = currentNetWorth
+        let invested = currentNetWorth
 
-  const isGoalMet = projectedWealth >= targetAmount
+        for (let i = 1; i <= months; i++) {
+            wealth = (wealth + monthlySip) * (1 + monthlyRate)
+            invested += monthlySip
 
-  return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-10">
-      
-      {/* STATUS BAR */}
-      <div className={`w-full px-6 py-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 ${isGoalMet ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-          <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-full ${isGoalMet ? 'bg-green-100' : 'bg-amber-100'}`}>
-                  <Target className="h-5 w-5" />
-              </div>
-              <div>
-                  <div className="text-xs font-semibold uppercase tracking-wider opacity-80">Projected Outcome</div>
-                  <div className="text-lg font-bold">
-                      {isGoalMet ? "Goal Achieved! 🎉" : `Shortfall: ₹${Math.abs(shortfall).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
-                  </div>
-              </div>
-          </div>
-          
-          {!isGoalMet && (
-              <div className="text-sm font-medium opacity-90 bg-white/50 px-3 py-1.5 rounded-lg">
-                  Tip: Increase SIP by ₹{Math.round(Math.abs(shortfall) / (years * 12)).toLocaleString('en-IN')} to hit goal.
-              </div>
-          )}
-      </div>
+            if (i % 12 === 0) {
+                data.push({
+                    year: `Year ${i / 12}`,
+                    invested: Math.round(invested),
+                    wealth: Math.round(wealth),
+                    target: targetAmount
+                })
+            }
+        }
+        return { projection: data, projectedWealth: wealth, shortfall: targetAmount - wealth }
+    }, [currentNetWorth, targetAmount, years, expectedReturn, monthlySip])
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* INPUTS PANEL */}
-          <div className="space-y-6 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 h-fit">
-              <h3 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-                  <Calculator className="h-4 w-4" /> Configuration
-              </h3>
-              
-              <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Target Amount (₹)</label>
-                  <input 
-                    type="text" inputMode="numeric"
-                    value={targetAmount > 0 ? targetAmount.toLocaleString('en-IN') : ''} 
-                    onChange={(e) => handleFormattedInput(e, setTargetAmount)} 
-                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" 
-                    placeholder="0"
-                  />
-              </div>
+    const handleFormattedInput = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: number) => void) => {
+        const rawValue = e.target.value.replace(/,/g, '').replace(/[^0-9.]/g, '')
+        setter(rawValue === '' ? 0 : Number(rawValue))
+    }
 
-              <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Monthly SIP (₹)</label>
-                  <input 
-                    type="text" inputMode="numeric"
-                    value={monthlySip > 0 ? monthlySip.toLocaleString('en-IN') : ''} 
-                    onChange={(e) => handleFormattedInput(e, setMonthlySip)} 
-                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none"
-                    placeholder="0"
-                  />
-              </div>
+    const isLoading = txnsLoading || pricesLoading
+    if (isLoading && currentNetWorth === 0) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Time (Years)</label>
-                    <input type="number" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
-                </div>
-                <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Exp. Return (%)</label>
-                    <input type="number" value={expectedReturn} onChange={e => setExpectedReturn(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
-                </div>
-              </div>
+    const isGoalMet = projectedWealth >= targetAmount
 
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-                  <div className="flex justify-between text-sm mb-2">
-                      <span className="text-slate-500">Current Net Worth:</span>
-                      <span className="font-mono font-medium">₹{currentNetWorth.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Projected Wealth:</span>
-                      <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">₹{projectedWealth.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                  </div>
-              </div>
-          </div>
+    return (
+        <div className="space-y-6 max-w-6xl mx-auto pb-10">
 
-          {/* CHART PANEL (FIXED FOR MOBILE) */}
-          <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col">
-              <h3 className="font-semibold text-slate-800 dark:text-white mb-6">Wealth Projection Curve</h3>
-              
-              {/* FIX: Forced explicit height instead of flex-1, ensures visibility on mobile stack */}
-              <div className="w-full h-[350px] md:h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={projection} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                        <defs>
-                            <linearGradient id="colorWealth" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" opacity={0.5} />
-                        <XAxis dataKey="year" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#94a3b8'}} />
-                        <YAxis 
-                            hide={false} 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{fontSize: 12, fill: '#94a3b8'}} 
-                            tickFormatter={(val) => `₹${(val/10000000).toFixed(1)}Cr`} 
-                            width={50}
-                        />
-                        <Tooltip 
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                            formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, '']}
-                        />
-                        <Legend verticalAlign="top" height={36}/>
-                        
-                        <Area type="monotone" dataKey="wealth" name="Projected Wealth" stroke="#6366f1" fill="url(#colorWealth)" strokeWidth={3} />
-                        <Area type="monotone" dataKey="invested" name="Total Invested" stroke="#94a3b8" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
-                        <Line type="monotone" dataKey="target" name="Target Goal" stroke="#10b981" strokeWidth={2} dot={false} />
-                    </AreaChart>
-                </ResponsiveContainer>
-              </div>
-          </div>
+            {/* TAB BAR */}
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl w-fit">
+                {TABS.map(tab => {
+                    const Icon = tab.icon
+                    const isActive = activeTab === tab.id
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${isActive
+                                    ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                                }`}
+                        >
+                            <Icon className="h-3.5 w-3.5" />
+                            {tab.label}
+                        </button>
+                    )
+                })}
+            </div>
 
-      </div>
-    </div>
-  )
+            {/* ═══════════════ TAB: GOAL PLANNER (existing) ═══════════════ */}
+            {activeTab === 'planner' && (
+                <>
+                    {/* STATUS BAR */}
+                    <div className={`w-full px-6 py-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-4 ${isGoalMet ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/10 dark:border-green-800 dark:text-green-300' : 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/10 dark:border-amber-800 dark:text-amber-300'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-full ${isGoalMet ? 'bg-green-100 dark:bg-green-900/30' : 'bg-amber-100 dark:bg-amber-900/30'}`}>
+                                <Target className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <div className="text-xs font-semibold uppercase tracking-wider opacity-80">Projected Outcome</div>
+                                <div className="text-lg font-bold">
+                                    {isGoalMet ? "Goal Achieved! 🎉" : `Shortfall: ₹${Math.abs(shortfall).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                                </div>
+                            </div>
+                        </div>
+
+                        {!isGoalMet && (
+                            <div className="text-sm font-medium opacity-90 bg-white/50 dark:bg-white/10 px-3 py-1.5 rounded-lg">
+                                Tip: Increase SIP by ₹{Math.round(Math.abs(shortfall) / (years * 12)).toLocaleString('en-IN')} to hit goal.
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                        {/* INPUTS PANEL */}
+                        <div className="space-y-6 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 h-fit">
+                            <h3 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
+                                <Calculator className="h-4 w-4" /> Configuration
+                            </h3>
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1">Target Amount (₹)</label>
+                                <input
+                                    type="text" inputMode="numeric"
+                                    value={targetAmount > 0 ? targetAmount.toLocaleString('en-IN') : ''}
+                                    onChange={(e) => handleFormattedInput(e, setTargetAmount)}
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none"
+                                    placeholder="0"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1">Monthly SIP (₹)</label>
+                                <input
+                                    type="text" inputMode="numeric"
+                                    value={monthlySip > 0 ? monthlySip.toLocaleString('en-IN') : ''}
+                                    onChange={(e) => handleFormattedInput(e, setMonthlySip)}
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none"
+                                    placeholder="0"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1">Time (Years)</label>
+                                    <input type="number" value={years} onChange={e => setYears(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-500 mb-1">Exp. Return (%)</label>
+                                    <input type="number" value={expectedReturn} onChange={e => setExpectedReturn(Number(e.target.value))} className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 font-mono focus:border-indigo-500 focus:outline-none" />
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-slate-500">Current Net Worth:</span>
+                                    <span className="font-mono font-medium">₹{currentNetWorth.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Projected Wealth:</span>
+                                    <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">₹{projectedWealth.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* CHART PANEL */}
+                        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col">
+                            <h3 className="font-semibold text-slate-800 dark:text-white mb-6">Wealth Projection Curve</h3>
+
+                            <div className="w-full h-[350px] md:h-[400px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={projection} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                        <defs>
+                                            <linearGradient id="colorWealth" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" opacity={0.5} />
+                                        <XAxis dataKey="year" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
+                                        <YAxis
+                                            hide={false}
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fontSize: 12, fill: '#94a3b8' }}
+                                            tickFormatter={(val) => `₹${(val / 10000000).toFixed(1)}Cr`}
+                                            width={50}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                            formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, '']}
+                                        />
+                                        <Legend verticalAlign="top" height={36} />
+
+                                        <Area type="monotone" dataKey="wealth" name="Projected Wealth" stroke="#6366f1" fill="url(#colorWealth)" strokeWidth={3} />
+                                        <Area type="monotone" dataKey="invested" name="Total Invested" stroke="#94a3b8" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
+                                        <Line type="monotone" dataKey="target" name="Target Goal" stroke="#10b981" strokeWidth={2} dot={false} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {/* ═══════════════ TAB: STEP-UP SIMULATOR ═══════════════ */}
+            {activeTab === 'stepup' && (
+                <SipStepupSimulator
+                    currentNetWorth={currentNetWorth}
+                    monthlySip={monthlySip}
+                    years={years}
+                    expectedReturn={expectedReturn}
+                />
+            )}
+
+            {/* ═══════════════ TAB: SIP INSIGHTS ═══════════════ */}
+            {activeTab === 'insights' && (
+                <SipInsights
+                    transactions={transactions || []}
+                    priceMap={priceMap || {}}
+                    monthlySip={monthlySip}
+                    expectedReturn={expectedReturn}
+                    currentNetWorth={currentNetWorth}
+                />
+            )}
+
+        </div>
+    )
 }
