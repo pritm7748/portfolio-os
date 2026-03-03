@@ -477,13 +477,14 @@ export default function AnalyticsPage() {
                     }
                     if (firstBenchmarkValue === 0 && benchmarkValue > 0) firstBenchmarkValue = benchmarkValue
 
-                    // Range-aware return: growth of portfolio excluding new money
-                    // (endValue - startValue - newMoney) / startValue
-                    const portfolioReturnPct = firstPortfolioValue > 0
-                        ? ((dailyValue - firstPortfolioValue - netNewFlows) / firstPortfolioValue) * 100
+                    // Range-aware return: profit on total capital at play
+                    // Capital base = start value + new money added during period
+                    const capitalBase = firstPortfolioValue + netNewFlows
+                    const portfolioReturnPct = capitalBase > 0
+                        ? ((dailyValue - capitalBase) / capitalBase) * 100
                         : 0
                     const benchmarkReturnPct = firstBenchmarkValue > 0 ? ((benchmarkValue - firstBenchmarkValue) / firstBenchmarkValue) * 100 : 0
-                    const normalizedBenchmark = firstPortfolioValue > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * firstPortfolioValue : 0
+                    const normalizedBenchmark = capitalBase > 0 && firstBenchmarkValue > 0 ? (benchmarkValue / firstBenchmarkValue) * capitalBase : 0
 
                     finalChartData.push({
                         date,
