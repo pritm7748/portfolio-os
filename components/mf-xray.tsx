@@ -160,15 +160,15 @@ export default function MfXray({ mfTickers, mfNames, mfWeights, directStocks }: 
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
 
                 {/* 1. TOP STOCK EXPOSURE */}
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
-                    <div className="flex items-center gap-2 mb-4">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 flex flex-col">
+                    <div className="flex items-center gap-2 mb-4 flex-shrink-0">
                         <Layers className="h-4 w-4 text-indigo-500" />
                         <h4 className="text-sm font-bold text-slate-800 dark:text-white">True Stock Exposure</h4>
                     </div>
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    <div className="space-y-2 flex-1 overflow-y-auto min-h-0">
                         {analysis.topStocks.map((s, i) => (
                             <div key={s.name} className="flex items-center gap-3">
                                 <span className="text-[10px] font-bold text-slate-400 w-4">{i + 1}</span>
@@ -200,12 +200,12 @@ export default function MfXray({ mfTickers, mfNames, mfWeights, directStocks }: 
                 </div>
 
                 {/* 2. SECTOR EXPOSURE */}
-                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
-                    <div className="flex items-center gap-2 mb-4">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 flex flex-col">
+                    <div className="flex items-center gap-2 mb-4 flex-shrink-0">
                         <PieChart className="h-4 w-4 text-emerald-500" />
                         <h4 className="text-sm font-bold text-slate-800 dark:text-white">True Sector Exposure</h4>
                     </div>
-                    <div className="space-y-2.5">
+                    <div className="space-y-2.5 flex-1 overflow-y-auto min-h-0">
                         {analysis.sectors.map(s => (
                             <div key={s.sector}>
                                 <div className="flex justify-between items-baseline mb-0.5">
