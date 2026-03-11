@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, Activity, BarChart3 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { X, Trash2, Calendar, TrendingUp, TrendingDown, Loader2, Edit2, Save, XCircle, BarChart3, Microscope } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
 
@@ -12,23 +13,12 @@ type AssetDetailsDrawerProps = {
   onUpdate: () => void
 }
 
-type Fundamentals = {
-    marketCap: number
-    peRatio: number
-    high52: number
-    low52: number
-    divYield: number
-    currency: string
-}
-
 export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }: AssetDetailsDrawerProps) {
   const { selectedPortfolio } = usePortfolio()
+  const router = useRouter()
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
-  
-  const [stats, setStats] = useState<Fundamentals | null>(null)
-  const [loadingStats, setLoadingStats] = useState(false)
   
   const [editQty, setEditQty] = useState('')
   const [editPrice, setEditPrice] = useState('')
@@ -39,11 +29,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
   useEffect(() => {
     if (asset && isOpen) {
         fetchHistory()
-        if (!asset.ticker.startsWith('COMMODITY:')) {
-            fetchFundamentals(asset.ticker)
-        } else {
-            setStats(null)
-        }
     }
   }, [asset, isOpen, selectedPortfolio])
 
@@ -52,17 +37,13 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     setLoading(true)
 
     try {
-        // 1. Start the query on the 'transactions' table
         let query = supabase
             .from('transactions')
             .select('*')
-            // Filter by the asset IDs passed to the drawer (e.g. TCS)
             .in('asset_id', asset.ids)
             .order('date', { ascending: false })
 
-        // 2. Apply Portfolio Filter (Directly on transactions table)
         if (selectedPortfolio && selectedPortfolio.id !== 'all') {
-            // FIX: Ensure we filter by portfolio_id directly on the transaction
             query = query.eq('portfolio_id', selectedPortfolio.id)
         }
 
@@ -80,24 +61,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     } finally {
         setLoading(false)
     }
-  }
-
-  const fetchFundamentals = async (ticker: string) => {
-      setLoadingStats(true)
-      try {
-        const res = await fetch('/api/quote', {
-            method: 'POST',
-            body: JSON.stringify({ ticker })
-        })
-        if (res.ok) {
-            const data = await res.json()
-            setStats(data)
-        }
-      } catch (e) {
-          console.error(e)
-      } finally {
-          setLoadingStats(false)
-      }
   }
 
   const handleStartEdit = (txn: any) => {
@@ -134,13 +97,6 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
     }
   }
 
-  const formatMarketCap = (num: number) => {
-      if (!num) return '-'
-      if (num >= 10000000) return (num / 10000000).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " Cr"
-      if (num >= 100000) return (num / 100000).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + " L"
-      return num.toLocaleString('en-IN')
-  }
-
   const inputClass = "w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
 
   if (!isOpen || !asset) return null
@@ -168,39 +124,18 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
         {/* BODY */}
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
             
-            {/* FUNDAMENTALS */}
+            {/* ULTIMATE ANALYSIS BUTTON */}
             {!asset.ticker.startsWith('COMMODITY:') && (
-                <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:bg-slate-800/50 dark:border-slate-700">
-                    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <Activity className="h-3 w-3" /> Fundamentals
-                    </h3>
-                    {loadingStats ? (
-                        <div className="h-24 animate-pulse bg-slate-200 rounded dark:bg-slate-700"></div>
-                    ) : stats ? (
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Market Cap</p>
-                                <p className="font-semibold text-slate-900 dark:text-white">₹{formatMarketCap(stats.marketCap)}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">P/E Ratio</p>
-                                <p className="font-semibold text-slate-900 dark:text-white">{stats.peRatio > 0 ? stats.peRatio.toFixed(2) : 'N/A'}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">52W High / Low</p>
-                                <p className="font-semibold text-slate-900 dark:text-white">
-                                    {stats.high52?.toFixed(0)} / {stats.low52?.toFixed(0)}
-                                </p>
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Div Yield</p>
-                                <p className="font-semibold text-green-600 dark:text-green-400">{(stats.divYield * 100).toFixed(2)}%</p>
-                            </div>
-                        </div>
-                    ) : (
-                        <p className="text-xs text-slate-400 italic">Data unavailable for this asset.</p>
-                    )}
-                </div>
+                <button
+                    onClick={() => {
+                        onClose()
+                        router.push(`/dashboard/holdings/analysis/${encodeURIComponent(asset.ticker)}`)
+                    }}
+                    className="w-full mb-6 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold text-sm hover:from-indigo-700 hover:to-violet-700 transition shadow-lg shadow-indigo-600/20"
+                >
+                    <Microscope className="h-4 w-4" />
+                    Ultimate Analysis
+                </button>
             )}
 
             {/* TRANSACTIONS */}
