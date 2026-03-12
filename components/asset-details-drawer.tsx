@@ -124,7 +124,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
         {/* BODY */}
         <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
             
-            {/* ULTIMATE ANALYSIS BUTTON */}
+            {/* ANALYSIS BUTTON */}
             {!asset.ticker.startsWith('COMMODITY:') && (
                 <button
                     onClick={() => {
@@ -134,7 +134,7 @@ export default function AssetDetailsDrawer({ asset, isOpen, onClose, onUpdate }:
                     className="w-full mb-6 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold text-sm hover:from-indigo-700 hover:to-violet-700 transition shadow-lg shadow-indigo-600/20"
                 >
                     <Microscope className="h-4 w-4" />
-                    Ultimate Analysis
+                    Analysis
                 </button>
             )}
 

@@ -18,8 +18,19 @@ const fmtCr = (n: number) => {
 }
 
 export default function DcfTab({ valuation, cashFlow, recommendationTrend, upgrades }: Props) {
-    // DCF inputs
-    const latestFCF = valuation?.freeCashFlow || (cashFlow?.[0]?.freeCashFlow ? cashFlow[0].freeCashFlow * 1e7 : 0)
+    // DCF inputs — get LATEST year cash flow (last entry, not first!)
+    // Screener values are in Cr (₹), multiply by 1e7 to convert to absolute ₹ for DCF math
+    // Use operating cash flow if FCF is negative/zero (more conservative)
+    const latestCF = cashFlow?.length > 0 ? cashFlow[cashFlow.length - 1] : null
+    const fcfFromScreener = latestCF
+        ? (latestCF.freeCashFlow > 0 ? latestCF.freeCashFlow : latestCF.operatingCF || 0)
+        : 0
+    const latestFCF = valuation?.freeCashFlow > 0
+        ? valuation.freeCashFlow                    // Yahoo (already absolute ₹)
+        : fcfFromScreener * 1e7                     // Screener Cr → absolute ₹
+    const latestFCFDisplay = valuation?.freeCashFlow > 0
+        ? valuation.freeCashFlow
+        : fcfFromScreener * 1e7
     const [growthRate, setGrowthRate] = useState(12)
     const [discountRate, setDiscountRate] = useState(11)
     const [terminalGrowth, setTerminalGrowth] = useState(3)

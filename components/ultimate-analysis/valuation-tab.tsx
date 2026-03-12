@@ -65,7 +65,7 @@ export default function ValuationTab({ data }: Props) {
         { label: 'ROE', value: fmtPct(data.roe), color: getColor('ROE', data.roe), highlight: highlights.includes('ROE') },
         { label: 'ROCE', value: fmtPct(data.roce), color: getColor('ROCE', data.roce) },
         { label: 'D/E', value: fmtNum(data.debtToEquity), color: getColor('D/E', data.debtToEquity), highlight: highlights.includes('D/E') },
-        { label: 'Div Yield', value: fmtPct(data.divYield * 100), color: getColor('Div Yield', data.divYield * 100) },
+        { label: 'Div Yield', value: fmtPct(data.divYield), color: getColor('Div Yield', data.divYield) },
         { label: 'Rev Growth', value: fmtPct(data.revenueGrowth), color: getColor('Rev Growth', data.revenueGrowth), highlight: highlights.includes('Rev Growth') },
         { label: 'OPM', value: fmtPct(data.operatingMargin), color: getColor('OPM', data.operatingMargin), highlight: highlights.includes('OPM') },
         { label: 'NPM', value: fmtPct(data.profitMargin), color: getColor('NPM', data.profitMargin) },

@@ -63,8 +63,10 @@ function MiniSparkline({ values, color }: { values: number[]; color: string }) {
 export default function QuarterlyTab({ quarters, earningsHistory }: Props) {
     if (!quarters?.length) return <p className="text-sm text-slate-400 py-8 text-center">No quarterly data available</p>
 
-    const revenueVals = quarters.map(q => q.revenue || 0)
-    const profitVals = quarters.map(q => q.netProfit || 0)
+    // Show newest first
+    const sortedQuarters = [...quarters].reverse()
+    const revenueVals = sortedQuarters.map(q => q.revenue || 0)
+    const profitVals = sortedQuarters.map(q => q.netProfit || 0)
 
     return (
         <div className="space-y-6">
@@ -96,7 +98,7 @@ export default function QuarterlyTab({ quarters, earningsHistory }: Props) {
                             </tr>
                         </thead>
                         <tbody>
-                            {quarters.map((q, i) => (
+                            {sortedQuarters.map((q, i) => (
                                 <tr key={i} className="border-b border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition">
                                     <td className="px-4 py-3 font-medium text-slate-800 dark:text-white whitespace-nowrap">{q.period}</td>
                                     <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmtNum(q.revenue)}</td>
@@ -109,8 +111,8 @@ export default function QuarterlyTab({ quarters, earningsHistory }: Props) {
                                         {fmtNum(q.netProfit)}
                                     </td>
                                     <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{q.eps !== undefined ? q.eps.toFixed(2) : '—'}</td>
-                                    <td className="px-4 py-3 text-right"><GrowthBadge value={yoyGrowth(q.revenue, quarters, i, 'revenue')} /></td>
-                                    <td className="px-4 py-3 text-right"><GrowthBadge value={qoqGrowth(q.netProfit, quarters, i, 'netProfit')} /></td>
+                                    <td className="px-4 py-3 text-right"><GrowthBadge value={yoyGrowth(q.revenue, sortedQuarters, i, 'revenue')} /></td>
+                                    <td className="px-4 py-3 text-right"><GrowthBadge value={qoqGrowth(q.netProfit, sortedQuarters, i, 'netProfit')} /></td>
                                 </tr>
                             ))}
                         </tbody>
