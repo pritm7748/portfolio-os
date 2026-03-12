@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Remove focus outline on Recharts chart elements */
+.recharts-wrapper,
+.recharts-surface,
+.recharts-wrapper svg,
+.recharts-wrapper svg:focus,
+.recharts-wrapper *:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
