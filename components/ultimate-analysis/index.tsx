@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import {
     BarChart3, TrendingUp, Landmark, Users, Target,
-    AlertTriangle, Brain, GitCompare
+    AlertTriangle, Brain, GitCompare, Sparkles
 } from 'lucide-react'
 import ValuationTab from './valuation-tab'
 import QuarterlyTab from './quarterly-tab'
@@ -13,6 +13,7 @@ import ShareholdingTab from './shareholding-tab'
 import DcfTab from './dcf-tab'
 import RedFlagsTab from './red-flags-tab'
 import ConcallTab from './concall-tab'
+import InsightsTab from './insights-tab'
 
 type Props = { ticker: string; data: any }
 
@@ -25,6 +26,7 @@ const TABS = [
     { id: 'dcf', label: 'DCF & Fair Value', icon: Target },
     { id: 'redflags', label: 'Red Flags', icon: AlertTriangle },
     { id: 'concall', label: 'Concall AI', icon: Brain },
+    { id: 'insights', label: 'Insights', icon: Sparkles },
 ]
 
 export default function UltimateAnalysis({ ticker, data }: Props) {
@@ -73,6 +75,11 @@ export default function UltimateAnalysis({ ticker, data }: Props) {
                 />}
                 {activeTab === 'redflags' && <RedFlagsTab data={data} />}
                 {activeTab === 'concall' && <ConcallTab ticker={ticker} concallLinks={data.concallLinks} />}
+                {activeTab === 'insights' && <InsightsTab
+                    ticker={ticker}
+                    companyName={data.valuation?.companyName || ticker}
+                    insightsStructure={data.insightsStructure}
+                />}
             </div>
         </div>
     )

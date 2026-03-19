@@ -48,17 +48,18 @@ export default function Header({ onMenuClick }: { onMenuClick: () => void }) {
 
   const getTitle = () => {
     if (pathname === '/dashboard') return 'Dashboard'
+    if (pathname.includes('/analytics')) return 'Analytics'
+    if (pathname.includes('/analysis')) return 'Stock & MTF Analysis'
     if (pathname.includes('/holdings')) return 'Holdings'
     if (pathname.includes('/charts')) return 'Advanced Charts'
     if (pathname.includes('/market')) return 'Market Status'
-    if (pathname.includes('/analytics')) return 'Analytics'
     if (pathname.includes('/reports')) return 'Reports'
     if (pathname.includes('/settings')) return 'Account Settings'
     if (pathname.includes('/watchlist')) return 'Watchlist'
     if (pathname.includes('/alerts')) return 'Alerts'
     if (pathname.includes('/dividends')) return 'Dividends'
-    if (pathname.includes('/goals')) return 'Goal Planning'
-    if (pathname.includes('/news')) return 'Market News'
+    if (pathname.includes('/goals')) return 'Goals & Planning'
+    if (pathname.includes('/news')) return 'News Center'
     if (pathname.includes('/pulse')) return 'Market Pulse'
     return 'Dashboard'
   }

@@ -390,6 +390,80 @@ function parseConcallLinks($: cheerio.CheerioAPI) {
     return links.slice(0, 5)
 }
 
+// ── Parse Insights KPI structure (names, units, periods) ──
+// Screener masks values behind login but exposes KPI labels and periods publicly
+function parseInsightsStructure($: cheerio.CheerioAPI) {
+    const section = $('section#insights')
+    if (!section.length) return { kpis: [], periods: [] }
+
+    const periods: string[] = []
+    const kpis: { name: string; unit: string }[] = []
+
+    // Get periods from header row
+    section.find('thead th, table tr:first-child th').each((_i, el) => {
+        const text = $(el).text().trim()
+        if (text && text.match(/\d{4}/)) periods.push(text)
+    })
+
+    // Get KPI names from row labels
+    // Screener puts KPI info in two ways:
+    // 1. First <td> with the name, or
+    // 2. Separate rows with just the label after data rows
+    const seenNames = new Set<string>()
+    section.find('tbody tr').each((_i, el) => {
+        const cells = $(el).find('td, th')
+        if (!cells.length) return
+
+        const firstCell = $(cells[0]).text().trim()
+        if (!firstCell) return
+
+        // Check if this looks like a KPI label row (has text but matches a name pattern)
+        // or a data row (first cell is text, rest are numbers/xx)
+        const allText = $(el).text().trim()
+
+        // KPI names often have the unit appended (e.g. "Total HeadcountNumber")
+        // Split name from unit
+        const unitPatterns = [
+            { regex: /(.+?)\s*(%\s*[·・].*|%)$/, unit: '%' },
+            { regex: /(.+?)(USD Billion|Rs \/ month|Million Sq\. Ft\.|Million|MW|BU|MMT|MMSCMD|Index|Rs\.?|INR|Cr|Number)(.*)$/, unitIdx: 2 },
+        ]
+
+        let name = firstCell
+        let unit = ''
+
+        for (const p of unitPatterns) {
+            if ('unitIdx' in p) {
+                const m = firstCell.match(p.regex)
+                if (m) {
+                    name = m[1].trim()
+                    unit = m[2].trim()
+                    break
+                }
+            } else {
+                const m = firstCell.match(p.regex)
+                if (m) {
+                    name = m[1].trim()
+                    unit = p.unit
+                    break
+                }
+            }
+        }
+
+        // Only add if it looks like a real KPI name:
+        // - Not a number
+        // - Not a masked value (xx.xx, xxx,xxx, x,xxx etc from Screener's paywall)
+        // - Has meaningful text (letters)
+        const isMasked = /^[x\d.,\s\-]+$/i.test(name)
+        const hasLetters = /[a-zA-Z]{2,}/.test(name)
+        if (name && hasLetters && !isMasked && name.length > 2 && !seenNames.has(name)) {
+            seenNames.add(name)
+            kpis.push({ name, unit })
+        }
+    })
+
+    return { kpis, periods }
+}
+
 // ════════════════════════════════════════════════════════════════
 //  SOURCE 3: YAHOO FINANCE (Fallback for analyst data, insiders)
 // ════════════════════════════════════════════════════════════════
@@ -633,6 +707,9 @@ export async function POST(request: Request) {
         // ── CONCALL LINKS (Screener) ──
         const concallLinks = $ ? parseConcallLinks($) : []
 
+        // ── INSIGHTS KPI STRUCTURE (Screener) ──
+        const insightsStructure = $ ? parseInsightsStructure($) : { kpis: [], periods: [] }
+
         return NextResponse.json({
             valuation,
             quarters,
@@ -660,6 +737,7 @@ export async function POST(request: Request) {
             })),
             peerSymbols,
             concallLinks,
+            insightsStructure,
             _sources: {
                 nse: !!nseDetails,
                 screener: !!$,
