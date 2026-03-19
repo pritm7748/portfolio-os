@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { Search, Loader2, TrendingUp, X, Microscope } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Search, Loader2, TrendingUp, X, Microscope, Building2, BarChart3 } from 'lucide-react'
 import UltimateAnalysis from '@/components/ultimate-analysis/index'
 
-// Popular Indian stocks for quick access
+// Popular stocks for quick access on empty state
 const POPULAR_STOCKS = [
     { symbol: 'RELIANCE', name: 'Reliance Industries' },
     { symbol: 'TCS', name: 'Tata Consultancy Services' },
@@ -28,6 +28,14 @@ const POPULAR_STOCKS = [
     { symbol: 'ASIANPAINT', name: 'Asian Paints' },
 ]
 
+type SearchResult = {
+    symbol: string
+    name: string
+    exchange: string
+    type: string
+    yahooSymbol: string
+}
+
 export default function AnalysisPage() {
     const [query, setQuery] = useState('')
     const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
@@ -35,7 +43,13 @@ export default function AnalysisPage() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [recentSearches, setRecentSearches] = useState<string[]>([])
+    const [suggestions, setSuggestions] = useState<SearchResult[]>([])
+    const [searchLoading, setSearchLoading] = useState(false)
+    const [showSuggestions, setShowSuggestions] = useState(false)
+    const [highlightIdx, setHighlightIdx] = useState(-1)
     const inputRef = useRef<HTMLInputElement>(null)
+    const debounceRef = useRef<NodeJS.Timeout | null>(null)
+    const dropdownRef = useRef<HTMLDivElement>(null)
 
     // Load recent searches from localStorage
     useEffect(() => {
@@ -45,10 +59,50 @@ export default function AnalysisPage() {
         } catch { }
     }, [])
 
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setShowSuggestions(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClick)
+        return () => document.removeEventListener('mousedown', handleClick)
+    }, [])
+
     const saveRecent = (ticker: string) => {
         const updated = [ticker, ...recentSearches.filter(s => s !== ticker)].slice(0, 6)
         setRecentSearches(updated)
         try { localStorage.setItem('analysis-recent', JSON.stringify(updated)) } catch { }
+    }
+
+    // Debounced Yahoo search
+    const searchYahoo = useCallback((q: string) => {
+        if (debounceRef.current) clearTimeout(debounceRef.current)
+        if (q.length < 1) {
+            setSuggestions([])
+            setShowSuggestions(false)
+            return
+        }
+        setSearchLoading(true)
+        debounceRef.current = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/stock-search?q=${encodeURIComponent(q)}`)
+                const json = await res.json()
+                setSuggestions(json.results || [])
+                setShowSuggestions(true)
+                setHighlightIdx(-1)
+            } catch {
+                setSuggestions([])
+            } finally {
+                setSearchLoading(false)
+            }
+        }, 300) // 300ms debounce
+    }, [])
+
+    const handleQueryChange = (val: string) => {
+        setQuery(val)
+        searchYahoo(val)
     }
 
     const analyzeStock = async (ticker: string) => {
@@ -60,6 +114,8 @@ export default function AnalysisPage() {
         setError('')
         setData(null)
         setQuery('')
+        setSuggestions([])
+        setShowSuggestions(false)
         saveRecent(cleanTicker)
 
         try {
@@ -79,16 +135,29 @@ export default function AnalysisPage() {
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            setShowSuggestions(false)
+            return
+        }
+        if (showSuggestions && suggestions.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setHighlightIdx(prev => Math.min(prev + 1, suggestions.length - 1))
+                return
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setHighlightIdx(prev => Math.max(prev - 1, -1))
+                return
+            }
+            if (e.key === 'Enter' && highlightIdx >= 0) {
+                e.preventDefault()
+                analyzeStock(suggestions[highlightIdx].symbol)
+                return
+            }
+        }
         if (e.key === 'Enter') analyzeStock(query)
     }
-
-    // Filter suggestions
-    const suggestions = query.length >= 1
-        ? POPULAR_STOCKS.filter(s =>
-            s.symbol.toLowerCase().includes(query.toLowerCase()) ||
-            s.name.toLowerCase().includes(query.toLowerCase())
-        ).slice(0, 6)
-        : []
 
     const clearAnalysis = () => {
         setSelectedTicker(null)
@@ -97,11 +166,38 @@ export default function AnalysisPage() {
         setTimeout(() => inputRef.current?.focus(), 100)
     }
 
+    // Type icon helper
+    const TypeIcon = ({ type }: { type: string }) => {
+        if (type === 'MUTUALFUND') return <BarChart3 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+        if (type === 'ETF') return <Building2 className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+        return <TrendingUp className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+    }
+
+    const typeBadge = (type: string) => {
+        const labels: Record<string, string> = {
+            EQUITY: 'Stock',
+            MUTUALFUND: 'MF',
+            ETF: 'ETF',
+            INDEX: 'Index',
+        }
+        const colors: Record<string, string> = {
+            EQUITY: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400',
+            MUTUALFUND: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400',
+            ETF: 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400',
+            INDEX: 'bg-slate-100 dark:bg-slate-800 text-slate-500',
+        }
+        return (
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${colors[type] || colors.EQUITY}`}>
+                {labels[type] || type}
+            </span>
+        )
+    }
+
     return (
         <div className="min-h-screen">
 
             {/* Search Bar */}
-            <div className="relative mb-6">
+            <div className="relative mb-6" ref={dropdownRef}>
                 <div className="flex gap-2">
                     <div className="relative flex-1">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400" />
@@ -109,15 +205,21 @@ export default function AnalysisPage() {
                             ref={inputRef}
                             type="text"
                             value={query}
-                            onChange={e => setQuery(e.target.value)}
+                            onChange={e => handleQueryChange(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder="Search stock by symbol or name (e.g., TCS, Reliance)..."
-                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 transition"
+                            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                            placeholder="Search any stock, ETF, or mutual fund..."
+                            className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 transition"
                         />
-                        {query && (
-                            <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600">
-                                <X className="h-3.5 w-3.5" />
-                            </button>
+                        {(query || searchLoading) && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                {searchLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />}
+                                {query && (
+                                    <button onClick={() => { setQuery(''); setSuggestions([]); setShowSuggestions(false) }} className="p-0.5 text-slate-400 hover:text-slate-600">
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
+                            </div>
                         )}
                     </div>
                     <button
@@ -130,22 +232,30 @@ export default function AnalysisPage() {
                     </button>
                 </div>
 
-                {/* Suggestions dropdown */}
-                {suggestions.length > 0 && !selectedTicker && (
-                    <div className="absolute left-0 top-full z-30 mt-1 w-full max-w-lg rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl overflow-hidden">
-                        {suggestions.map(s => (
+                {/* Live search suggestions dropdown */}
+                {showSuggestions && suggestions.length > 0 && !selectedTicker && (
+                    <div className="absolute left-0 top-full z-30 mt-1 w-full max-w-xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl overflow-hidden">
+                        {suggestions.map((s, i) => (
                             <button
-                                key={s.symbol}
+                                key={`${s.yahooSymbol}-${i}`}
                                 onClick={() => analyzeStock(s.symbol)}
-                                className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition"
+                                className={`flex items-center gap-3 w-full px-4 py-2.5 text-left transition ${
+                                    i === highlightIdx
+                                        ? 'bg-indigo-50 dark:bg-indigo-900/20'
+                                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'
+                                }`}
                             >
-                                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                                    <TrendingUp className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                                <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center shrink-0">
+                                    <TypeIcon type={s.type} />
                                 </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">{s.symbol}</p>
-                                    <p className="text-[11px] text-slate-500">{s.name}</p>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-sm font-semibold text-slate-800 dark:text-white">{s.symbol}</p>
+                                        {typeBadge(s.type)}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 truncate">{s.name}</p>
                                 </div>
+                                <span className="text-[10px] text-slate-400 shrink-0">{s.exchange}</span>
                             </button>
                         ))}
                     </div>
