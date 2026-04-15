@@ -271,24 +271,67 @@ export function useNews(names: string[]) {
     })
 }
 
+const PULSE_CACHE_KEY = 'pulse-cache'
+const PULSE_CACHE_TTL = 6 * 60 * 60 * 1000 // 6 hours
+
+function loadPulseCache(tickerKey: string) {
+    try {
+        const raw = localStorage.getItem(PULSE_CACHE_KEY)
+        if (!raw) return null
+        const cached = JSON.parse(raw)
+        if (cached.key === tickerKey && Date.now() - cached.ts < PULSE_CACHE_TTL) {
+            return cached.data
+        }
+    } catch { }
+    return null
+}
+
+function savePulseCache(tickerKey: string, data: any) {
+    try {
+        localStorage.setItem(PULSE_CACHE_KEY, JSON.stringify({
+            key: tickerKey, ts: Date.now(), data
+        }))
+    } catch { }
+}
+
 export function usePulse(tickers: string[]) {
     const sortedTickers = tickers.slice().sort().join(',')
     const [data, setData] = useState<any>({ macro: [], shockers: [], events: [], publications: [] })
     const [isLoading, setIsLoading] = useState(true)
+    const [isCached, setIsCached] = useState(false)
     const [progress, setProgress] = useState<{ done: number; total: number; label: string } | null>(null)
     const fetchedRef = useRef('')
+    const [refreshCounter, setRefreshCounter] = useState(0)
+
+    const forceRefresh = () => setRefreshCounter(c => c + 1)
 
     useEffect(() => {
-        // Skip if same tickers already fetched
-        if (fetchedRef.current === sortedTickers && data.macro?.length > 0) {
+        // Skip if same tickers already fetched in-memory
+        if (fetchedRef.current === sortedTickers && data.macro?.length > 0 && refreshCounter === 0) {
             setIsLoading(false)
             return
         }
 
+        // Try localStorage cache first (unless forced refresh)
+        if (refreshCounter === 0) {
+            const cached = loadPulseCache(sortedTickers)
+            if (cached) {
+                setData(cached)
+                setIsLoading(false)
+                setIsCached(true)
+                fetchedRef.current = sortedTickers
+                return
+            }
+        }
+
         const controller = new AbortController()
         setIsLoading(true)
+        setIsCached(false)
         setData({ macro: [], shockers: [], events: [], publications: [] })
         setProgress({ done: 0, total: 0, label: 'Starting...' })
+
+        // Accumulator for final cache save
+        const accumulated = { macro: [] as any[], shockers: [] as any[], events: [] as any[], publications: [] as any[] }
 
         const run = async () => {
             try {
@@ -303,7 +346,6 @@ export function usePulse(tickers: string[]) {
                 const decoder = new TextDecoder()
                 let buffer = ''
 
-                // Dedup helper for events
                 const seenEvents = new Set<string>()
                 const eventKey = (e: any) => `${e.ticker}-${e.type}-${(e.date || '').split('T')[0]}`
 
@@ -313,7 +355,7 @@ export function usePulse(tickers: string[]) {
 
                     buffer += decoder.decode(value, { stream: true })
                     const lines = buffer.split('\n')
-                    buffer = lines.pop() || '' // Keep incomplete line in buffer
+                    buffer = lines.pop() || ''
 
                     for (const line of lines) {
                         if (!line.trim()) continue
@@ -323,13 +365,12 @@ export function usePulse(tickers: string[]) {
                             if (chunk.type === 'progress') {
                                 setProgress(chunk.data)
                             } else if (chunk.type === 'macro') {
+                                accumulated.macro = chunk.data
                                 setData((prev: any) => ({ ...prev, macro: chunk.data }))
                             } else if (chunk.type === 'shockers') {
-                                setData((prev: any) => ({
-                                    ...prev,
-                                    shockers: [...prev.shockers, ...chunk.data]
-                                        .sort((a: any, b: any) => parseFloat(b.ratio) - parseFloat(a.ratio))
-                                }))
+                                accumulated.shockers = [...accumulated.shockers, ...chunk.data]
+                                    .sort((a: any, b: any) => parseFloat(b.ratio) - parseFloat(a.ratio))
+                                setData((prev: any) => ({ ...prev, shockers: accumulated.shockers }))
                             } else if (chunk.type === 'events') {
                                 const newEvents = chunk.data.filter((e: any) => {
                                     const k = eventKey(e)
@@ -337,20 +378,17 @@ export function usePulse(tickers: string[]) {
                                     seenEvents.add(k)
                                     return true
                                 })
-                                setData((prev: any) => ({
-                                    ...prev,
-                                    events: [...prev.events, ...newEvents]
-                                        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                                }))
+                                accumulated.events = [...accumulated.events, ...newEvents]
+                                    .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                setData((prev: any) => ({ ...prev, events: accumulated.events }))
                             } else if (chunk.type === 'publications') {
-                                setData((prev: any) => ({
-                                    ...prev,
-                                    publications: [...prev.publications, ...chunk.data]
-                                        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                        .slice(0, 100)
-                                }))
+                                accumulated.publications = [...accumulated.publications, ...chunk.data]
+                                    .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                    .slice(0, 100)
+                                setData((prev: any) => ({ ...prev, publications: accumulated.publications }))
                             } else if (chunk.type === 'done') {
                                 fetchedRef.current = sortedTickers
+                                savePulseCache(sortedTickers, accumulated)
                             }
                         } catch { /* skip malformed line */ }
                     }
@@ -367,9 +405,9 @@ export function usePulse(tickers: string[]) {
 
         run()
         return () => controller.abort()
-    }, [sortedTickers])
+    }, [sortedTickers, refreshCounter])
 
-    return { data, isLoading, progress }
+    return { data, isLoading, isCached, progress, forceRefresh }
 }
 
 export function useActiveAssets() {

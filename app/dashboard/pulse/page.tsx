@@ -7,7 +7,7 @@ import {
     Loader2, Calendar, TrendingUp, TrendingDown, Zap, Globe, Activity,
     Gift, FileText, ChevronDown, ChevronUp,
     Scissors, Users, Landmark, ExternalLink,
-    DollarSign, PieChart, ArrowDownRight
+    DollarSign, PieChart, ArrowDownRight, RefreshCw, Filter, Search, X
 } from 'lucide-react'
 
 // ════════════════════════════════════════════════════════════════
@@ -83,7 +83,52 @@ export default function PulsePage() {
     }, [activeAssets])
 
     // Pass CLEAN ticker list to Pulse API (now streaming)
-    const { data, isLoading, progress } = usePulse(activeTickers)
+    const { data, isLoading, isCached, progress, forceRefresh } = usePulse(activeTickers)
+
+    // Filings filters
+    const [filingsTickerFilter, setFilingsTickerFilter] = useState<string>('')
+    const [filingsTypeFilter, setFilingsTypeFilter] = useState<string>('all')
+    const [tickerSearch, setTickerSearch] = useState('')
+
+    // Get unique tickers and classify filing types from publications
+    const filingsTickers = useMemo(() => {
+        if (!data?.publications) return []
+        return [...new Set(data.publications.map((p: any) => p.ticker))].sort()
+    }, [data?.publications])
+
+    const FILING_TYPES = [
+        { key: 'all', label: 'All' },
+        { key: 'dividend', label: 'Dividends' },
+        { key: 'board', label: 'Board Changes' },
+        { key: 'result', label: 'Results' },
+        { key: 'agm', label: 'AGM/EGM' },
+        { key: 'rights', label: 'Rights/Bonus' },
+        { key: 'other', label: 'Other' },
+    ]
+
+    const classifyFiling = (title: string): string => {
+        const t = (title || '').toLowerCase()
+        if (t.includes('dividend')) return 'dividend'
+        if (t.includes('board') || t.includes('director') || t.includes('appointment') || t.includes('resignation') || t.includes('cessation')) return 'board'
+        if (t.includes('result') || t.includes('financial') || t.includes('quarter') || t.includes('annual') || t.includes('earning')) return 'result'
+        if (t.includes('agm') || t.includes('egm') || t.includes('general meeting') || t.includes('postal ballot')) return 'agm'
+        if (t.includes('rights') || t.includes('bonus') || t.includes('split') || t.includes('buyback')) return 'rights'
+        return 'other'
+    }
+
+    const filteredPublications = useMemo(() => {
+        if (!data?.publications) return []
+        return data.publications.filter((pub: any) => {
+            if (filingsTickerFilter && pub.ticker !== filingsTickerFilter) return false
+            if (filingsTypeFilter !== 'all' && classifyFiling(pub.title) !== filingsTypeFilter) return false
+            return true
+        })
+    }, [data?.publications, filingsTickerFilter, filingsTypeFilter])
+
+    const filteredTickerOptions = useMemo((): string[] => {
+        if (!tickerSearch) return filingsTickers as string[]
+        return (filingsTickers as string[]).filter((t: string) => t.toLowerCase().includes(tickerSearch.toLowerCase()))
+    }, [filingsTickers, tickerSearch])
 
     return (
         <div className="space-y-8 pb-20">
@@ -112,6 +157,19 @@ export default function PulsePage() {
                             />
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* CACHED BADGE + REFRESH */}
+            {!isLoading && isCached && (
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                    <span className="text-xs text-slate-400">Showing cached data</span>
+                    <button
+                        onClick={forceRefresh}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition"
+                    >
+                        <RefreshCw className="h-3 w-3" /> Refresh
+                    </button>
                 </div>
             )}
 
@@ -198,13 +256,77 @@ export default function PulsePage() {
                     </div>
                 </Section>
 
-                {/* COMPANY FILINGS */}
+                {/* COMPANY FILINGS — with filters */}
                 <Section title="Company Filings" icon={FileText} badge={data?.publications?.length || 0} isOpen={openSection === 'filings'} onToggle={() => toggleSection('filings')}>
+                    {/* FILTERS */}
+                    {data?.publications?.length > 0 && (
+                        <div className="space-y-3 mb-4">
+                            {/* Type filter chips */}
+                            <div className="flex flex-wrap gap-1.5">
+                                {FILING_TYPES.map(ft => (
+                                    <button
+                                        key={ft.key}
+                                        onClick={() => setFilingsTypeFilter(ft.key)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                                            filingsTypeFilter === ft.key
+                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700'
+                                        }`}
+                                    >
+                                        {ft.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Ticker filter */}
+                            <div className="relative">
+                                <div className="flex items-center gap-2">
+                                    <div className="relative flex-1">
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+                                        <input
+                                            type="text"
+                                            value={tickerSearch}
+                                            onChange={e => setTickerSearch(e.target.value)}
+                                            placeholder="Filter by stock..."
+                                            className="w-full pl-7 pr-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                        />
+                                    </div>
+                                    {filingsTickerFilter && (
+                                        <button
+                                            onClick={() => { setFilingsTickerFilter(''); setTickerSearch('') }}
+                                            className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-[11px] font-semibold"
+                                        >
+                                            {filingsTickerFilter} <X className="h-3 w-3" />
+                                        </button>
+                                    )}
+                                </div>
+                                {tickerSearch && !filingsTickerFilter && filteredTickerOptions.length > 0 && (
+                                    <div className="absolute z-10 mt-1 left-0 w-full max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
+                                        {filteredTickerOptions.map((t: string) => (
+                                            <button
+                                                key={t}
+                                                onClick={() => { setFilingsTickerFilter(t); setTickerSearch('') }}
+                                                className="w-full text-left px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition"
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* FILTERED RESULTS */}
                     <div className="space-y-3">
-                        {!data?.publications || data.publications.length === 0 ? (
-                            <div className="text-center py-8"><p className="text-sm text-slate-400">No recent filings found.</p></div>
+                        {filteredPublications.length === 0 ? (
+                            <div className="text-center py-8">
+                                <p className="text-sm text-slate-400">
+                                    {data?.publications?.length > 0 ? 'No filings match your filters.' : 'No recent filings found.'}
+                                </p>
+                            </div>
                         ) : (
-                            data.publications.map((pub: any, i: number) => (
+                            filteredPublications.map((pub: any, i: number) => (
                                 <div key={i} className="rounded-lg border border-slate-100 bg-white p-3 shadow-sm dark:bg-slate-900 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 transition-colors">
                                     <div className="flex justify-between items-start gap-2 mb-1.5">
                                         <div className="flex-1 min-w-0">
@@ -212,6 +334,9 @@ export default function PulsePage() {
                                                 <h4 className="font-bold text-sm text-slate-900 dark:text-white">{pub.ticker}</h4>
                                                 <span className="shrink-0 text-[10px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded dark:bg-slate-800">
                                                     {new Date(pub.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                                </span>
+                                                <span className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400 uppercase">
+                                                    {classifyFiling(pub.title)}
                                                 </span>
                                             </div>
                                             <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">{pub.title}</p>
