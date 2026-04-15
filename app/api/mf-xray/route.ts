@@ -1,5 +1,8 @@
 // app/api/mf-xray/route.ts — Groww SSR scraping for Indian MF holdings
+// with Supabase caching for authenticated users
 import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import crypto from 'crypto'
 
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -167,15 +170,57 @@ async function fetchHoldingsFromGroww(slug: string, originalTicker: string): Pro
     return result
 }
 
+// ═══════════════════════════════════════════════════
+//  CACHING — Supabase-based for authenticated users
+//  Cache key = hash(sorted tickers + names)
+//  Invalidated when portfolio MF tickers change
+// ═══════════════════════════════════════════════════
+
+function computeCacheKey(tickers: string[], names: Record<string, string>): string {
+    const payload = tickers
+        .sort()
+        .map(t => `${t}:${names[t] || ''}`)
+        .join('|')
+    return crypto.createHash('md5').update(payload).digest('hex')
+}
+
 export async function POST(request: Request) {
     try {
-        const { tickers, names } = await request.json()
+        const { tickers, names, forceRefresh } = await request.json()
 
         if (!tickers || !Array.isArray(tickers) || tickers.length === 0) {
             return NextResponse.json({ error: 'No tickers provided' }, { status: 400 })
         }
 
         const nameMap: Record<string, string> = names || {}
+        const cacheHash = computeCacheKey(tickers, nameMap)
+
+        // ── Try to load from Supabase cache ──
+        let userId: string | null = null
+        try {
+            const supabase = await createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            userId = user?.id || null
+
+            if (userId && !forceRefresh) {
+                const { data: cached } = await supabase
+                    .from('mf_xray_cache')
+                    .select('data, portfolio_hash, updated_at')
+                    .eq('user_id', userId)
+                    .single()
+
+                if (cached && cached.portfolio_hash === cacheHash) {
+                    console.log(`[MF-XRAY] Cache hit for user ${userId.substring(0, 8)}...`)
+                    return NextResponse.json({ funds: cached.data, cached: true })
+                }
+                console.log(`[MF-XRAY] Cache miss — hash changed or no cache`)
+            }
+        } catch (e) {
+            // Auth or cache check failed — proceed without cache
+            console.log('[MF-XRAY] Cache check skipped:', (e as any)?.message)
+        }
+
+        // ── Fetch fresh data from Groww ──
         const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
         const funds: FundXray[] = []
 
@@ -206,7 +251,25 @@ export async function POST(request: Request) {
             await delay(800)
         }
 
-        return NextResponse.json({ funds })
+        // ── Save to cache for authenticated users ──
+        if (userId && funds.some(f => f.holdings.length > 0)) {
+            try {
+                const supabase = await createClient()
+                await supabase
+                    .from('mf_xray_cache')
+                    .upsert({
+                        user_id: userId,
+                        portfolio_hash: cacheHash,
+                        data: funds,
+                        updated_at: new Date().toISOString(),
+                    }, { onConflict: 'user_id' })
+                console.log(`[MF-XRAY] Cache saved for user ${userId.substring(0, 8)}...`)
+            } catch (e) {
+                console.log('[MF-XRAY] Cache save failed:', (e as any)?.message)
+            }
+        }
+
+        return NextResponse.json({ funds, cached: false })
     } catch (e: any) {
         return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 })
     }
