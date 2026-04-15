@@ -1,5 +1,5 @@
-// app/api/pulse/route.ts
-import { NextResponse } from 'next/server'
+// app/api/pulse/route.ts — Streaming SSE version
+// Sends data progressively as each section completes
 import { NseIndia } from 'stock-nse-india'
 
 // ════════════════════════════════════════════════════════════════
@@ -83,18 +83,13 @@ function parseDate(dateStr: string): Date | null {
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // ════════════════════════════════════════════════════════════════
-//  MAIN HANDLER
+//  STREAMING HANDLER — Server-Sent Events
 // ════════════════════════════════════════════════════════════════
 
 export async function POST(request: Request) {
     try {
         const { tickers } = await request.json()
         const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
-
-        const events: any[] = []
-        const publications: any[] = []
-        const shockers: any[] = []
-        const macro: any[] = []
 
         const now = Date.now()
         const sevenDaysAgo = new Date(now - 7 * 86400000)
@@ -104,181 +99,215 @@ export async function POST(request: Request) {
         const indianTickers = uniqueTickers.filter(isIndianStock)
         const nonIndianTickers = uniqueTickers.filter(t => !isIndianStock(t))
 
-        // ═══════════════════════════════════════════════════════
-        //  PHASE 1: Macro + non-Indian (parallel, no blocking)
-        // ═══════════════════════════════════════════════════════
+        const encoder = new TextEncoder()
 
-        const nse = new NseIndia()
+        const stream = new ReadableStream({
+            async start(controller) {
+                // Helper to send a chunk
+                const send = (type: string, data: any) => {
+                    const chunk = JSON.stringify({ type, data }) + '\n'
+                    controller.enqueue(encoder.encode(chunk))
+                }
 
-        const macroPromise = Promise.all(MACRO_TICKERS.map(async (m) => {
-            const quote = await fetchYahooQuote(m.symbol)
-            if (quote) {
-                macro.push({
-                    name: m.name, price: quote.price, change: quote.change,
-                    type: m.type, prefix: m.prefix, suffix: m.suffix
-                })
-            }
-        }))
+                // Send progress updates
+                const progress = (done: number, total: number, label: string) => {
+                    send('progress', { done, total, label })
+                }
 
-        const nonIndianPromise = Promise.all(nonIndianTickers.map(async (ticker) => {
-            const quote = await fetchYahooQuote(ticker)
-            if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
-                shockers.push({
-                    ticker: ticker.replace('.NS', '').replace('.BO', ''),
-                    volume: quote.volume, avgVolume: quote.avgVolume,
-                    ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
-                })
-            }
-        }))
+                const totalSteps = indianTickers.length + nonIndianTickers.length + MACRO_TICKERS.length
+                let completedSteps = 0
 
-        // ═══════════════════════════════════════════════════════
-        //  PHASE 2: NSE data — batches of 3
-        //  Volume Shockers + Events + Publications
-        // ═══════════════════════════════════════════════════════
+                // ═══════════════════════════════════════════════════════
+                //  PHASE 1: Macro — send immediately when done
+                // ═══════════════════════════════════════════════════════
 
-        const nsePromise = (async () => {
-            if (indianTickers.length === 0) return
+                progress(0, totalSteps, 'Fetching macro data...')
 
-            const BATCH = 3
-            const BATCH_DELAY = 400
-
-            for (let i = 0; i < indianTickers.length; i += BATCH) {
-                const batch = indianTickers.slice(i, i + BATCH)
-
-                await Promise.all(batch.map(async (ticker) => {
-                    const sym = toNSESymbol(ticker)
-
-                    // ── VOLUME SHOCKER (NSE trade info + Yahoo avg volume) ──
-                    try {
-                        const [tradeInfo, details, yahoo] = await Promise.all([
-                            nse.getEquityTradeInfo(sym),
-                            nse.getEquityDetails(sym),
-                            fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
-                        ])
-
-                        const volume = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
-                        const lastPrice = details?.priceInfo?.lastPrice || 0
-                        const previousClose = details?.priceInfo?.previousClose || 0
-                        const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
-                        const avgVolume = yahoo?.avgVolume || volume
-                        const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0
-
-                        if (volumeRatio > 2.5 && volume > 10000) {
-                            shockers.push({
-                                ticker: sym, volume, avgVolume,
-                                ratio: volumeRatio.toFixed(1) + 'x', change
-                            })
-                        }
-                    } catch (e) { /* skip */ }
-
-                    // ── EVENTS (corporate actions + board meetings + financials) ──
-                    try {
-                        const corpInfo = await nse.getEquityCorporateInfo(sym)
-
-                        // Corporate Actions
-                        const actions = corpInfo?.corporate_actions?.data || []
-                        actions.forEach((action: any) => {
-                            const exDate = parseDate(action.exdate)
-                            if (!exDate || exDate < sevenDaysAgo || exDate > ninetyDaysFromNow) return
-
-                            const purpose = (action.purpose || '').toLowerCase()
-                            let type = 'Corporate Action', desc = action.purpose || 'Corporate Action'
-
-                            if (purpose.includes('dividend')) { type = 'Dividend'; desc = `Ex-Dividend: ${action.purpose}` }
-                            else if (purpose.includes('split') || purpose.includes('sub-division')) { type = 'Split'; desc = `Stock Split: ${action.purpose}` }
-                            else if (purpose.includes('bonus')) { type = 'Bonus'; desc = `Bonus Issue: ${action.purpose}` }
-                            else if (purpose.includes('rights')) { type = 'Rights'; desc = `Rights Issue: ${action.purpose}` }
-                            else if (purpose.includes('buyback')) { type = 'Buyback'; desc = `Buyback: ${action.purpose}` }
-
-                            events.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 100 ? desc.substring(0, 97) + '...' : desc })
+                const macroResults: any[] = []
+                await Promise.all(MACRO_TICKERS.map(async (m) => {
+                    const quote = await fetchYahooQuote(m.symbol)
+                    if (quote) {
+                        macroResults.push({
+                            name: m.name, price: quote.price, change: quote.change,
+                            type: m.type, prefix: m.prefix, suffix: m.suffix
                         })
-
-                        // Board Meetings
-                        const meetings = corpInfo?.borad_meeting?.data || []
-                        meetings.forEach((meeting: any) => {
-                            const meetingDate = parseDate(meeting.meetingdate)
-                            if (!meetingDate || meetingDate < sevenDaysAgo || meetingDate > ninetyDaysFromNow) return
-                            const purpose = meeting.purpose || 'Board Meeting'
-                            events.push({
-                                ticker: sym, type: 'Board Meeting',
-                                date: meetingDate.toISOString(),
-                                desc: purpose.length > 100 ? purpose.substring(0, 97) + '...' : purpose
-                            })
-                        })
-
-                        // Financial Results → Earnings
-                        const results = corpInfo?.financial_results?.data || []
-                        results.slice(0, 1).forEach((result: any) => {
-                            const toDate = parseDate(result.to_date)
-                            if (!toDate || toDate < sevenDaysAgo) return
-                            events.push({
-                                ticker: sym, type: 'Earnings',
-                                date: toDate.toISOString(),
-                                desc: `Results: Income ₹${Number(result.income || 0).toLocaleString('en-IN')}Cr | EPS ₹${result.reDilEPS || 'N/A'}`
-                            })
-                        })
-                    } catch (e) { /* skip */ }
-
-                    // ── PUBLICATIONS (NSE corporate announcements with PDF links) ──
-                    try {
-                        const annData: any = await nse.getData(
-                            `https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(sym)}`
-                        )
-                        const announcements = Array.isArray(annData) ? annData : []
-
-                        let count = 0
-                        for (const ann of announcements) {
-                            if (count >= PUB_MAX_PER_TICKER) break
-
-                            const annDate = parseDate(ann.an_dt || ann.dt)
-                            if (!annDate || annDate < pubCutoff) continue
-
-                            publications.push({
-                                ticker: sym,
-                                title: ann.desc || ann.subject || 'Announcement',
-                                date: annDate.toISOString(),
-                                pdfUrl: ann.attchmntFile || null,
-                                companyName: ann.sm_name || sym,
-                            })
-                            count++
-                        }
-                    } catch (e) { /* skip */ }
+                    }
+                    completedSteps++
                 }))
+                send('macro', macroResults)
 
-                if (i + BATCH < indianTickers.length) await delay(BATCH_DELAY)
+                // ═══════════════════════════════════════════════════════
+                //  PHASE 2: Non-Indian volume shockers
+                // ═══════════════════════════════════════════════════════
+
+                if (nonIndianTickers.length > 0) {
+                    progress(completedSteps, totalSteps, 'Checking international stocks...')
+                    const nonIndianShockers: any[] = []
+
+                    await Promise.all(nonIndianTickers.map(async (ticker) => {
+                        const quote = await fetchYahooQuote(ticker)
+                        if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
+                            nonIndianShockers.push({
+                                ticker: ticker.replace('.NS', '').replace('.BO', ''),
+                                volume: quote.volume, avgVolume: quote.avgVolume,
+                                ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
+                            })
+                        }
+                        completedSteps++
+                    }))
+
+                    if (nonIndianShockers.length > 0) {
+                        send('shockers', nonIndianShockers)
+                    }
+                }
+
+                // ═══════════════════════════════════════════════════════
+                //  PHASE 3: NSE data — batches of 3, stream each batch
+                // ═══════════════════════════════════════════════════════
+
+                if (indianTickers.length > 0) {
+                    const nse = new NseIndia()
+                    const BATCH = 3
+                    const BATCH_DELAY = 400
+
+                    for (let i = 0; i < indianTickers.length; i += BATCH) {
+                        const batch = indianTickers.slice(i, i + BATCH)
+                        const batchShockers: any[] = []
+                        const batchEvents: any[] = []
+                        const batchPubs: any[] = []
+
+                        progress(completedSteps, totalSteps, `Scanning ${batch.join(', ')}...`)
+
+                        await Promise.all(batch.map(async (ticker) => {
+                            const sym = toNSESymbol(ticker)
+
+                            // ── VOLUME SHOCKER ──
+                            try {
+                                const [tradeInfo, details, yahoo] = await Promise.all([
+                                    nse.getEquityTradeInfo(sym),
+                                    nse.getEquityDetails(sym),
+                                    fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
+                                ])
+
+                                const volume = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
+                                const lastPrice = details?.priceInfo?.lastPrice || 0
+                                const previousClose = details?.priceInfo?.previousClose || 0
+                                const change = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0
+                                const avgVolume = yahoo?.avgVolume || volume
+                                const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0
+
+                                if (volumeRatio > 2.5 && volume > 10000) {
+                                    batchShockers.push({
+                                        ticker: sym, volume, avgVolume,
+                                        ratio: volumeRatio.toFixed(1) + 'x', change
+                                    })
+                                }
+                            } catch (e) { /* skip */ }
+
+                            // ── EVENTS ──
+                            try {
+                                const corpInfo = await nse.getEquityCorporateInfo(sym)
+
+                                // Corporate Actions
+                                const actions = corpInfo?.corporate_actions?.data || []
+                                actions.forEach((action: any) => {
+                                    const exDate = parseDate(action.exdate)
+                                    if (!exDate || exDate < sevenDaysAgo || exDate > ninetyDaysFromNow) return
+
+                                    const purpose = (action.purpose || '').toLowerCase()
+                                    let type = 'Corporate Action', desc = action.purpose || 'Corporate Action'
+
+                                    if (purpose.includes('dividend')) { type = 'Dividend'; desc = `Ex-Dividend: ${action.purpose}` }
+                                    else if (purpose.includes('split') || purpose.includes('sub-division')) { type = 'Split'; desc = `Stock Split: ${action.purpose}` }
+                                    else if (purpose.includes('bonus')) { type = 'Bonus'; desc = `Bonus Issue: ${action.purpose}` }
+                                    else if (purpose.includes('rights')) { type = 'Rights'; desc = `Rights Issue: ${action.purpose}` }
+                                    else if (purpose.includes('buyback')) { type = 'Buyback'; desc = `Buyback: ${action.purpose}` }
+
+                                    batchEvents.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 100 ? desc.substring(0, 97) + '...' : desc })
+                                })
+
+                                // Board Meetings
+                                const meetings = corpInfo?.borad_meeting?.data || []
+                                meetings.forEach((meeting: any) => {
+                                    const meetingDate = parseDate(meeting.meetingdate)
+                                    if (!meetingDate || meetingDate < sevenDaysAgo || meetingDate > ninetyDaysFromNow) return
+                                    const purpose = meeting.purpose || 'Board Meeting'
+                                    batchEvents.push({
+                                        ticker: sym, type: 'Board Meeting',
+                                        date: meetingDate.toISOString(),
+                                        desc: purpose.length > 100 ? purpose.substring(0, 97) + '...' : purpose
+                                    })
+                                })
+
+                                // Financial Results → Earnings
+                                const results = corpInfo?.financial_results?.data || []
+                                results.slice(0, 1).forEach((result: any) => {
+                                    const toDate = parseDate(result.to_date)
+                                    if (!toDate || toDate < sevenDaysAgo) return
+                                    batchEvents.push({
+                                        ticker: sym, type: 'Earnings',
+                                        date: toDate.toISOString(),
+                                        desc: `Results: Income ₹${Number(result.income || 0).toLocaleString('en-IN')}Cr | EPS ₹${result.reDilEPS || 'N/A'}`
+                                    })
+                                })
+                            } catch (e) { /* skip */ }
+
+                            // ── PUBLICATIONS ──
+                            try {
+                                const annData: any = await nse.getData(
+                                    `https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(sym)}`
+                                )
+                                const announcements = Array.isArray(annData) ? annData : []
+
+                                let count = 0
+                                for (const ann of announcements) {
+                                    if (count >= PUB_MAX_PER_TICKER) break
+
+                                    const annDate = parseDate(ann.an_dt || ann.dt)
+                                    if (!annDate || annDate < pubCutoff) continue
+
+                                    batchPubs.push({
+                                        ticker: sym,
+                                        title: ann.desc || ann.subject || 'Announcement',
+                                        date: annDate.toISOString(),
+                                        pdfUrl: ann.attchmntFile || null,
+                                        companyName: ann.sm_name || sym,
+                                    })
+                                    count++
+                                }
+                            } catch (e) { /* skip */ }
+
+                            completedSteps++
+                        }))
+
+                        // Stream this batch's results immediately
+                        if (batchShockers.length > 0) send('shockers', batchShockers)
+                        if (batchEvents.length > 0) send('events', batchEvents)
+                        if (batchPubs.length > 0) send('publications', batchPubs)
+
+                        if (i + BATCH < indianTickers.length) await delay(BATCH_DELAY)
+                    }
+                }
+
+                // Signal completion
+                send('done', { total: completedSteps })
+                controller.close()
             }
-        })()
+        })
 
-        // ═══════════════════════════════════════════════════════
-        //  Wait for all phases
-        // ═══════════════════════════════════════════════════════
-
-        await Promise.all([macroPromise, nonIndianPromise, nsePromise])
-
-        // ═══════════════════════════════════════════════════════
-        //  Sort & Deduplicate
-        // ═══════════════════════════════════════════════════════
-
-        events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        publications.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
-
-        const uniqueEvents = events.filter((event, index, self) =>
-            index === self.findIndex((e) =>
-                e.ticker === event.ticker && e.type === event.type &&
-                e.date.split('T')[0] === event.date.split('T')[0]
-            )
-        )
-
-        return NextResponse.json({
-            events: uniqueEvents,
-            publications: publications.slice(0, 100),
-            shockers: shockers.slice(0, 20),
-            macro
+        return new Response(stream, {
+            headers: {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Transfer-Encoding': 'chunked',
+                'Cache-Control': 'no-cache',
+            }
         })
 
     } catch (error: any) {
         console.error("Pulse API Error:", error)
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return new Response(JSON.stringify({ type: 'error', data: { message: error.message } }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+        })
     }
 }

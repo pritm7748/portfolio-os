@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { usePortfolio } from '@/context/portfolio-context'
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 
 // --- Type Definitions ---
 export type Transaction = {
@@ -272,26 +272,104 @@ export function useNews(names: string[]) {
 }
 
 export function usePulse(tickers: string[]) {
-    // Stable cache key
     const sortedTickers = tickers.slice().sort().join(',')
+    const [data, setData] = useState<any>({ macro: [], shockers: [], events: [], publications: [] })
+    const [isLoading, setIsLoading] = useState(true)
+    const [progress, setProgress] = useState<{ done: number; total: number; label: string } | null>(null)
+    const fetchedRef = useRef('')
 
-    return useQuery({
-        queryKey: ['pulse', sortedTickers],
-        queryFn: async () => {
-            // REMOVED THE EARLY RETURN for empty tickers
-            // We want to fetch Macro data even if tickers is empty
-            const res = await fetch('/api/pulse', {
-                method: 'POST',
-                body: JSON.stringify({ tickers: tickers || [] })
-            })
-            if (!res.ok) throw new Error('Pulse fetch failed')
-            return res.json()
-        },
-        // REMOVED THE ENABLED CHECK
-        // enabled: tickers.length > 0, 
-        staleTime: 6 * 60 * 60 * 1000, // Cache for 6 hours
-        refetchOnWindowFocus: false
-    })
+    useEffect(() => {
+        // Skip if same tickers already fetched
+        if (fetchedRef.current === sortedTickers && data.macro?.length > 0) {
+            setIsLoading(false)
+            return
+        }
+
+        const controller = new AbortController()
+        setIsLoading(true)
+        setData({ macro: [], shockers: [], events: [], publications: [] })
+        setProgress({ done: 0, total: 0, label: 'Starting...' })
+
+        const run = async () => {
+            try {
+                const res = await fetch('/api/pulse', {
+                    method: 'POST',
+                    body: JSON.stringify({ tickers: tickers || [] }),
+                    signal: controller.signal,
+                })
+                if (!res.ok || !res.body) throw new Error('Pulse fetch failed')
+
+                const reader = res.body.getReader()
+                const decoder = new TextDecoder()
+                let buffer = ''
+
+                // Dedup helper for events
+                const seenEvents = new Set<string>()
+                const eventKey = (e: any) => `${e.ticker}-${e.type}-${(e.date || '').split('T')[0]}`
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+                    const lines = buffer.split('\n')
+                    buffer = lines.pop() || '' // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue
+                        try {
+                            const chunk = JSON.parse(line)
+
+                            if (chunk.type === 'progress') {
+                                setProgress(chunk.data)
+                            } else if (chunk.type === 'macro') {
+                                setData((prev: any) => ({ ...prev, macro: chunk.data }))
+                            } else if (chunk.type === 'shockers') {
+                                setData((prev: any) => ({
+                                    ...prev,
+                                    shockers: [...prev.shockers, ...chunk.data]
+                                        .sort((a: any, b: any) => parseFloat(b.ratio) - parseFloat(a.ratio))
+                                }))
+                            } else if (chunk.type === 'events') {
+                                const newEvents = chunk.data.filter((e: any) => {
+                                    const k = eventKey(e)
+                                    if (seenEvents.has(k)) return false
+                                    seenEvents.add(k)
+                                    return true
+                                })
+                                setData((prev: any) => ({
+                                    ...prev,
+                                    events: [...prev.events, ...newEvents]
+                                        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                                }))
+                            } else if (chunk.type === 'publications') {
+                                setData((prev: any) => ({
+                                    ...prev,
+                                    publications: [...prev.publications, ...chunk.data]
+                                        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                        .slice(0, 100)
+                                }))
+                            } else if (chunk.type === 'done') {
+                                fetchedRef.current = sortedTickers
+                            }
+                        } catch { /* skip malformed line */ }
+                    }
+                }
+            } catch (e: any) {
+                if (e.name !== 'AbortError') {
+                    console.error('Pulse stream error:', e)
+                }
+            } finally {
+                setIsLoading(false)
+                setProgress(null)
+            }
+        }
+
+        run()
+        return () => controller.abort()
+    }, [sortedTickers])
+
+    return { data, isLoading, progress }
 }
 
 export function useActiveAssets() {

@@ -82,13 +82,38 @@ export default function PulsePage() {
         return activeAssets.map(asset => asset.ticker)
     }, [activeAssets])
 
-    // Pass CLEAN ticker list to Pulse API
-    const { data, isLoading } = usePulse(activeTickers)
-
-    if (isLoading) return <div className="flex h-96 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
+    // Pass CLEAN ticker list to Pulse API (now streaming)
+    const { data, isLoading, progress } = usePulse(activeTickers)
 
     return (
         <div className="space-y-8 pb-20">
+
+            {/* PROGRESS BAR — shows during streaming */}
+            {isLoading && progress && (
+                <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/50 dark:bg-indigo-900/10 p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+                            <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+                                {progress.label}
+                            </span>
+                        </div>
+                        {progress.total > 0 && (
+                            <span className="text-xs text-indigo-500 tabular-nums">
+                                {progress.done}/{progress.total}
+                            </span>
+                        )}
+                    </div>
+                    {progress.total > 0 && (
+                        <div className="w-full bg-indigo-100 dark:bg-indigo-900/30 rounded-full h-1.5">
+                            <div
+                                className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                                style={{ width: `${Math.min((progress.done / progress.total) * 100, 100)}%` }}
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* MACRO DECK */}
             <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
