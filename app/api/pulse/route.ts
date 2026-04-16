@@ -1,6 +1,7 @@
-// app/api/pulse/route.ts — Streaming SSE version
-// Sends data progressively as each section completes
+// app/api/pulse/route.ts — Streaming with Supabase cache for verified users
 import { NseIndia } from 'stock-nse-india'
+import { createClient } from '@/lib/supabase/server'
+import crypto from 'crypto'
 
 // ════════════════════════════════════════════════════════════════
 //  CONSTANTS
@@ -21,9 +22,11 @@ const YAHOO_HEADERS = {
 
 const PUB_LOOKBACK_DAYS = 45
 const PUB_MAX_PER_TICKER = 10
+const PUB_TOTAL_LIMIT = 300
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000 // 6 hours
 
 // ════════════════════════════════════════════════════════════════
-//  YAHOO (macro + avg volume only)
+//  YAHOO
 // ════════════════════════════════════════════════════════════════
 
 async function fetchYahooQuote(symbol: string): Promise<any | null> {
@@ -68,10 +71,8 @@ function isIndianStock(ticker: string): boolean {
 
 function parseDate(dateStr: string): Date | null {
     if (!dateStr) return null
-    // Handle NSE format "28-Feb-2026 19:16:25"
     const d = new Date(dateStr)
     if (!isNaN(d.getTime())) return d
-    // Handle "DD-Mon-YYYY" format
     const parts = dateStr.split(/[-\/\s]+/)
     if (parts.length >= 3) {
         const attempt = new Date(`${parts[1]} ${parts[0]}, ${parts[2]}`)
@@ -82,15 +83,178 @@ function parseDate(dateStr: string): Date | null {
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+function computePortfolioHash(tickers: string[]): string {
+    return crypto.createHash('md5').update(tickers.slice().sort().join('|')).digest('hex')
+}
+
+/** Prune expired items from cached data */
+function pruneExpired(data: any): any {
+    const now = Date.now()
+    const sevenDaysAgo = new Date(now - 7 * 86400000)
+    const pubCutoff = new Date(now - PUB_LOOKBACK_DAYS * 86400000)
+
+    return {
+        ...data,
+        events: (data.events || []).filter((e: any) => {
+            const d = new Date(e.date)
+            return d >= sevenDaysAgo // Keep future events + recent past events
+        }),
+        publications: (data.publications || []).filter((p: any) => {
+            const d = new Date(p.date)
+            return d >= pubCutoff
+        }).slice(0, PUB_TOTAL_LIMIT),
+        // Shockers are daily — always stale, will be re-fetched
+        shockers: [],
+    }
+}
+
 // ════════════════════════════════════════════════════════════════
-//  STREAMING HANDLER — Server-Sent Events
+//  SUPABASE CACHE
+// ════════════════════════════════════════════════════════════════
+
+async function loadCache(userId: string, hash: string) {
+    try {
+        const supabase = await createClient()
+        const { data } = await supabase
+            .from('pulse_cache')
+            .select('data, portfolio_hash, updated_at')
+            .eq('user_id', userId)
+            .single()
+
+        if (data && data.portfolio_hash === hash) {
+            const age = Date.now() - new Date(data.updated_at).getTime()
+            if (age < CACHE_TTL_MS) {
+                return { cached: data.data, age }
+            }
+        }
+    } catch { }
+    return null
+}
+
+async function saveCache(userId: string, hash: string, pulseData: any) {
+    try {
+        const supabase = await createClient()
+        await supabase
+            .from('pulse_cache')
+            .upsert({
+                user_id: userId,
+                portfolio_hash: hash,
+                data: pulseData,
+                updated_at: new Date().toISOString(),
+            }, { onConflict: 'user_id' })
+        console.log(`[PULSE] Cache saved for user ${userId.substring(0, 8)}...`)
+    } catch (e) {
+        console.log('[PULSE] Cache save failed:', (e as any)?.message)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  STREAMING HANDLER
 // ════════════════════════════════════════════════════════════════
 
 export async function POST(request: Request) {
     try {
-        const { tickers } = await request.json()
+        const { tickers, forceRefresh } = await request.json()
         const uniqueTickers = Array.from(new Set((tickers || []) as string[]))
+        const portfolioHash = computePortfolioHash(uniqueTickers)
 
+        // Auth check
+        let userId: string | null = null
+        try {
+            const supabase = await createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            userId = user?.id || null
+        } catch { }
+
+        // ── Check Supabase cache for authenticated users ──
+        if (userId && !forceRefresh) {
+            const cached = await loadCache(userId, portfolioHash)
+            if (cached) {
+                console.log(`[PULSE] Cache hit for user ${userId.substring(0, 8)}... (${Math.round(cached.age / 60000)}min old)`)
+                const prunedData = pruneExpired(cached.cached)
+
+                // Return cached data but fetch fresh macro (live prices)
+                const encoder = new TextEncoder()
+                const stream = new ReadableStream({
+                    async start(controller) {
+                        const send = (type: string, data: any) => {
+                            controller.enqueue(encoder.encode(JSON.stringify({ type, data }) + '\n'))
+                        }
+
+                        // Send cached events/publications immediately
+                        if (prunedData.events?.length > 0) send('events', prunedData.events)
+                        if (prunedData.publications?.length > 0) send('publications', prunedData.publications)
+
+                        // Always fetch fresh macro (live data)
+                        send('progress', { done: 0, total: MACRO_TICKERS.length, label: 'Updating live data...' })
+                        const macroResults: any[] = []
+                        await Promise.all(MACRO_TICKERS.map(async (m) => {
+                            const quote = await fetchYahooQuote(m.symbol)
+                            if (quote) {
+                                macroResults.push({
+                                    name: m.name, price: quote.price, change: quote.change,
+                                    type: m.type, prefix: m.prefix, suffix: m.suffix
+                                })
+                            }
+                        }))
+                        send('macro', macroResults)
+
+                        // Fetch fresh volume shockers (daily data, not cacheable)
+                        const indianTickers = uniqueTickers.filter(isIndianStock)
+                        const nonIndianTickers = uniqueTickers.filter(t => !isIndianStock(t))
+
+                        // Non-Indian shockers
+                        const freshShockers: any[] = []
+                        await Promise.all(nonIndianTickers.map(async (ticker) => {
+                            const quote = await fetchYahooQuote(ticker)
+                            if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
+                                freshShockers.push({
+                                    ticker: ticker.replace('.NS', '').replace('.BO', ''),
+                                    volume: quote.volume, avgVolume: quote.avgVolume,
+                                    ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
+                                })
+                            }
+                        }))
+
+                        // Indian shockers — quick scan with Yahoo only (skip NSE for speed)
+                        if (indianTickers.length > 0) {
+                            const BATCH = 5
+                            for (let i = 0; i < indianTickers.length; i += BATCH) {
+                                const batch = indianTickers.slice(i, i + BATCH)
+                                await Promise.all(batch.map(async (ticker) => {
+                                    const yahoo = await fetchYahooQuote(ticker.includes('.') ? ticker : ticker + '.NS')
+                                    if (yahoo && yahoo.volumeRatio > 2.5 && yahoo.volume > 10000) {
+                                        freshShockers.push({
+                                            ticker: toNSESymbol(ticker),
+                                            volume: yahoo.volume, avgVolume: yahoo.avgVolume,
+                                            ratio: yahoo.volumeRatio.toFixed(1) + 'x', change: yahoo.change
+                                        })
+                                    }
+                                }))
+                            }
+                        }
+
+                        if (freshShockers.length > 0) {
+                            freshShockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
+                            send('shockers', freshShockers)
+                        }
+
+                        send('done', { total: 0, fromCache: true })
+                        controller.close()
+                    }
+                })
+
+                return new Response(stream, {
+                    headers: {
+                        'Content-Type': 'text/plain; charset=utf-8',
+                        'Transfer-Encoding': 'chunked',
+                        'Cache-Control': 'no-cache',
+                    }
+                })
+            }
+        }
+
+        // ── Full scan (no cache or forced refresh) ──
         const now = Date.now()
         const sevenDaysAgo = new Date(now - 7 * 86400000)
         const ninetyDaysFromNow = new Date(now + 90 * 86400000)
@@ -101,15 +265,14 @@ export async function POST(request: Request) {
 
         const encoder = new TextEncoder()
 
+        // Accumulator for cache save
+        const accumulated = { macro: [] as any[], shockers: [] as any[], events: [] as any[], publications: [] as any[] }
+
         const stream = new ReadableStream({
             async start(controller) {
-                // Helper to send a chunk
                 const send = (type: string, data: any) => {
-                    const chunk = JSON.stringify({ type, data }) + '\n'
-                    controller.enqueue(encoder.encode(chunk))
+                    controller.enqueue(encoder.encode(JSON.stringify({ type, data }) + '\n'))
                 }
-
-                // Send progress updates
                 const progress = (done: number, total: number, label: string) => {
                     send('progress', { done, total, label })
                 }
@@ -117,37 +280,27 @@ export async function POST(request: Request) {
                 const totalSteps = indianTickers.length + nonIndianTickers.length + MACRO_TICKERS.length
                 let completedSteps = 0
 
-                // ═══════════════════════════════════════════════════════
-                //  PHASE 1: Macro — send immediately when done
-                // ═══════════════════════════════════════════════════════
-
+                // ── Macro ──
                 progress(0, totalSteps, 'Fetching macro data...')
-
-                const macroResults: any[] = []
                 await Promise.all(MACRO_TICKERS.map(async (m) => {
                     const quote = await fetchYahooQuote(m.symbol)
                     if (quote) {
-                        macroResults.push({
+                        accumulated.macro.push({
                             name: m.name, price: quote.price, change: quote.change,
                             type: m.type, prefix: m.prefix, suffix: m.suffix
                         })
                     }
                     completedSteps++
                 }))
-                send('macro', macroResults)
+                send('macro', accumulated.macro)
 
-                // ═══════════════════════════════════════════════════════
-                //  PHASE 2: Non-Indian volume shockers
-                // ═══════════════════════════════════════════════════════
-
+                // ── Non-Indian shockers ──
                 if (nonIndianTickers.length > 0) {
                     progress(completedSteps, totalSteps, 'Checking international stocks...')
-                    const nonIndianShockers: any[] = []
-
                     await Promise.all(nonIndianTickers.map(async (ticker) => {
                         const quote = await fetchYahooQuote(ticker)
                         if (quote && quote.volumeRatio > 2.5 && quote.volume > 10000) {
-                            nonIndianShockers.push({
+                            accumulated.shockers.push({
                                 ticker: ticker.replace('.NS', '').replace('.BO', ''),
                                 volume: quote.volume, avgVolume: quote.avgVolume,
                                 ratio: quote.volumeRatio.toFixed(1) + 'x', change: quote.change
@@ -155,16 +308,10 @@ export async function POST(request: Request) {
                         }
                         completedSteps++
                     }))
-
-                    if (nonIndianShockers.length > 0) {
-                        send('shockers', nonIndianShockers)
-                    }
+                    if (accumulated.shockers.length > 0) send('shockers', accumulated.shockers)
                 }
 
-                // ═══════════════════════════════════════════════════════
-                //  PHASE 3: NSE data — batches of 3, stream each batch
-                // ═══════════════════════════════════════════════════════
-
+                // ── NSE data — batches of 3 ──
                 if (indianTickers.length > 0) {
                     const nse = new NseIndia()
                     const BATCH = 3
@@ -181,7 +328,7 @@ export async function POST(request: Request) {
                         await Promise.all(batch.map(async (ticker) => {
                             const sym = toNSESymbol(ticker)
 
-                            // ── VOLUME SHOCKER ──
+                            // Volume shocker
                             try {
                                 const [tradeInfo, details, yahoo] = await Promise.all([
                                     nse.getEquityTradeInfo(sym),
@@ -204,11 +351,10 @@ export async function POST(request: Request) {
                                 }
                             } catch (e) { /* skip */ }
 
-                            // ── EVENTS ──
+                            // Events
                             try {
                                 const corpInfo = await nse.getEquityCorporateInfo(sym)
 
-                                // Corporate Actions
                                 const actions = corpInfo?.corporate_actions?.data || []
                                 actions.forEach((action: any) => {
                                     const exDate = parseDate(action.exdate)
@@ -226,7 +372,6 @@ export async function POST(request: Request) {
                                     batchEvents.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 100 ? desc.substring(0, 97) + '...' : desc })
                                 })
 
-                                // Board Meetings
                                 const meetings = corpInfo?.borad_meeting?.data || []
                                 meetings.forEach((meeting: any) => {
                                     const meetingDate = parseDate(meeting.meetingdate)
@@ -239,7 +384,6 @@ export async function POST(request: Request) {
                                     })
                                 })
 
-                                // Financial Results → Earnings
                                 const results = corpInfo?.financial_results?.data || []
                                 results.slice(0, 1).forEach((result: any) => {
                                     const toDate = parseDate(result.to_date)
@@ -252,7 +396,7 @@ export async function POST(request: Request) {
                                 })
                             } catch (e) { /* skip */ }
 
-                            // ── PUBLICATIONS ──
+                            // Publications
                             try {
                                 const annData: any = await nse.getData(
                                     `https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(sym)}`
@@ -262,7 +406,6 @@ export async function POST(request: Request) {
                                 let count = 0
                                 for (const ann of announcements) {
                                     if (count >= PUB_MAX_PER_TICKER) break
-
                                     const annDate = parseDate(ann.an_dt || ann.dt)
                                     if (!annDate || annDate < pubCutoff) continue
 
@@ -280,16 +423,36 @@ export async function POST(request: Request) {
                             completedSteps++
                         }))
 
-                        // Stream this batch's results immediately
-                        if (batchShockers.length > 0) send('shockers', batchShockers)
-                        if (batchEvents.length > 0) send('events', batchEvents)
-                        if (batchPubs.length > 0) send('publications', batchPubs)
+                        // Stream batch results
+                        if (batchShockers.length > 0) {
+                            accumulated.shockers.push(...batchShockers)
+                            send('shockers', batchShockers)
+                        }
+                        if (batchEvents.length > 0) {
+                            accumulated.events.push(...batchEvents)
+                            send('events', batchEvents)
+                        }
+                        if (batchPubs.length > 0) {
+                            accumulated.publications.push(...batchPubs)
+                            send('publications', batchPubs)
+                        }
 
                         if (i + BATCH < indianTickers.length) await delay(BATCH_DELAY)
                     }
                 }
 
-                // Signal completion
+                // Sort accumulated data before caching
+                accumulated.events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                accumulated.publications.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                accumulated.publications = accumulated.publications.slice(0, PUB_TOTAL_LIMIT)
+                accumulated.shockers.sort((a, b) => parseFloat(b.ratio) - parseFloat(a.ratio))
+
+                // Save to Supabase cache
+                if (userId) {
+                    // Don't await — fire and forget so stream closes fast
+                    saveCache(userId, portfolioHash, accumulated).catch(() => {})
+                }
+
                 send('done', { total: completedSteps })
                 controller.close()
             }

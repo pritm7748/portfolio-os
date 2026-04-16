@@ -271,29 +271,6 @@ export function useNews(names: string[]) {
     })
 }
 
-const PULSE_CACHE_KEY = 'pulse-cache'
-const PULSE_CACHE_TTL = 6 * 60 * 60 * 1000 // 6 hours
-
-function loadPulseCache(tickerKey: string) {
-    try {
-        const raw = localStorage.getItem(PULSE_CACHE_KEY)
-        if (!raw) return null
-        const cached = JSON.parse(raw)
-        if (cached.key === tickerKey && Date.now() - cached.ts < PULSE_CACHE_TTL) {
-            return cached.data
-        }
-    } catch { }
-    return null
-}
-
-function savePulseCache(tickerKey: string, data: any) {
-    try {
-        localStorage.setItem(PULSE_CACHE_KEY, JSON.stringify({
-            key: tickerKey, ts: Date.now(), data
-        }))
-    } catch { }
-}
-
 export function usePulse(tickers: string[]) {
     const sortedTickers = tickers.slice().sort().join(',')
     const [data, setData] = useState<any>({ macro: [], shockers: [], events: [], publications: [] })
@@ -306,22 +283,10 @@ export function usePulse(tickers: string[]) {
     const forceRefresh = () => setRefreshCounter(c => c + 1)
 
     useEffect(() => {
-        // Skip if same tickers already fetched in-memory
+        // Skip if same tickers already fetched in-memory (and not a forced refresh)
         if (fetchedRef.current === sortedTickers && data.macro?.length > 0 && refreshCounter === 0) {
             setIsLoading(false)
             return
-        }
-
-        // Try localStorage cache first (unless forced refresh)
-        if (refreshCounter === 0) {
-            const cached = loadPulseCache(sortedTickers)
-            if (cached) {
-                setData(cached)
-                setIsLoading(false)
-                setIsCached(true)
-                fetchedRef.current = sortedTickers
-                return
-            }
         }
 
         const controller = new AbortController()
@@ -330,14 +295,16 @@ export function usePulse(tickers: string[]) {
         setData({ macro: [], shockers: [], events: [], publications: [] })
         setProgress({ done: 0, total: 0, label: 'Starting...' })
 
-        // Accumulator for final cache save
         const accumulated = { macro: [] as any[], shockers: [] as any[], events: [] as any[], publications: [] as any[] }
 
         const run = async () => {
             try {
                 const res = await fetch('/api/pulse', {
                     method: 'POST',
-                    body: JSON.stringify({ tickers: tickers || [] }),
+                    body: JSON.stringify({
+                        tickers: tickers || [],
+                        forceRefresh: refreshCounter > 0,
+                    }),
                     signal: controller.signal,
                 })
                 if (!res.ok || !res.body) throw new Error('Pulse fetch failed')
@@ -384,11 +351,11 @@ export function usePulse(tickers: string[]) {
                             } else if (chunk.type === 'publications') {
                                 accumulated.publications = [...accumulated.publications, ...chunk.data]
                                     .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                    .slice(0, 100)
+                                    .slice(0, 300)
                                 setData((prev: any) => ({ ...prev, publications: accumulated.publications }))
                             } else if (chunk.type === 'done') {
                                 fetchedRef.current = sortedTickers
-                                savePulseCache(sortedTickers, accumulated)
+                                if (chunk.data?.fromCache) setIsCached(true)
                             }
                         } catch { /* skip malformed line */ }
                     }
