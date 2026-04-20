@@ -7,7 +7,8 @@ import {
     Loader2, Calendar, TrendingUp, TrendingDown, Zap, Globe, Activity,
     Gift, FileText, ChevronDown, ChevronUp,
     Scissors, Users, Landmark, ExternalLink,
-    DollarSign, PieChart, ArrowDownRight, RefreshCw, Filter, Search, X
+    DollarSign, PieChart, ArrowDownRight, RefreshCw, Filter, Search, X,
+    Briefcase, Megaphone, Building2
 } from 'lucide-react'
 
 // ════════════════════════════════════════════════════════════════
@@ -22,6 +23,10 @@ const EVENT_CONFIG: Record<string, { icon: any; color: string; bg: string }> = {
     'Buyback': { icon: ArrowDownRight, color: 'text-orange-700 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800' },
     'Board Meeting': { icon: Users, color: 'text-blue-700 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' },
     'Earnings': { icon: PieChart, color: 'text-teal-700 dark:text-teal-400', bg: 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800' },
+    'Fund Raising': { icon: Briefcase, color: 'text-cyan-700 dark:text-cyan-400', bg: 'bg-cyan-50 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-800' },
+    'Investor Meet': { icon: Megaphone, color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' },
+    'AGM': { icon: Building2, color: 'text-violet-700 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-800' },
+    'EGM': { icon: Building2, color: 'text-rose-700 dark:text-rose-400', bg: 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800' },
     'Corporate Action': { icon: Landmark, color: 'text-slate-600 dark:text-slate-400', bg: 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700' },
 }
 

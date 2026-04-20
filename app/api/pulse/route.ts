@@ -20,7 +20,7 @@ const YAHOO_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.5',
 }
 
-const PUB_LOOKBACK_DAYS = 45
+const PUB_LOOKBACK_DAYS = 15
 const PUB_MAX_PER_TICKER = 10
 const PUB_TOTAL_LIMIT = 300
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -89,15 +89,15 @@ function computePortfolioHash(tickers: string[]): string {
 
 /** Prune expired items from cached data */
 function pruneExpired(data: any): any {
-    const now = Date.now()
-    const sevenDaysAgo = new Date(now - 7 * 86400000)
-    const pubCutoff = new Date(now - PUB_LOOKBACK_DAYS * 86400000)
+    const now = new Date()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const pubCutoff = new Date(now.getTime() - PUB_LOOKBACK_DAYS * 86400000)
 
     return {
         ...data,
         events: (data.events || []).filter((e: any) => {
             const d = new Date(e.date)
-            return d >= sevenDaysAgo // Keep future events + recent past events
+            return d >= startOfToday // Only today and future events
         }),
         publications: (data.publications || []).filter((p: any) => {
             const d = new Date(p.date)
@@ -255,10 +255,10 @@ export async function POST(request: Request) {
         }
 
         // ── Full scan (no cache or forced refresh) ──
-        const now = Date.now()
-        const sevenDaysAgo = new Date(now - 7 * 86400000)
-        const ninetyDaysFromNow = new Date(now + 90 * 86400000)
-        const pubCutoff = new Date(now - PUB_LOOKBACK_DAYS * 86400000)
+        const now = new Date()
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        const ninetyDaysFromNow = new Date(now.getTime() + 90 * 86400000)
+        const pubCutoff = new Date(now.getTime() - PUB_LOOKBACK_DAYS * 86400000)
 
         const indianTickers = uniqueTickers.filter(isIndianStock)
         const nonIndianTickers = uniqueTickers.filter(t => !isIndianStock(t))
@@ -358,7 +358,7 @@ export async function POST(request: Request) {
                                 const actions = corpInfo?.corporate_actions?.data || []
                                 actions.forEach((action: any) => {
                                     const exDate = parseDate(action.exdate)
-                                    if (!exDate || exDate < sevenDaysAgo || exDate > ninetyDaysFromNow) return
+                                    if (!exDate || exDate < startOfToday || exDate > ninetyDaysFromNow) return
 
                                     const purpose = (action.purpose || '').toLowerCase()
                                     let type = 'Corporate Action', desc = action.purpose || 'Corporate Action'
@@ -369,25 +369,42 @@ export async function POST(request: Request) {
                                     else if (purpose.includes('rights')) { type = 'Rights'; desc = `Rights Issue: ${action.purpose}` }
                                     else if (purpose.includes('buyback')) { type = 'Buyback'; desc = `Buyback: ${action.purpose}` }
 
-                                    batchEvents.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 100 ? desc.substring(0, 97) + '...' : desc })
+                                    batchEvents.push({ ticker: sym, type, date: exDate.toISOString(), desc: desc.length > 150 ? desc.substring(0, 147) + '...' : desc })
                                 })
 
+                                // Board Meetings — classify by purpose for better context
                                 const meetings = corpInfo?.borad_meeting?.data || []
                                 meetings.forEach((meeting: any) => {
                                     const meetingDate = parseDate(meeting.meetingdate)
-                                    if (!meetingDate || meetingDate < sevenDaysAgo || meetingDate > ninetyDaysFromNow) return
+                                    if (!meetingDate || meetingDate < startOfToday || meetingDate > ninetyDaysFromNow) return
                                     const purpose = meeting.purpose || 'Board Meeting'
+                                    const purposeLower = purpose.toLowerCase()
+
+                                    // Classify board meeting type based on agenda
+                                    let type = 'Board Meeting'
+                                    if (purposeLower.includes('dividend')) type = 'Dividend'
+                                    else if (purposeLower.includes('result') || purposeLower.includes('financial') || purposeLower.includes('quarter') || purposeLower.includes('earning') || purposeLower.includes('audited') || purposeLower.includes('unaudited')) type = 'Earnings'
+                                    else if (purposeLower.includes('rights')) type = 'Rights'
+                                    else if (purposeLower.includes('bonus')) type = 'Bonus'
+                                    else if (purposeLower.includes('buyback')) type = 'Buyback'
+                                    else if (purposeLower.includes('split') || purposeLower.includes('sub-division')) type = 'Split'
+                                    else if (purposeLower.includes('fund rais') || purposeLower.includes('fundrais') || purposeLower.includes('preferential') || purposeLower.includes('qip') || purposeLower.includes('warrant')) type = 'Fund Raising'
+                                    else if (purposeLower.includes('investor') || purposeLower.includes('analyst')) type = 'Investor Meet'
+                                    else if (purposeLower.includes('agm') || purposeLower.includes('annual general')) type = 'AGM'
+                                    else if (purposeLower.includes('egm') || purposeLower.includes('extraordinary')) type = 'EGM'
+
                                     batchEvents.push({
-                                        ticker: sym, type: 'Board Meeting',
+                                        ticker: sym, type,
                                         date: meetingDate.toISOString(),
-                                        desc: purpose.length > 100 ? purpose.substring(0, 97) + '...' : purpose
+                                        desc: purpose.length > 150 ? purpose.substring(0, 147) + '...' : purpose
                                     })
                                 })
 
+                                // Financial Results → Earnings
                                 const results = corpInfo?.financial_results?.data || []
                                 results.slice(0, 1).forEach((result: any) => {
                                     const toDate = parseDate(result.to_date)
-                                    if (!toDate || toDate < sevenDaysAgo) return
+                                    if (!toDate || toDate < startOfToday) return
                                     batchEvents.push({
                                         ticker: sym, type: 'Earnings',
                                         date: toDate.toISOString(),
