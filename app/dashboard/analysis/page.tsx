@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Search, Loader2, TrendingUp, X, Microscope, Building2, BarChart3 } from 'lucide-react'
 import UltimateAnalysis from '@/components/ultimate-analysis/index'
+import MfAnalysis from '@/components/mf-analysis/index'
 
 // Popular stocks for quick access on empty state
 const POPULAR_STOCKS = [
@@ -39,6 +40,8 @@ type SearchResult = {
 export default function AnalysisPage() {
     const [query, setQuery] = useState('')
     const [selectedTicker, setSelectedTicker] = useState<string | null>(null)
+    const [isMf, setIsMf] = useState(false)
+    const [selectedName, setSelectedName] = useState('')
     const [data, setData] = useState<any>(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
@@ -105,11 +108,14 @@ export default function AnalysisPage() {
         searchYahoo(val)
     }
 
-    const analyzeStock = async (ticker: string) => {
+    const analyzeStock = async (ticker: string, type?: string, name?: string) => {
         const cleanTicker = ticker.trim().toUpperCase()
         if (!cleanTicker) return
 
+        const mfMode = type === 'MUTUALFUND'
         setSelectedTicker(cleanTicker)
+        setIsMf(mfMode)
+        setSelectedName(name || cleanTicker)
         setLoading(true)
         setError('')
         setData(null)
@@ -119,14 +125,25 @@ export default function AnalysisPage() {
         saveRecent(cleanTicker)
 
         try {
-            const res = await fetch('/api/stock-analysis', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker: cleanTicker })
-            })
-            if (!res.ok) throw new Error('Failed to fetch analysis data')
-            const json = await res.json()
-            setData(json)
+            if (mfMode) {
+                const res = await fetch('/api/mf-analysis', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fundName: name || cleanTicker })
+                })
+                if (!res.ok) throw new Error('Failed to fetch MF analysis data')
+                const json = await res.json()
+                setData(json)
+            } else {
+                const res = await fetch('/api/stock-analysis', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ticker: cleanTicker })
+                })
+                if (!res.ok) throw new Error('Failed to fetch analysis data')
+                const json = await res.json()
+                setData(json)
+            }
         } catch (e: any) {
             setError(e.message)
         } finally {
@@ -152,7 +169,8 @@ export default function AnalysisPage() {
             }
             if (e.key === 'Enter' && highlightIdx >= 0) {
                 e.preventDefault()
-                analyzeStock(suggestions[highlightIdx].symbol)
+                const s = suggestions[highlightIdx]
+                analyzeStock(s.symbol, s.type, s.name)
                 return
             }
         }
@@ -163,6 +181,8 @@ export default function AnalysisPage() {
         setSelectedTicker(null)
         setData(null)
         setError('')
+        setIsMf(false)
+        setSelectedName('')
         setTimeout(() => inputRef.current?.focus(), 100)
     }
 
@@ -238,7 +258,7 @@ export default function AnalysisPage() {
                         {suggestions.map((s, i) => (
                             <button
                                 key={`${s.yahooSymbol}-${i}`}
-                                onClick={() => analyzeStock(s.symbol)}
+                                onClick={() => analyzeStock(s.symbol, s.type, s.name)}
                                 className={`flex items-center gap-3 w-full px-4 py-2.5 text-left transition ${
                                     i === highlightIdx
                                         ? 'bg-indigo-50 dark:bg-indigo-900/20'
@@ -268,12 +288,12 @@ export default function AnalysisPage() {
                     {/* Active analysis header */}
                     <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                                <Microscope className="h-5 w-5 text-white" />
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ${isMf ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20' : 'bg-gradient-to-br from-indigo-500 to-violet-600 shadow-indigo-500/20'}`}>
+                                {isMf ? <BarChart3 className="h-5 w-5 text-white" /> : <Microscope className="h-5 w-5 text-white" />}
                             </div>
                             <div>
-                                <h2 className="text-lg font-bold text-slate-900 dark:text-white">{selectedTicker}</h2>
-                                <p className="text-xs text-slate-500">Fundamental Analysis</p>
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isMf ? selectedName : selectedTicker}</h2>
+                                <p className="text-xs text-slate-500">{isMf ? 'Mutual Fund Analysis' : 'Fundamental Analysis'}</p>
                             </div>
                         </div>
                         <button
@@ -286,9 +306,9 @@ export default function AnalysisPage() {
 
                     {loading ? (
                         <div className="flex flex-col items-center justify-center py-32 gap-4">
-                            <Loader2 className="h-10 w-10 animate-spin text-indigo-500" />
+                            <Loader2 className={`h-10 w-10 animate-spin ${isMf ? 'text-emerald-500' : 'text-indigo-500'}`} />
                             <p className="text-sm text-slate-500 dark:text-slate-400">
-                                Fetching data from multiple sources...
+                                {isMf ? 'Analyzing fund from Groww & MFAPI...' : 'Fetching data from multiple sources...'}
                             </p>
                         </div>
                     ) : error ? (
@@ -299,7 +319,7 @@ export default function AnalysisPage() {
                             </button>
                         </div>
                     ) : data ? (
-                        <UltimateAnalysis ticker={selectedTicker} data={data} />
+                        isMf ? <MfAnalysis data={data} fundName={selectedName} /> : <UltimateAnalysis ticker={selectedTicker} data={data} />
                     ) : null}
                 </div>
             ) : (
@@ -340,11 +360,30 @@ export default function AnalysisPage() {
                         </div>
                     </div>
 
-                    {/* Mutual Funds placeholder */}
-                    <div className="rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700 p-8 text-center">
-                        <p className="text-sm text-slate-400 dark:text-slate-500 font-medium">
-                            🏗️ Mutual Fund Analysis — Coming Soon
-                        </p>
+                    {/* Popular MFs */}
+                    <div>
+                        <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">Popular Mutual Funds</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                            {[
+                                { name: 'Axis Bluechip Fund', symbol: 'AXISBLUECHIP' },
+                                { name: 'Parag Parikh Flexi Cap', symbol: 'PPFCF' },
+                                { name: 'HDFC Mid-Cap Opportunities', symbol: 'HDFCMIDCAP' },
+                                { name: 'SBI Small Cap Fund', symbol: 'SBISMALLCAP' },
+                                { name: 'Mirae Asset Large Cap', symbol: 'MIRAELARGECAP' },
+                                { name: 'Kotak Emerging Equity', symbol: 'KOTAKEMERGING' },
+                                { name: 'ICICI Pru Bluechip', symbol: 'ICICIBLUECHIP' },
+                                { name: 'Nippon India Small Cap', symbol: 'NIPPONSMALLCAP' },
+                            ].map(f => (
+                                <button
+                                    key={f.symbol}
+                                    onClick={() => analyzeStock(f.symbol, 'MUTUALFUND', f.name)}
+                                    className="group flex flex-col items-start p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 hover:border-emerald-400 hover:shadow-md hover:shadow-emerald-500/5 transition-all duration-200"
+                                >
+                                    <BarChart3 className="h-3.5 w-3.5 text-emerald-500 mb-1" />
+                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold leading-tight">{f.name}</span>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
             )}
