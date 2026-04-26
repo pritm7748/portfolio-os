@@ -1,14 +1,14 @@
 'use client'
 
-import { TrendingUp, TrendingDown, IndianRupee, Percent, Shield, User, Calendar, DollarSign, Info } from 'lucide-react'
+import { TrendingUp, TrendingDown, IndianRupee, Percent, Shield, User, Calendar, DollarSign, Info, CheckCircle2, AlertTriangle, Trophy } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 type Props = { data: any }
 
 const fmt = (n: number) => {
-    if (n >= 10000000) return `₹${(n / 10000000).toFixed(0)} Cr`
-    if (n >= 100000) return `₹${(n / 100000).toFixed(0)} L`
-    return `₹${n.toLocaleString('en-IN')}`
+    if (n >= 1000) return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })} Cr`
+    if (n >= 1) return `₹${n.toFixed(2)} Cr`
+    return `₹${(n * 100).toFixed(0)} L`
 }
 
 const returnBadge = (val: number | null, label: string) => {
@@ -34,7 +34,7 @@ const RISK_COLORS: Record<string, string> = {
 }
 
 export default function OverviewTab({ data }: Props) {
-    const { meta, nav, returns, navChart, risk } = data
+    const { meta, nav, returns, navChart, risk, analysis, categoryRank, growwRisk } = data
     const trailing = returns?.trailing || {}
 
     return (
@@ -176,6 +176,69 @@ export default function OverviewTab({ data }: Props) {
                             </p>
                         </div>
                     ))}
+                </div>
+            )}
+
+            {/* Category Rank */}
+            {categoryRank && (categoryRank.rank1y || categoryRank.rank3y || categoryRank.rank5y) && (
+                <div>
+                    <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3 flex items-center gap-1.5">
+                        <Trophy className="h-3.5 w-3.5" /> Category Rank
+                    </h3>
+                    <div className="flex gap-3">
+                        {categoryRank.rank1y && (
+                            <div className="px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+                                <span className="text-[10px] text-blue-500 font-semibold">1Y Rank</span>
+                                <p className="text-sm font-bold text-blue-700 dark:text-blue-300">#{categoryRank.rank1y}</p>
+                            </div>
+                        )}
+                        {categoryRank.rank3y && (
+                            <div className="px-4 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
+                                <span className="text-[10px] text-purple-500 font-semibold">3Y Rank</span>
+                                <p className="text-sm font-bold text-purple-700 dark:text-purple-300">#{categoryRank.rank3y}</p>
+                            </div>
+                        )}
+                        {categoryRank.rank5y && (
+                            <div className="px-4 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50">
+                                <span className="text-[10px] text-amber-500 font-semibold">5Y Rank</span>
+                                <p className="text-sm font-bold text-amber-700 dark:text-amber-300">#{categoryRank.rank5y}</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Groww Analysis — Pros/Cons */}
+            {analysis && ((analysis.pros?.length > 0) || (analysis.cons?.length > 0)) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {analysis.pros?.length > 0 && (
+                        <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10">
+                            <h4 className="text-xs uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-semibold mb-2 flex items-center gap-1.5">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Strengths
+                            </h4>
+                            <ul className="space-y-1.5">
+                                {analysis.pros.map((p: string, i: number) => (
+                                    <li key={i} className="text-xs text-slate-700 dark:text-slate-300 flex gap-2">
+                                        <span className="text-emerald-500 shrink-0">✓</span> {p}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    {analysis.cons?.length > 0 && (
+                        <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-950/10">
+                            <h4 className="text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400 font-semibold mb-2 flex items-center gap-1.5">
+                                <AlertTriangle className="h-3.5 w-3.5" /> Weaknesses
+                            </h4>
+                            <ul className="space-y-1.5">
+                                {analysis.cons.map((c: string, i: number) => (
+                                    <li key={i} className="text-xs text-slate-700 dark:text-slate-300 flex gap-2">
+                                        <span className="text-amber-500 shrink-0">⚠</span> {c}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

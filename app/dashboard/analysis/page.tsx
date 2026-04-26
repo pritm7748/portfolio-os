@@ -129,7 +129,7 @@ export default function AnalysisPage() {
                 const res = await fetch('/api/mf-analysis', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fundName: name || cleanTicker })
+                    body: JSON.stringify({ fundName: name || ticker })
                 })
                 if (!res.ok) throw new Error('Failed to fetch MF analysis data')
                 const json = await res.json()
@@ -265,17 +265,21 @@ export default function AnalysisPage() {
                                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'
                                 }`}
                             >
-                                <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center shrink-0">
+                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${s.type === 'MUTUALFUND' ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-indigo-50 dark:bg-indigo-900/20'}`}>
                                     <TypeIcon type={s.type} />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
-                                        <p className="text-sm font-semibold text-slate-800 dark:text-white">{s.symbol}</p>
+                                        <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">
+                                            {s.type === 'MUTUALFUND' ? s.name : s.symbol}
+                                        </p>
                                         {typeBadge(s.type)}
                                     </div>
-                                    <p className="text-[11px] text-slate-500 truncate">{s.name}</p>
+                                    <p className="text-[11px] text-slate-500 truncate">
+                                        {s.type === 'MUTUALFUND' ? s.exchange : s.name}
+                                    </p>
                                 </div>
-                                <span className="text-[10px] text-slate-400 shrink-0">{s.exchange}</span>
+                                <span className="text-[10px] text-slate-400 shrink-0">{s.type === 'MUTUALFUND' ? '' : s.exchange}</span>
                             </button>
                         ))}
                     </div>

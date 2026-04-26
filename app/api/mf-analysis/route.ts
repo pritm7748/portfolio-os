@@ -5,6 +5,27 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 const HEADERS = { 'User-Agent': UA, Accept: 'text/html,application/json', 'Accept-Language': 'en-US,en;q=0.5' }
 const RISK_FREE_RATE = 0.065 // 6.5% for India
 
+// Resolve MorningStar IDs (0P0001BA97.BO) to human-readable fund names via Yahoo
+async function resolveNameIfNeeded(name: string): Promise<string> {
+    if (!name.match(/^0P[0-9A-Z]{8,}/i)) return name
+    try {
+        const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(name)}&quotesCount=3`
+        const res = await fetch(url, { headers: { ...HEADERS, Accept: 'application/json' } })
+        if (!res.ok) return name
+        const data = await res.json()
+        const quotes = data?.quotes || []
+        if (quotes.length > 0) {
+            const q = quotes[0]
+            const resolved = q.longname || q.shortname || q.name
+            if (resolved && !resolved.match(/^0P/)) {
+                console.log(`[MF-ANALYSIS] Resolved Morningstar ID "${name}" -> "${resolved}"`)
+                return resolved
+            }
+        }
+    } catch { }
+    return name
+}
+
 // ════════════════════════════════════════════════════════════════
 //  HELPERS
 // ════════════════════════════════════════════════════════════════
@@ -67,21 +88,78 @@ async function scrapeGroww(slug: string) {
         const mf = nextData?.props?.pageProps?.mfServerSideData
         if (!mf) { result.error = 'No mfServerSideData'; return result }
 
-        // Meta
+        // Meta — using exact field names from Groww __NEXT_DATA__
         result.fundName = mf.scheme_name || mf.meta_title || slug
-        result.category = mf.scheme_category || mf.sub_category || ''
+        result.category = mf.sub_category || mf.category || ''
         result.fundHouse = mf.fund_house || mf.amc || ''
-        result.aum = mf.aum || mf.net_assets || 0
+        result.aum = mf.aum || 0
         result.expenseRatio = mf.expense_ratio ?? null
-        result.exitLoad = mf.exit_load || mf.exit_load_message || ''
-        result.riskRating = mf.riskometer || mf.risk_rating || mf.scheme_risk || ''
-        result.benchmark = mf.benchmark || mf.benchmark_name || ''
-        result.fundManager = mf.fund_manager || mf.fund_managers || ''
-        result.launchDate = mf.launch_date || mf.inception_date || ''
-        result.minSip = mf.min_sip_amount || mf.sip_min_amount || 500
-        result.minLumpsum = mf.min_investment_amount || mf.lumpsum_min || 5000
-        result.returnsMeta = mf.returns || mf.scheme_returns || null
-        result.riskMeta = mf.risk_measures || mf.ratios || null
+        result.exitLoad = mf.exit_load || ''
+        result.benchmark = mf.benchmark_name || mf.benchmark || ''
+        result.launchDate = mf.launch_date || ''
+        result.minSip = mf.min_sip_investment || 500
+        result.minLumpsum = mf.min_investment_amount || 5000
+
+        // Fund manager — use detailed info if available
+        const fmDetails = mf.fund_manager_details || []
+        if (fmDetails.length > 0) {
+            result.fundManager = fmDetails.map((fm: any) => fm.person_name).filter(Boolean).join(', ')
+            result.fundManagerDetails = fmDetails.map((fm: any) => ({
+                name: fm.person_name || '',
+                education: fm.education || '',
+                experience: fm.experience || '',
+                since: fm.date_from || '',
+                fundsManaged: fm.funds_managed || 0,
+            }))
+        } else {
+            result.fundManager = mf.fund_manager || ''
+        }
+
+        // Risk & return stats from Groww (pre-computed by Groww)
+        const returnStats = Array.isArray(mf.return_stats) && mf.return_stats[0] ? mf.return_stats[0] : null
+        if (returnStats) {
+            result.riskRating = returnStats.risk || ''
+            result.growwReturns = {
+                return1d: returnStats.return1d, return1w: returnStats.return1w,
+                return1m: returnStats.return1m, return3m: returnStats.return3m,
+                return6m: returnStats.return6m, return1y: returnStats.return1y,
+                return3y: returnStats.return3y, return5y: returnStats.return5y,
+                return10y: returnStats.return10y, sinceInception: returnStats.return_since_created,
+            }
+            result.growwRisk = {
+                sharpeRatio: returnStats.sharpe_ratio,
+                beta: returnStats.beta,
+                alpha: returnStats.alpha,
+                stdDev: returnStats.standard_deviation,
+                sortino: returnStats.sortino_ratio,
+                meanReturn: returnStats.mean_return,
+            }
+            result.categoryReturns = {
+                return1y: returnStats.cat_return1y,
+                return3y: returnStats.cat_return3y,
+                return5y: returnStats.cat_return5y,
+            }
+            result.categoryRank = {
+                rank1y: returnStats.rank1yr,
+                rank3y: returnStats.rank3yr,
+                rank5y: returnStats.rank5yr,
+            }
+        } else {
+            result.riskRating = ''
+        }
+
+        // Groww analysis (pros/cons)
+        const analysis = Array.isArray(mf.analysis) ? mf.analysis : []
+        result.analysis = {
+            pros: analysis.filter((a: any) => a.analysis_type === 'PROS').map((a: any) => a.analysis_desc),
+            cons: analysis.filter((a: any) => a.analysis_type === 'CONS').map((a: any) => a.analysis_desc),
+        }
+
+        // Fund stats (returns vs category)
+        result.stats = mf.stats || []
+
+        result.returnsMeta = mf.return_stats || null
+        result.riskMeta = null
 
         // Holdings
         const rawHoldings = mf.holdings || []
@@ -147,17 +225,19 @@ async function scrapeGroww(slug: string) {
             })),
         }
 
-        // Peers
-        const rawPeers = mf.peer_funds || mf.similar_funds || mf.peers || []
+        // Peers — Groww uses "peerComparison" field
+        const rawPeers = mf.peerComparison || []
         result.peers = rawPeers.slice(0, 10).map((p: any) => ({
-            name: p.scheme_name || p.name || '',
-            category: p.scheme_category || p.category || '',
-            aum: p.aum || p.net_assets || 0,
+            name: p.scheme_name || p.fund_name || '',
+            category: p.sub_category || p.category || '',
+            aum: p.aum || 0,
             expenseRatio: p.expense_ratio ?? null,
-            return1Y: p.return_1y ?? p.returns_1yr ?? null,
-            return3Y: p.return_3y ?? p.returns_3yr ?? null,
-            return5Y: p.return_5y ?? p.returns_5yr ?? null,
-            riskRating: p.riskometer || p.risk_rating || '',
+            return1Y: p.return1y ?? null,
+            return3Y: p.return3y ?? null,
+            return5Y: p.return5y ?? null,
+            riskRating: p.risk_rating || '',
+            growwRating: p.groww_rating || 0,
+            fundManager: p.fund_manager || '',
             slug: p.search_id || '',
         }))
 
@@ -429,9 +509,11 @@ function computeMetrics(navs: { date: string; nav: number }[]) {
 
 export async function POST(request: Request) {
     try {
-        const { fundName } = await request.json()
-        if (!fundName) return NextResponse.json({ error: 'Missing fundName' }, { status: 400 })
+        const { fundName: rawFundName } = await request.json()
+        if (!rawFundName) return NextResponse.json({ error: 'Missing fundName' }, { status: 400 })
 
+        // Resolve Morningstar IDs (0P0001BA97.BO) to human-readable names
+        const fundName = await resolveNameIfNeeded(rawFundName)
         console.log(`[MF-ANALYSIS] Analyzing: ${fundName}`)
 
         // Run Groww + MFAPI in parallel
@@ -492,6 +574,13 @@ export async function POST(request: Request) {
             growwSlug: slug,
             growwError: growwData.error,
             returnsMeta: growwData.returnsMeta,
+            growwReturns: growwData.growwReturns || null,
+            growwRisk: growwData.growwRisk || null,
+            categoryReturns: growwData.categoryReturns || null,
+            categoryRank: growwData.categoryRank || null,
+            analysis: growwData.analysis || { pros: [], cons: [] },
+            stats: growwData.stats || [],
+            fundManagerDetails: growwData.fundManagerDetails || [],
         }
 
         console.log(`[MF-ANALYSIS] Done: ${response.meta.fundName} | ${response.allocation.concentration.totalStocks} holdings | ${navHistory.length} NAV points`)

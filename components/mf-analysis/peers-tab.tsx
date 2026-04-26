@@ -9,9 +9,9 @@ type SortKey = 'name' | 'aum' | 'expenseRatio' | 'return1Y' | 'return3Y' | 'retu
 
 const fmt = (n: number) => {
     if (!n) return '—'
-    if (n >= 10000000) return `₹${(n / 10000000).toFixed(0)} Cr`
-    if (n >= 100000) return `₹${(n / 100000).toFixed(0)} L`
-    return `₹${n.toLocaleString('en-IN')}`
+    if (n >= 1000) return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })} Cr`
+    if (n >= 1) return `₹${n.toFixed(0)} Cr`
+    return `₹${(n * 100).toFixed(0)} L`
 }
 
 export default function PeersTab({ data }: Props) {
