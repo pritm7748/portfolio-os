@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowUpDown, ExternalLink } from 'lucide-react'
+import { ArrowUpDown, Microscope } from 'lucide-react'
 
-type Props = { data: any }
+type Props = { data: any; onAnalyzePeer?: (name: string) => void }
 
 type SortKey = 'name' | 'aum' | 'expenseRatio' | 'return1Y' | 'return3Y' | 'return5Y'
 
@@ -14,7 +14,7 @@ const fmt = (n: number) => {
     return `₹${(n * 100).toFixed(0)} L`
 }
 
-export default function PeersTab({ data }: Props) {
+export default function PeersTab({ data, onAnalyzePeer }: Props) {
     const peers = data.peers || []
     const [sortKey, setSortKey] = useState<SortKey>('return3Y')
     const [sortAsc, setSortAsc] = useState(false)
@@ -77,10 +77,13 @@ export default function PeersTab({ data }: Props) {
                                 <td className="px-3 py-3">
                                     <div className="min-w-0">
                                         <p className="font-medium text-slate-800 dark:text-white text-xs leading-tight truncate max-w-[220px]">{p.name}</p>
-                                        {p.slug && (
-                                            <a href={`https://groww.in/mutual-funds/${p.slug}`} target="_blank" rel="noopener" className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-0.5 mt-0.5">
-                                                View on Groww <ExternalLink className="h-2.5 w-2.5" />
-                                            </a>
+                                        {onAnalyzePeer && p.name && (
+                                            <button
+                                                onClick={() => onAnalyzePeer(p.name)}
+                                                className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-0.5 mt-0.5"
+                                            >
+                                                <Microscope className="h-2.5 w-2.5" /> Analyze this fund
+                                            </button>
                                         )}
                                     </div>
                                 </td>

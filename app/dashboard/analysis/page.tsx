@@ -126,10 +126,12 @@ export default function AnalysisPage() {
 
         try {
             if (mfMode) {
+                // ticker may be a scheme code (numeric) from MFAPI search
+                const schemeCode = /^\d+$/.test(ticker.trim()) ? ticker.trim() : undefined
                 const res = await fetch('/api/mf-analysis', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fundName: name || ticker })
+                    body: JSON.stringify({ fundName: name || ticker, schemeCode })
                 })
                 if (!res.ok) throw new Error('Failed to fetch MF analysis data')
                 const json = await res.json()
@@ -312,7 +314,7 @@ export default function AnalysisPage() {
                         <div className="flex flex-col items-center justify-center py-32 gap-4">
                             <Loader2 className={`h-10 w-10 animate-spin ${isMf ? 'text-emerald-500' : 'text-indigo-500'}`} />
                             <p className="text-sm text-slate-500 dark:text-slate-400">
-                                {isMf ? 'Analyzing fund from Groww & MFAPI...' : 'Fetching data from multiple sources...'}
+                                {isMf ? 'Analyzing mutual fund data...' : 'Fetching data from multiple sources...'}
                             </p>
                         </div>
                     ) : error ? (
@@ -323,7 +325,7 @@ export default function AnalysisPage() {
                             </button>
                         </div>
                     ) : data ? (
-                        isMf ? <MfAnalysis data={data} fundName={selectedName} /> : <UltimateAnalysis ticker={selectedTicker} data={data} />
+                        isMf ? <MfAnalysis data={data} fundName={selectedName} onAnalyzePeer={(peerName) => analyzeStock(peerName, 'MUTUALFUND', peerName)} /> : <UltimateAnalysis ticker={selectedTicker} data={data} />
                     ) : null}
                 </div>
             ) : (

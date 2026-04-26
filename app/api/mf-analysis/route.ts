@@ -509,16 +509,19 @@ function computeMetrics(navs: { date: string; nav: number }[]) {
 
 export async function POST(request: Request) {
     try {
-        const { fundName: rawFundName } = await request.json()
+        const { fundName: rawFundName, schemeCode: passedSchemeCode } = await request.json()
         if (!rawFundName) return NextResponse.json({ error: 'Missing fundName' }, { status: 400 })
 
         // Resolve Morningstar IDs (0P0001BA97.BO) to human-readable names
         const fundName = await resolveNameIfNeeded(rawFundName)
-        console.log(`[MF-ANALYSIS] Analyzing: ${fundName}`)
+        console.log(`[MF-ANALYSIS] Analyzing: ${fundName}${passedSchemeCode ? ` (scheme: ${passedSchemeCode})` : ''}`)
 
-        // Run Groww + MFAPI in parallel
+        // Run Groww slug lookup + MFAPI scheme search in parallel
+        // Skip MFAPI search if schemeCode was passed from search results
         const slugPromise = findGrowwSlug(fundName)
-        const schemePromise = findSchemeCode(fundName)
+        const schemePromise = passedSchemeCode
+            ? Promise.resolve(Number(passedSchemeCode))
+            : findSchemeCode(fundName)
 
         const [slug, schemeCode] = await Promise.all([slugPromise, schemePromise])
 

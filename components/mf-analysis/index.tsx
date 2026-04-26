@@ -13,7 +13,7 @@ import RiskTab from './risk-tab'
 import PeersTab from './peers-tab'
 import SipTab from './sip-tab'
 
-type Props = { data: any; fundName: string }
+type Props = { data: any; fundName: string; onAnalyzePeer?: (name: string) => void }
 
 const TABS = [
     { id: 'overview', label: 'Overview', icon: Sparkles },
@@ -25,7 +25,7 @@ const TABS = [
     { id: 'sip', label: 'SIP Simulator', icon: Calculator },
 ]
 
-export default function MfAnalysis({ data, fundName }: Props) {
+export default function MfAnalysis({ data, fundName, onAnalyzePeer }: Props) {
     const [activeTab, setActiveTab] = useState('overview')
 
     return (
@@ -59,7 +59,7 @@ export default function MfAnalysis({ data, fundName }: Props) {
                 {activeTab === 'holdings' && <HoldingsTab data={data} />}
                 {activeTab === 'performance' && <PerformanceTab data={data} />}
                 {activeTab === 'risk' && <RiskTab data={data} />}
-                {activeTab === 'peers' && <PeersTab data={data} />}
+                {activeTab === 'peers' && <PeersTab data={data} onAnalyzePeer={onAnalyzePeer} />}
                 {activeTab === 'sip' && <SipTab data={data} />}
             </div>
         </div>
