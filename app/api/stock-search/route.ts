@@ -49,11 +49,11 @@ async function searchMFAPI(q: string): Promise<any[]> {
             })
             .slice(0, 5)
             .map((s: any) => ({
-                symbol: s.schemeCode,
+                symbol: String(s.schemeCode),
                 name: s.schemeName || '',
                 exchange: 'MF',
                 type: 'MUTUALFUND',
-                yahooSymbol: s.schemeCode,
+                yahooSymbol: String(s.schemeCode),
             }))
     } catch { clearTimeout(timer); return [] }
 }
